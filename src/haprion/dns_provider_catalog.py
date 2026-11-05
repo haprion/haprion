@@ -85,6 +85,8 @@ class DNSProvider:
     fields: tuple[CredentialField, ...]
     ini_section: str | None
     exactly_one_of: tuple[str, ...]
+    exactly_one_of_sets: tuple[tuple[str, ...], ...]
+    """Ways in: exactly one set is filled in whole and nothing outside it is."""
 
     @property
     def credentials_flag(self) -> str | None:
@@ -236,7 +238,7 @@ def _provider(value: object, location: str) -> DNSProvider:
             "verification",
             "fields",
         },
-        {"ini_section", "exactly_one_of", "propagation_minimum"},
+        {"ini_section", "exactly_one_of", "exactly_one_of_sets", "propagation_minimum"},
         location,
     )
     fields_value = row["fields"]
@@ -290,6 +292,30 @@ def _provider(value: object, location: str) -> DNSProvider:
         item not in by_id or by_id[item].required for item in exactly_one_of
     ):
         raise ProviderCatalogError(f"{location}.exactly_one_of must name distinct optional fields")
+    sets_value = row.get("exactly_one_of_sets", [])
+    if not isinstance(sets_value, list) or len(sets_value) == 1:
+        raise ProviderCatalogError(f"{location}.exactly_one_of_sets must list two or more sets")
+    if sets_value and exactly_one_of:
+        raise ProviderCatalogError(f"{location} cannot use exactly_one_of with exactly_one_of_sets")
+    exactly_one_of_sets: list[tuple[str, ...]] = []
+    for set_index, set_value in enumerate(sets_value):
+        if not isinstance(set_value, list) or not set_value:
+            raise ProviderCatalogError(
+                f"{location}.exactly_one_of_sets[{set_index}] must list fields"
+            )
+        exactly_one_of_sets.append(
+            tuple(
+                _text(item, f"{location}.exactly_one_of_sets[{set_index}][{index}]", FIELD_ID)
+                for index, item in enumerate(set_value)
+            )
+        )
+    in_sets = [item for chosen_set in exactly_one_of_sets for item in chosen_set]
+    if len(set(in_sets)) != len(in_sets) or any(
+        item not in by_id or by_id[item].required for item in in_sets
+    ):
+        raise ProviderCatalogError(
+            f"{location}.exactly_one_of_sets must name distinct optional fields, each in one set"
+        )
     return DNSProvider(
         id=_text(row["id"], f"{location}.id", PROVIDER_ID),
         name=_text(row["name"], f"{location}.name"),
@@ -305,6 +331,7 @@ def _provider(value: object, location: str) -> DNSProvider:
         fields=fields,
         ini_section=ini_section,
         exactly_one_of=exactly_one_of,
+        exactly_one_of_sets=tuple(exactly_one_of_sets),
     )
 
 
@@ -437,7 +464,29 @@ def _values(
         if len(present) != 1:
             names = ", ".join(provider.exactly_one_of)
             raise ProviderCatalogError(f"exactly one of {names} must be given")
+    if provider.exactly_one_of_sets:
+        filled = [
+            [item for item in chosen_set if item in result]
+            for chosen_set in provider.exactly_one_of_sets
+        ]
+        whole = [
+            len(part) == len(chosen_set)
+            for part, chosen_set in zip(filled, provider.exactly_one_of_sets, strict=True)
+        ]
+        if sum(1 for part in filled if part) != 1 or not any(whole):
+            raise ProviderCatalogError(f"give either {ways_in(provider)}, not a mix")
     return result
+
+
+def ways_in(provider: DNSProvider) -> str:
+    """The sets of fields as words: `all of A and B, or only C`."""
+
+    labels = {field.id: field.label for field in provider.fields}
+    ways = [
+        " and ".join(labels[item] for item in chosen_set)
+        for chosen_set in provider.exactly_one_of_sets
+    ]
+    return "all of " + ", or only ".join(ways)
 
 
 def render_credentials(provider: DNSProvider, supplied: Mapping[str, object]) -> str:

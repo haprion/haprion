@@ -133,6 +133,9 @@ def verify_loaded(source_root: Path, provider_id: str) -> None:
     values = {field.id: sample_value(field) for field in provider.fields}
     for identifier in provider.exactly_one_of[1:]:
         del values[identifier]
+    for chosen_set in provider.exactly_one_of_sets[1:]:
+        for identifier in chosen_set:
+            del values[identifier]
     with tempfile.TemporaryDirectory(prefix="haproxy-provider-loaded-") as raw:
         path = Path(raw) / "credentials"
         path.write_text(render_credentials(provider, values), encoding="utf-8")
@@ -169,7 +172,11 @@ def verify_loaded(source_root: Path, provider_id: str) -> None:
 def verify_netcup_paths(source_root: Path) -> None:
     """Each netcup way in builds its own client: the legacy trio, or the CloudDNS key."""
     sys.path.insert(0, str(source_root))
-    from haprion.dns_provider_catalog import provider_by_id, render_credentials
+    from haprion.dns_provider_catalog import (
+        ProviderCatalogError,
+        provider_by_id,
+        render_credentials,
+    )
 
     provider = provider_by_id("netcup")
     authenticator_class = entrypoint_for(provider).load()
@@ -177,6 +184,14 @@ def verify_netcup_paths(source_root: Path) -> None:
         "legacy": ({"customer_id": "123456", "api_key": "k", "api_password": "p"}, True, False),
         "clouddns": ({"api_v1_key": "key-example"}, False, True),
     }
+    for refused in ({}, {"customer_id": "123456", "api_key": "k"}):
+        accepted = True
+        try:
+            render_credentials(provider, refused)
+        except ProviderCatalogError:
+            accepted = False
+        if accepted:
+            raise RuntimeError("netcup accepted an empty or half-filled legacy trio")
     for name, (values, expect_v0, expect_v1) in cases.items():
         with tempfile.TemporaryDirectory(prefix="haproxy-provider-netcup-") as raw:
             path = Path(raw) / "credentials"

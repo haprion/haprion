@@ -2101,7 +2101,9 @@ that same request, with the manager's public key, and queues a `dns_profile_appl
 helper can open them. It checks them against the list of supported providers and writes the
 credentials file that certbot reads. The page waits a few seconds for that job, so on an idle queue the
 new row shows **In effect** straight away. If the job takes longer, the row says **Applying** and the
-page refreshes itself until the file is written.
+page refreshes itself until the file is written. Where a provider has two ways in, the form takes one of
+them whole and refuses a profile with neither, with half of one, or with both: netcup takes either the
+three legacy API fields or the CloudDNS API key.
 
 Only one certificate job runs at a time. While another certificate job is queued or running, saving is
 refused: wait for it to finish on the Events page, then save again.

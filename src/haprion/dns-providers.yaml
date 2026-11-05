@@ -1346,6 +1346,11 @@ providers:
     required: false
     secret: true
     key: dns_netcup_api_v1_key
+  exactly_one_of_sets:
+  - - customer_id
+    - api_key
+    - api_password
+  - - api_v1_key
 - id: nicru
   name: nic.ru
   tier: community

@@ -12,6 +12,7 @@ from haprion.dns_provider_catalog import (
     CredentialField,
     DNSProvider,
     ProviderCatalogError,
+    _provider,
     load_catalog,
     load_full_catalog,
     provider_by_id,
@@ -54,6 +55,9 @@ def sample_values(provider: DNSProvider) -> dict[str, object]:
     values = {field.id: sample_value(field) for field in provider.fields}
     for identifier in provider.exactly_one_of[1:]:
         del values[identifier]
+    for chosen_set in provider.exactly_one_of_sets[1:]:
+        for identifier in chosen_set:
+            del values[identifier]
     return values
 
 
@@ -118,6 +122,58 @@ class CatalogueContractTests(unittest.TestCase):
             provider_by_id("example")
 
 
+def _row(**extra: object) -> dict[str, object]:
+    def field(identifier: str, required: bool = False) -> dict[str, object]:
+        return {
+            "id": identifier,
+            "label": identifier.upper(),
+            "kind": "text",
+            "required": required,
+            "secret": False,
+            "key": f"dns_example_{identifier}",
+        }
+
+    row: dict[str, object] = {
+        "id": "example",
+        "name": "Example",
+        "tier": "community",
+        "package": "certbot-dns-example",
+        "plugin": "dns-example",
+        "adapter": "ini",
+        "delivery": "flag:credentials",
+        "documentation": "https://pypi.org/project/certbot-dns-example/",
+        "propagation_seconds": 60,
+        "verification": "loaded",
+        "fields": [field("a"), field("b"), field("c"), field("d"), field("r", True)],
+    }
+    row.update(extra)
+    return row
+
+
+class SetsOfFieldsTests(unittest.TestCase):
+    def test_good_sets_load(self) -> None:
+        provider = _provider(_row(exactly_one_of_sets=[["a", "b"], ["c"]]), "row")
+        self.assertEqual(provider.exactly_one_of_sets, (("a", "b"), ("c",)))
+
+    def test_bad_sets_are_refused_at_load(self) -> None:
+        for label, value in (
+            ("one set", [["a", "b"]]),
+            ("not a list", "a"),
+            ("a set that is not a list", [["a"], "c"]),
+            ("an empty set", [["a"], []]),
+            ("an unknown field", [["a"], ["zzz"]]),
+            ("a required field", [["a"], ["r"]]),
+            ("a field in two sets", [["a", "b"], ["b"]]),
+            ("a field twice in one set", [["a", "a"], ["c"]]),
+        ):
+            with self.subTest(label=label), self.assertRaises(ProviderCatalogError):
+                _provider(_row(exactly_one_of_sets=value), "row")
+
+    def test_sets_and_a_flat_choice_cannot_be_combined(self) -> None:
+        with self.assertRaises(ProviderCatalogError):
+            _provider(_row(exactly_one_of=["a", "b"], exactly_one_of_sets=[["c"], ["d"]]), "row")
+
+
 class CredentialsRenderingTests(unittest.TestCase):
     def test_every_provider_renders_from_its_own_template(self) -> None:
         for provider in load_catalog():
@@ -136,6 +192,8 @@ class CredentialsRenderingTests(unittest.TestCase):
                             field.key
                             for field in provider.fields
                             if field.id not in provider.exactly_one_of[1:]
+                            and field.id
+                            not in {i for s in provider.exactly_one_of_sets[1:] for i in s}
                         ],
                     )
 
@@ -182,6 +240,44 @@ class CredentialsRenderingTests(unittest.TestCase):
         self.assertEqual(
             render_credentials(provider, {"sub_auth_user": "svc-app", "auth_password": "pw-ex"}),
             "dns_cloudns_sub_auth_user = svc-app\ndns_cloudns_auth_password = pw-ex\n",
+        )
+
+    def test_netcup_takes_the_legacy_trio_or_the_clouddns_key_and_nothing_else(self) -> None:
+        provider = provider_by_id("netcup")
+        trio = {"customer_id": "123456", "api_key": "key-example", "api_password": "pw-example"}
+        key = {"api_v1_key": "clouddns-example"}
+        for label, values in (
+            ("nothing", {}),
+            ("half a trio", {"customer_id": "123456", "api_key": "key-example"}),
+            ("one of the trio", {"api_password": "pw-example"}),
+            ("the trio and the key", {**trio, **key}),
+            ("part of the trio and the key", {"customer_id": "123456", **key}),
+        ):
+            with (
+                self.subTest(label=label),
+                self.assertRaisesRegex(ProviderCatalogError, "^give either all of "),
+            ):
+                render_credentials(provider, values)
+        message = ""
+        try:
+            render_credentials(provider, {})
+        except ProviderCatalogError as exc:
+            message = str(exc)
+        self.assertIn("Customer ID (legacy API)", message)
+        self.assertIn("CloudDNS API key", message)
+        self.assertEqual(
+            render_credentials(provider, trio),
+            "".join(
+                f"{name} = {value}\n"
+                for name, value in (
+                    ("dns_netcup_customer_id", "123456"),
+                    ("dns_netcup_api_key", "key-example"),
+                    ("dns_netcup_api_password", "pw-example"),
+                )
+            ),
+        )
+        self.assertEqual(
+            render_credentials(provider, key), "dns_netcup_api_v1_key = clouddns-example\n"
         )
 
     def test_a_sectioned_ini_file_carries_its_header(self) -> None:

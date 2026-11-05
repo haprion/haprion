@@ -31,12 +31,18 @@ which account and key it fetches with — comes from one root-owned file,
 ```sh
 CLUSTER="alpha"
 MANAGER="mgr"
+NODE_NAME="a"
 CONFIG_PULL_USER="_haprion-pull"
 CONFIG_PULL_KEY="/root/.ssh/id_ed25519_config_pull"
 CONFIG_REMOTE_PATH="alpha/current/a/"
 CERT_PULL_USER="_haprion-cert-pull"
 CERT_PULL_KEY="/root/.ssh/id_ed25519_cert_pull"
 ```
+
+`NODE_NAME` is the name Haprion knows the node by, taken from the host name each
+time step 4 runs. The deploy looks the node's `keepalived.conf` up by it, so a host
+renamed later still finds its file. A node prepared before the line existed uses its
+host name, as before.
 
 A script that cannot read it, or finds a value missing, exits 78 (`EX_CONFIG`)
 rather than guessing.

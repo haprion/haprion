@@ -685,6 +685,19 @@ EXTRA_BACKUP_PATHS="${extra_paths[*]}"
 node_path="$(cluster_value NODE_PATH "$CLUSTER")"
 node_path="${node_path:-$CLUSTER}"
 
+#
+# The name Haprion knows this node by, kept in node.conf (B447, N02): the node's
+# scripts look their release file up by it, not by whatever the host is called
+# later. It is the host name as this step runs, which is what the join block
+# named the node. Every run takes it again, so a host renamed and moved with
+# Change host is followed by `sudo haprion-node-prepare`. A host name that is not
+# a node name is left out, and the scripts fall back to the host name.
+#
+NODE_NAME="$(hostname)"
+if [[ ! "$NODE_NAME" =~ ^[a-z]([a-z0-9]|-[a-z0-9])*$ ]]; then
+    warn "the host name '${NODE_NAME}' is not a node name; node.conf will not carry one"
+    NODE_NAME=""
+fi
 node_conf="$(render_node_conf "$CLUSTER" "$node_path" "$LOGS_GROUP")"
 
 ensure_dir "$(dirname "$NODE_CONF")" root:root 755

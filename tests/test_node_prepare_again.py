@@ -113,6 +113,35 @@ class TheAnswersRenderNodeConfBack(unittest.TestCase):
         ).stdout
         self.assertEqual(rendered, NODE_CONF)
 
+    def render(self, name: str | None) -> str:
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work)
+        answers, cluster = PREPARE.answers(NODE_CONF)
+        (work / "answers.env").write_text(answers, encoding="utf-8")
+        script = (
+            f"set -euo pipefail; source {LIB}; source {work / 'answers.env'}; "
+            f"{f'NODE_NAME={name}; ' if name else ''}"
+            f'render_node_conf {cluster} "$(cluster_value NODE_PATH {cluster})" '
+            f"{accounts.LOGS_GROUP}"
+        )
+        return subprocess.run(  # fixed interpreter, script built here
+            ["/bin/bash", "-c", script], check=True, capture_output=True, text=True
+        ).stdout
+
+    def test_the_node_s_name_is_recorded_when_step_four_knows_it(self) -> None:
+        # B447 N02: the name Haprion knows the node by, so a renamed host still finds its file.
+        rendered = self.render("node-a")
+        self.assertIn('MANAGER="mgr.example.com"\nNODE_NAME="node-a"\n', rendered)
+        self.assertEqual(rendered.replace('NODE_NAME="node-a"\n', ""), NODE_CONF)
+
+    def test_step_four_takes_the_name_from_the_host_each_run(self) -> None:
+        text = (INSTALL / "04-node-prepare").read_text(encoding="utf-8")
+        self.assertIn('NODE_NAME="$(hostname)"', text)
+        self.assertLess(text.index('NODE_NAME="$(hostname)"'), text.index("render_node_conf"))
+
+    def test_no_name_is_no_line(self) -> None:
+        self.assertNotIn("NODE_NAME", self.render(None))
+
 
 class WhatStopsIt(unittest.TestCase):
     def refused(self, node_conf: str, message: str) -> None:

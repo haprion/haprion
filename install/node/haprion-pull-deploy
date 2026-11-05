@@ -197,6 +197,8 @@ STAGED_READ=0
 # it to start.
 #
 STAGED_CONF=0
+# Set when the release carries keepalived files and none is this node's (N02).
+NAME_UNMATCHED=0
 
 #
 # The product's keepalived.conf (B313), for a cluster it created: the release
@@ -208,12 +210,37 @@ STAGED_CONF=0
 KEEPALIVED_MARK="# Written by Haprion - a deploy replaces this file."
 KEEPALIVED_INTERFACE_FROM_NODE="@INTERFACE@"
 
+#
+# The name Haprion knows this node by: NODE_NAME in node.conf, written by step 4
+# from the host name it ran under (B447, N02). A host renamed since still finds
+# its file. A node prepared before node.conf carried it has the host name, as
+# before.
+#
+node_name() {
+    echo "${NODE_NAME:-$(hostname)}"
+}
+
 stage_keepalived_conf() {
     local published rendered own interface backup
 
-    published="${CURRENT}/keepalived/node-$(hostname).conf"
+    published="${CURRENT}/keepalived/node-$(node_name).conf"
 
-    [[ -f "$published" ]] || return 0
+    if [[ ! -f "$published" ]]; then
+        #
+        # A release that carries the product's files and none for this node is a
+        # node the deploy cannot configure - silence here let the peers' lists
+        # go stale until a split brain. Not so where keepalived.conf is a
+        # person's (B57): the release is then not this node's to write.
+        #
+        if compgen -G "${CURRENT}/keepalived/node-*.conf" >/dev/null \
+            && { [[ ! -f "$KEEPALIVED_CONF" ]] \
+                 || [[ "$(head -n 1 "$KEEPALIVED_CONF")" == "$KEEPALIVED_MARK" ]]; }; then
+            log "ERROR: keepalived: the release names no file for this node (name $(node_name)). If the host was renamed, do Change host for it, then run  sudo haprion-node-prepare  on the node."
+            NAME_UNMATCHED=1
+            return 1
+        fi
+        return 0
+    fi
     if [[ -f "$KEEPALIVED_CONF" ]] \
         && [[ "$(head -n 1 "$KEEPALIVED_CONF")" != "$KEEPALIVED_MARK" ]]; then
         log "keepalived: ${KEEPALIVED_CONF} was written by a person; left as it is."
@@ -933,7 +960,7 @@ removed_from_release() {
     [[ -f "$KEEPALIVED_CONF" ]] || return 1
     [[ "$(head -n 1 "$KEEPALIVED_CONF")" == "$KEEPALIVED_MARK" ]] || return 1
     compgen -G "${STAGE}/keepalived/node-*.conf" >/dev/null || return 1
-    [[ ! -f "${STAGE}/keepalived/node-$(hostname).conf" ]] || return 1
+    [[ ! -f "${STAGE}/keepalived/node-$(node_name).conf" ]] || return 1
     own="$(awk '$1 == "unicast_src_ip" { print $2; exit }' "$KEEPALIVED_CONF")"
     [[ -n "$own" ]] || return 1
     ! awk -v own="$own" '$1 == "unicast_src_ip" && $2 == own { found = 1 } END { exit !found }' \
@@ -999,7 +1026,14 @@ if (( ! REJOINING )) && diff -qr "$OLD_RELEASE" "$STAGE" >/dev/null; then
     # And the engine, which a reboot or a person may have stopped.
     sync_waf_engine 0 || exit 1
     sync_dns_listener "$CURRENT" || exit 1
-    sync_keepalived || exit 1
+    if ! sync_keepalived; then
+        #
+        # Nothing was switched in this run, so nothing laid the marker down. A
+        # node the release does not name is not complete, and the status says so.
+        #
+        (( ! NAME_UNMATCHED )) || mark_incomplete
+        exit 1
+    fi
     sync_rsyslog_forward || exit 1
     rm -f "$INCOMPLETE"
     exit 0

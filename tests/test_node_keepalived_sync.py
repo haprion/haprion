@@ -501,6 +501,48 @@ class TheProductsKeepalivedConf(Step):
         self.assertFalse(self.conf.exists())
         self.assertIn("no interface carries this node's address 192.0.2.99", output)
 
+    def rename_host(self) -> None:
+        (self.root / "bin" / "hostname").write_text("#!/bin/sh\necho node-z\n")
+
+    def test_the_name_node_conf_carries_finds_the_file_after_a_rename(self) -> None:
+        # B447 N02: the host name changed; the name Haprion knows the node by did not.
+        self.rename_host()
+
+        code, output = self.run_step("sync_keepalived", ACTIVE_EXIT="3", NODE_NAME="node-a")
+
+        self.assertEqual(code, 0, output)
+        self.assertIn("interface ens18\n", self.conf.read_text())
+
+    def test_a_release_with_no_file_for_this_node_is_an_error_not_silence(self) -> None:
+        self.rename_host()
+
+        code, output = self.run_step("sync_keepalived", ACTIVE_EXIT="3")
+
+        self.assertEqual(code, 1, output)
+        self.assertFalse(self.conf.exists())
+        self.assertIn(
+            "ERROR: keepalived: the release names no file for this node (name node-z)", output
+        )
+        self.assertIn("haprion-node-prepare", output)
+
+    def test_a_node_whose_keepalived_conf_is_a_person_s_is_not_blamed(self) -> None:
+        self.rename_host()
+        self.conf.write_text("vrrp_instance alpha {\n}\n")
+
+        code, output = self.run_step("sync_keepalived")
+
+        self.assertEqual(code, 0, output)
+        self.assertNotIn("ERROR", output)
+
+    def test_a_release_without_the_product_s_files_is_not_blamed(self) -> None:
+        self.rename_host()
+        self.node_file.unlink()
+
+        code, output = self.run_step("sync_keepalived")
+
+        self.assertEqual(code, 0, output)
+        self.assertNotIn("ERROR", output)
+
     def test_the_mark_is_the_generator_s(self) -> None:
         from haprion import keepalived_conf
 
@@ -509,7 +551,7 @@ class TheProductsKeepalivedConf(Step):
         self.assertIn(
             f'KEEPALIVED_INTERFACE_FROM_NODE="{keepalived_conf.INTERFACE_FROM_NODE}"', text
         )
-        self.assertIn('keepalived/node-$(hostname).conf"', text)
+        self.assertIn('keepalived/node-$(node_name).conf"', text)
         self.assertEqual(keepalived_conf.file_name("x"), "node-x.conf")
 
 

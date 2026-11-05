@@ -2893,6 +2893,12 @@ moved rather than rebuilt: *Change host* on its row under *Settings → Nodes & 
 - The manager asks the node at the new name. The answer must come with a key already pinned, and name
   the node and its cluster. Anything else puts every file back, and the node keeps its old host.
 - Its fetch keys stay the node's, written again with the new host's addresses in `from=`.
+- The node itself keeps the name Haprion knows it by in `/etc/haprion/node.conf` (`NODE_NAME`), and
+  looks its `keepalived.conf` up by it. A host renamed on its own keeps working under the old name,
+  and the dashboard says the host name differs. After a rename and *Change host*, run
+  `sudo haprion-node-prepare` on the node so it takes the new name. Until then a deploy says
+  *the release names no file for this node* and the node shows as incomplete. A node prepared
+  before `NODE_NAME` existed uses its host name, as before.
 - With counter sharing on (`peers`), the next publish and deploy carry the new address to the nodes.
 
 A node that gets a new address must be reached on it before the manager can ask. sshd on the node

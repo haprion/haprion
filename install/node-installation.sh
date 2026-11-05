@@ -36,7 +36,9 @@ SCRIPTS=(
 # incompatible. And for the WAF engine (B231): a node whose status reports no
 # `waf_engine` is one the manager does not offer the engine on. And for server
 # state (B263): a node without the key line or the helper is one node that did
-# not take a drain, reported by name in a `partial` job.
+# not take a drain, reported by name in a `partial` job. And for NODE_NAME in
+# node.conf (B447): a node without it looks its keepalived file up by its host
+# name, as it always did, and the status schema is unchanged.
 NODE_API=1
 
 NODE_INSTALLATION="${NODE_INSTALLATION:-/etc/haprion/node-installation.json}"

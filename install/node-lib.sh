@@ -709,7 +709,8 @@ render_node_conf() {
 # whoever can edit it can redirect this node to another source.
 
 CLUSTER=\"${cluster}\"
-MANAGER=\"${MANAGER_HOST}\"
+MANAGER=\"${MANAGER_HOST}\"${NODE_NAME:+
+NODE_NAME=\"${NODE_NAME}\"}
 
 # Where this node fetches its published configuration from.
 CONFIG_PULL_USER=\"${PULL_USER}\"

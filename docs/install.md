@@ -271,6 +271,9 @@ What the block contains, and how to prepare a node without the web interface, is
 A node accepts the manager's keys only from the manager's address. If the manager moves to another address, run
 `sudo haprion-node-prepare --manager <new name or address>` on each node.
 
+A node given another address keeps sshd on the old one until `sudo haprion-node-prepare` runs on it: every run
+moves sshd to an address the node has. Run it from the node's console before *Change host* or `haprion-node pull-keys`.
+
 A rotated manager key, or one added after the join, reaches a joined node only by hand: on the node,
 `sudo haprion-node-prepare --key <purpose>="<public key>"`, where the purpose is `deploy`, `cert_deploy`,
 `server_state`, `status`, `probe`, `backup` or `traffic_log`. It replaces that one key with the binding the

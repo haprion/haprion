@@ -2895,6 +2895,13 @@ moved rather than rebuilt: *Change host* on its row under *Settings → Nodes & 
 - Its fetch keys stay the node's, written again with the new host's addresses in `from=`.
 - With counter sharing on (`peers`), the next publish and deploy carry the new address to the nodes.
 
+A node that gets a new address must be reached on it before the manager can ask. sshd on the node
+listens on the old address only ([described under HAProxy and keepalived baseline](#haproxy-and-keepalived-baseline)), so
+change the address, run `sudo haprion-node-prepare` on the node from its console (it moves sshd to
+an address the node has), and then do *Change host*. The same order holds for a machine whose name
+stays and whose address changes in DNS: run `sudo haprion-node-prepare`, then `sudo haprion-node
+pull-keys`.
+
 A machine whose name stays and whose address changes in DNS needs `sudo haprion-node pull-keys`
 instead. A machine with another host key is another machine: that is a restore, or a removal and an
 addition.
@@ -7230,11 +7237,12 @@ ListenAddress 192.0.2.11
 
 How the step treats sshd:
 
-- It changes sshd only while sshd listens on every address. An sshd already limited to chosen
-  addresses is left as it is.
+- It changes sshd while sshd listens on every address, and when its own file names an address the
+  node no longer has (or the virtual one): every run checks the file against the node's addresses and
+  writes the node's current one. An sshd limited to chosen addresses some other way is left as it is.
 - It refuses the virtual address, and any address the node does not have.
 - After restarting sshd it checks that sshd answers on the address and no longer on every address.
-  If not, it removes the file, puts sshd back as it was, and stops.
+  If not, it puts the file back as it was (removes it, if there was none), restarts sshd, and stops.
 - Open SSH sessions survive the restart.
 - On Ubuntu, sshd is socket activated, so the restart is of `ssh.socket`. `ip_nonlocal_bind` above
   is what lets sshd come up at boot before the address does.

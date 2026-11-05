@@ -89,15 +89,22 @@ def function(script: str, name: str) -> str:
 #
 FAKES = {
     "sshd": """#!/bin/bash
-[[ "$1" == -t ]] && exit 0
+if [[ "$1" == -t ]]; then
+    [[ -n "${REFUSE:-}" && "$(cat "$SSHD_LISTEN" 2>/dev/null)" == *"${REFUSE}"* ]] && exit 1
+    exit 0
+fi
 echo "port 22"
-if [[ -f "$SSHD_LISTEN" ]]; then echo "listenaddress 192.0.2.11:22"; fi
+if [[ -f "$SSHD_LISTEN" ]]; then
+    sed -n 's/^ListenAddress \\(.*\\)$/listenaddress \\1:22/p' "$SSHD_LISTEN"
+fi
 if [[ ! -f "$SSHD_LISTEN" || -n "${STUCK:-}" || -n "${CHOSEN:-}" ]]; then
     [[ -n "${CHOSEN:-}" ]] && echo "listenaddress 192.0.2.11:22" || echo "listenaddress 0.0.0.0:22"
 fi
 """,
     "ss": """#!/bin/bash
-if [[ -f "$SSHD_LISTEN" ]]; then echo "LISTEN 0 4096 192.0.2.11:22 0.0.0.0:*"; fi
+if [[ -f "$SSHD_LISTEN" ]]; then
+    sed -n 's/^ListenAddress \\(.*\\)$/LISTEN 0 4096 \\1:22 0.0.0.0:*/p' "$SSHD_LISTEN"
+fi
 if [[ ! -f "$SSHD_LISTEN" || -n "${STUCK:-}" ]]; then echo "LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*"; fi
 """,
     "systemctl": '#!/bin/bash\necho "$*" >> "$CALLS"\n[[ "$1" == is-active ]] && exit 1\nexit 0\n',
@@ -135,7 +142,9 @@ class TheNodeStepTakesSshdOffTheVirtualAddress(unittest.TestCase):
                 'install_file() { printf "%s\\n" "$4" > "$1"; log "  written  $1"; }',
                 f'SSHD_LISTEN="{self.drop_in}"',
                 function(script, "sshd_restart"),
+                'SSHD_LISTEN_BEFORE=""',
                 function(script, "sshd_put_back"),
+                function(script, "sshd_listen_file_stale"),
                 function(script, "sshd_off_the_virtual_address"),
                 "sshd_off_the_virtual_address",
             )
@@ -207,6 +216,44 @@ class TheNodeStepTakesSshdOffTheVirtualAddress(unittest.TestCase):
         self.assertIn("put back as it was", run.stderr)
         self.assertFalse(self.drop_in.exists())
         self.assertEqual(self.restarts(), ["restart ssh.service", "restart ssh.service"])
+
+    def stale_file(self, address: str = "192.0.2.99") -> str:
+        text = f"# Installed by install/04-node-prepare (B310).\nListenAddress {address}\n"
+        self.drop_in.write_text(text)
+        return text
+
+    def test_a_listen_file_naming_an_address_the_node_lost_is_rewritten(self) -> None:
+        # B447 N01: the node got a new address; Change host and pull-keys need sshd there.
+        self.stale_file()
+        run = self.run_step()
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("ListenAddress 192.0.2.11\n", self.drop_in.read_text())
+        self.assertNotIn("192.0.2.99", self.drop_in.read_text())
+        self.assertIn("192.0.2.99", run.stdout)
+        self.assertIn("applied  sshd listens on 192.0.2.11:22 only", run.stdout)
+        self.assertEqual(self.restarts(), ["restart ssh.service"])
+
+    def test_a_listen_file_naming_the_virtual_address_is_rewritten(self) -> None:
+        self.stale_file("192.0.2.20")
+        run = self.run_step()
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("ListenAddress 192.0.2.11\n", self.drop_in.read_text())
+
+    def test_a_listen_file_naming_an_address_the_node_has_is_left_alone(self) -> None:
+        text = self.stale_file("192.0.2.11")
+        run = self.run_step()
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("ok       sshd listens on chosen addresses only", run.stdout)
+        self.assertEqual(self.drop_in.read_text(), text)
+        self.assertEqual(self.restarts(), [])
+
+    def test_a_refused_rewrite_puts_the_old_file_back_not_nothing(self) -> None:
+        text = self.stale_file()
+        run = self.run_step(REFUSE="192.0.2.11")
+        self.assertEqual(run.returncode, 1)
+        self.assertIn("put back as they were", run.stderr)
+        self.assertEqual(self.drop_in.read_text(), text)
+        self.assertEqual(self.restarts(), ["restart ssh.service"])
 
 
 class AFreshNodeTakesTheReleaseLayout(unittest.TestCase):

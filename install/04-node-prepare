@@ -748,7 +748,13 @@ fi
 # the join connection), else - a node prepared by hand or again - the one this
 # node reaches the management host from. A node with several addresses may
 # answer the manager from another one than it was reached on, which is why the
-# join carries the address. An sshd already on chosen addresses is left as it is.
+# join carries the address. An sshd already on chosen addresses is left as it is -
+# except that this step's own file is checked against the node's addresses every
+# time it runs: a node given another address (B447, N01) would otherwise keep
+# sshd on the old one, where nothing answers, and Change host and pull-keys
+# could not reach it. A file naming an address the node no longer has, or the
+# virtual one, is rewritten the same careful way; a ListenAddress an operator
+# wrote anywhere else is not this step's and is not looked at.
 #
 # Changed carefully, because it is how the operator reaches this node: the
 # address must be on this node and not the virtual one, `sshd -t` must pass,
@@ -766,22 +772,55 @@ sshd_restart() {
     fi
 }
 
+#
+# What the file held before this run changed it, if it existed: sshd is given
+# that back, never left without a ListenAddress it had.
+#
+SSHD_LISTEN_BEFORE=""
 sshd_put_back() {
+    if [[ -n "${SSHD_LISTEN_BEFORE:-}" ]]; then
+        printf '%s\n' "$SSHD_LISTEN_BEFORE" > "$SSHD_LISTEN"
+        sshd -t && sshd_restart || true
+        die "$1; ${SSHD_LISTEN} and sshd put back as they were"
+    fi
     rm -f "$SSHD_LISTEN"
     sshd -t && sshd_restart || true
     die "$1; ${SSHD_LISTEN} removed and sshd put back as it was"
 }
 
+#
+# The addresses in this step's own file that the node cannot use: not one of its
+# addresses, or the virtual one. One per line; nothing when the file is absent
+# or all are usable.
+#
+sshd_listen_file_stale() {
+    local listed address
+    [[ -f "$SSHD_LISTEN" ]] || return 0
+    while read -r listed; do
+        address="${listed%:*}"
+        [[ "$address" =~ ^[0-9]+(\.[0-9]+){3}$ ]] || continue
+        if [[ "$address" == "$(cluster_value VIP "$CLUSTER")" ]] \
+            || ! ip -4 -o addr show | grep -qF " inet ${address}/"; then
+            echo "$address"
+        fi
+    done < <(awk 'tolower($1) == "listenaddress" { print $2 }' "$SSHD_LISTEN")
+}
+
 sshd_off_the_virtual_address() {
-    local sshd_settings manager_address own_address ssh_port listening_here
+    local sshd_settings manager_address own_address ssh_port listening_here stale
     if ! command -v sshd >/dev/null; then
         warn "sshd is not installed: the management host reaches nodes over ssh"
     elif ! sshd_settings="$(sshd -T 2>/dev/null)"; then
         warn "sshd -T could not read sshd's configuration; its listen address is not checked"
-    elif ! awk '$1 == "listenaddress" { print $2 }' <<<"$sshd_settings" \
+    elif stale="$(sshd_listen_file_stale)" && [[ -z "$stale" ]] \
+            && ! awk '$1 == "listenaddress" { print $2 }' <<<"$sshd_settings" \
             | grep -qE '^(0\.0\.0\.0|\[::\]):'; then
         log "  ok       sshd listens on chosen addresses only"
     else
+        if [[ -n "$stale" ]]; then
+            log "  stale    ${SSHD_LISTEN} names $(tr '\n' ' ' <<<"${stale% }")- not an address this node can use"
+            SSHD_LISTEN_BEFORE="$(cat "$SSHD_LISTEN")"
+        fi
         if [[ -n "${NODE_LISTEN_ADDRESS:-}" ]]; then
             own_address="$NODE_LISTEN_ADDRESS"
         else

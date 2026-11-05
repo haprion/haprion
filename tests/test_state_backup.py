@@ -5,6 +5,8 @@ from __future__ import annotations
 import fcntl
 import io
 import json
+import os
+import stat
 import tempfile
 import time
 import unittest
@@ -349,6 +351,8 @@ class TheRunAnswersWithinItsBudget(unittest.TestCase):
         )
 
     def backup(self, nodes: int, **kwargs: Any) -> state_backup.BackupResult:
+        kwargs.setdefault("lock_path", self.raw / "lock")
+        kwargs.setdefault("legacy_lock_path", None)
         cluster = mock.Mock(
             nodes=tuple(Node(name=f"node-{i}", mgmt_host="node.example") for i in range(nodes))
         )
@@ -360,7 +364,6 @@ class TheRunAnswersWithinItsBudget(unittest.TestCase):
             fetch=self.slow,
             validator=self.valid,
             now=datetime(2026, 10, 22, 12, tzinfo=UTC),
-            lock_path=self.raw / "lock",
             restore_root=self.raw / "runs",
             clock=self.clock,
             wait=self.wait,
@@ -387,6 +390,36 @@ class TheRunAnswersWithinItsBudget(unittest.TestCase):
 
         self.assertEqual(self.asked, [("node-0", 300.0), ("node-1", 150.0)])
 
+    def test_the_lock_is_a_file_in_the_backup_root_that_only_root_opens(self) -> None:
+        """Review 2026-11-05, R06: a file in /run/lock was 0644 and any account could hold it."""
+
+        before = os.umask(0o022)
+        self.addCleanup(os.umask, before)
+        self.backup(1, lock_path=None)
+        lock = self.root / state_backup.LOCK_NAME
+        self.assertEqual(stat.S_IMODE(lock.stat().st_mode), 0o600)
+
+    def test_a_lock_the_release_before_took_in_run_lock_is_waited_for_and_made_root_only(
+        self,
+    ) -> None:
+        """A run of that release can be under way while the package is replaced."""
+
+        legacy = self.raw / "legacy.lock"
+        legacy.write_bytes(b"")
+        legacy.chmod(0o644)
+        with legacy.open("a+b") as other:
+            fcntl.flock(other.fileno(), fcntl.LOCK_EX)
+            with self.assertRaises(state_backup.BackupBusy):
+                self.backup(1, lock_path=None, legacy_lock_path=legacy)
+        self.assertEqual(self.asked, [])
+        self.assertEqual(stat.S_IMODE(legacy.stat().st_mode), 0o600)
+        self.backup(1, lock_path=None, legacy_lock_path=legacy)
+        self.assertEqual(len(self.asked), 1)
+
+    def test_a_missing_or_foreign_legacy_lock_is_not_created_or_waited_for(self) -> None:
+        self.backup(1, lock_path=None, legacy_lock_path=self.raw / "none.lock")
+        self.assertFalse((self.raw / "none.lock").exists())
+
     def test_a_lock_held_too_long_is_busy_and_nothing_is_asked(self) -> None:
         with (self.raw / "lock").open("a+b") as other:
             fcntl.flock(other.fileno(), fcntl.LOCK_EX)
@@ -404,17 +437,20 @@ if __name__ == "__main__":
 class TheServiceTemplateCanTakeTheLock(unittest.TestCase):
     """`ProtectSystem=strict` leaves /run read-only unless the unit says otherwise.
 
-    The engine serialises cluster runs on a lock under /run/lock. A template
-    that only opens `backup_root` would fail every timer run on EROFS, and no
-    unit test of the engine itself could notice.
+    The engine serialises cluster runs on a lock in the backup root, which the
+    unit opens for the archives anyway and which only root can reach (review
+    2026-11-05, R06). A lock anywhere else would fail every timer run on EROFS
+    under a unit rendered before the move, and no unit test of the engine
+    itself could notice.
     """
 
-    def test_the_lock_directory_is_a_read_write_path(self) -> None:
+    def test_the_lock_is_in_the_backup_root_which_is_a_read_write_path(self) -> None:
         installer = (Path(__file__).resolve().parents[1] / "install/02-manager-config").read_text(
             encoding="utf-8"
         )
         line = next(line for line in installer.splitlines() if line.startswith("ReadWritePaths="))
-        self.assertIn(str(state_backup.LOCK_PATH.parent), line.split("=", 1)[1].split())
+        self.assertIn("${BACKUP_ROOT}", line.split("=", 1)[1].split())
+        self.assertNotIn("/run/lock", line)
 
     def test_the_restore_runs_the_sweep_puts_away_are_a_read_write_path(self) -> None:
         installer = (Path(__file__).resolve().parents[1] / "install/02-manager-config").read_text(

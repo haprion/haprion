@@ -9,11 +9,12 @@ never visible to the listing command.
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import os
 import stat
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -50,7 +51,17 @@ MIN_FETCH_SECONDS = 10.0
 # another count (`backup_retention`).  Retention is deliberately per node: a
 # two-node cluster on the default therefore holds 28 archives in total.
 RETENTION = DEFAULT_RETENTION
-LOCK_PATH = Path("/run/lock/haprion-state-backup.lock")
+#
+# The global lock is a file in the backup root: the root the engine has just
+# proved is root's and 0700, and the one directory every unit that runs it
+# already opens for writing. In the shared /run/lock (1777) any local account
+# could hold the lock, and one that created the file before root made root's
+# own open fail (review 2026-11-05, R06).
+#
+LOCK_NAME = ".state-backup.lock"
+# Where the release before took it. A run of that release can be under way
+# while the package is replaced; this one waits for it there too.
+LEGACY_LOCK_PATH = Path("/run/lock/haprion-state-backup.lock")
 
 
 class BackupRunError(RuntimeError):
@@ -280,7 +291,8 @@ def run(
     fetch: Fetch = fetch_over_ssh,
     validator: Callable[[Path], ArchiveFacts] = validate,
     now: datetime | None = None,
-    lock_path: Path = LOCK_PATH,
+    lock_path: Path | None = None,
+    legacy_lock_path: Path | None = LEGACY_LOCK_PATH,
     restore_root: Path = restore_runs.RUN_ROOT,
     budget: float = RUN_BUDGET_SECONDS,
     clock: Callable[[], float] = monotonic,
@@ -309,12 +321,13 @@ def run(
     version = taken.astimezone().strftime("%Y-%m-%d_%H-%M-%S")
     deadline = clock() + budget
     try:
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        lock_file = lock_path.open("a+b")
+        lock_file = _open_lock(root / LOCK_NAME if lock_path is None else lock_path)
     except OSError as exc:
         raise BackupRunError(f"the backup lock cannot be opened: {exc.strerror or exc}") from exc
-    with lock_file as lock:
-        _lock_within(lock.fileno(), min(deadline, clock() + LOCK_WAIT_SECONDS), clock, wait)
+    with lock_file as lock, contextlib.ExitStack() as held_locks:
+        until = min(deadline, clock() + LOCK_WAIT_SECONDS)
+        _lock_within(lock.fileno(), until, clock, wait)
+        held_locks.enter_context(_legacy_lock(legacy_lock_path, until, clock, wait))
         #
         # Runs past their hour first, as a restore step would: nothing else
         # puts them away when no restore runs for weeks (found 2026-10-09,
@@ -348,6 +361,52 @@ def run(
                 )
             )
     return BackupResult(cluster=cluster_id, version=version, nodes=tuple(nodes))
+
+
+def _open_lock(path: Path) -> BinaryIO:
+    """The lock file, made 0600 whatever the umask, and opened for locking only."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    try:
+        os.fchmod(descriptor, 0o600)
+        return os.fdopen(descriptor, "a+b")
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+@contextlib.contextmanager
+def _legacy_lock(
+    path: Path | None, until: float, clock: Callable[[], float], wait: Callable[[float], None]
+) -> Iterator[None]:
+    """The lock a run of the release before holds, if there is one, for this run's length.
+
+    Only a regular file of the running user's is honoured and never created:
+    that is root's own file from before the move. It is made 0600 first, so
+    that from now on no other account can hold it.
+    """
+
+    descriptor: int | None = None
+    if path is not None:
+        try:
+            descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK)
+            details = os.fstat(descriptor)
+            if not stat.S_ISREG(details.st_mode) or details.st_uid != os.geteuid():
+                os.close(descriptor)
+                descriptor = None
+            else:
+                with suppress(OSError):  # a unit that sees /run/lock read-only still waits
+                    os.fchmod(descriptor, 0o600)
+        except OSError:
+            descriptor = None
+    try:
+        if descriptor is not None:
+            _lock_within(descriptor, until, clock, wait)
+        yield
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def _lock_within(

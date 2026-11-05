@@ -1023,7 +1023,13 @@ start_units() {
 # from starting twice, not a terminal from starting the same thing. The second
 # waits for the first rather than failing: the timer's run then still happens.
 #
-LOCK=/run/lock/haprion-backup.lock
+# Under /run/haprion, root's alone: in the shared /run/lock (1777) any local
+# account could hold the lock, and every dump then failed after the wait
+# (review 2026-11-05, R06).
+LOCK=/run/haprion/backup.lock
+# Where the release before took it. A run of that release can be under way while
+# the package is replaced, so this one waits for it there too.
+LEGACY_LOCK=/run/lock/haprion-backup.lock
 LOCK_WAIT_SECONDS=1800
 
 #
@@ -1048,12 +1054,32 @@ hold_release_lock_for_restore() {
     printf '%s\n' "$$" >"$RELEASE_LOCK"
 }
 
-take_lock() {
-    exec 9>"$LOCK"
-    flock -n 9 && return
+wait_for_lock() {
+    local descriptor="$1" path="$2"
+    flock -n "$descriptor" && return
     log "another haprion-backup dump or verify-restore is running; waiting for it"
-    flock -w "$LOCK_WAIT_SECONDS" 9 \
-        || die "another haprion-backup run still holds ${LOCK} after ${LOCK_WAIT_SECONDS} s"
+    flock -w "$LOCK_WAIT_SECONDS" "$descriptor" \
+        || die "another haprion-backup run still holds ${path} after ${LOCK_WAIT_SECONDS} s"
+}
+
+take_lock() {
+    local mask
+    mkdir -p -- "${LOCK%/*}"
+    mask="$(umask)"
+    umask 077
+    exec 9>>"$LOCK"
+    umask "$mask"
+    chmod 600 -- "$LOCK"
+    wait_for_lock 9 "$LOCK"
+    #
+    # Only a regular file of root's, and never made: the release before's own.
+    # Closed to other accounts from here on.
+    #
+    if [[ -f "$LEGACY_LOCK" && ! -L "$LEGACY_LOCK" && -O "$LEGACY_LOCK" ]]; then
+        chmod 600 -- "$LEGACY_LOCK" 2>/dev/null || true
+        exec 7<"$LEGACY_LOCK"
+        wait_for_lock 7 "$LEGACY_LOCK"
+    fi
 }
 
 #

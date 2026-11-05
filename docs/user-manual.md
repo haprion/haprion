@@ -872,7 +872,7 @@ A break-glass account signs in with its password even while sign-in goes through
 | `role <user> admin\|reader` | give a local account another role |
 | `disable <user>` | block sign-in and end every session |
 | `enable <user>` | allow sign-in again |
-| `unlock <user>` | clear the sign-in throttle |
+| `unlock <user>` | clear the sign-in throttle of an account (a name no account has is refused) |
 | `revoke <user>` | end every session without changing the password |
 | `list [--json]` | accounts, roles, kind (`local`, `break-glass`, `sso`), and how many live sessions each has |
 | `apply <file> [--prune] [--check] [--json]` | the accounts a file lists, written where they differ (below) |
@@ -885,7 +885,8 @@ back is usually why either command is run.
 from what is stored. It goes through the same code and the same database guards as the *Users* page:
 
 - It refuses to remove the last active admin, or the break-glass admin that sign-in through a provider
-  needs. Nothing of a refused file is written.
+  needs. Nothing of a refused file is written. A file may hand admin or the break-glass mark from one
+  account to another, whichever stands first.
 - A password is compared with the stored one, not set again, so applying the same file twice changes
   nothing. A changed password ends that account's sessions, as `reset` does.
 - The file carries passwords, so it is refused unless only its owner may read it (mode `0600`).

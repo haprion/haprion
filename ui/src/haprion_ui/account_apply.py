@@ -285,6 +285,43 @@ def write(connection: Any, the_plan: Plan, *, actor: str) -> int:
             detail={"account": account, "via": "cli", **detail},
         )
 
+    def change(row: Stored, account: Wanted, fields: tuple[str, ...], *, adding: bool) -> int:
+        """The part of one account's changes that adds (`adding`) or takes away
+        (not): an admin or a break-glass mark given, an account enabled; or one
+        taken, an account disabled. A password does not touch a guard."""
+
+        ended_here = 0
+        if "role" in fields and (account.role == "admin") == adding:
+            db.set_role(connection, user_id=row.id, role=account.role)
+            audit("role_changed", row.username, role=account.role, previous=row.role)
+        if "password" in fields and adding:
+            if account.password is None:
+                raise ApplyError(f"{row.username}: no password to set")
+            ended = db.renew_sign_in(
+                connection, user_id=row.id, password_hash=auth.hash_password(account.password)
+            )
+            ended_here += ended
+            audit("password_reset", row.username, sessions_revoked=ended)
+        if "break_glass" in fields and bool(account.break_glass) == adding:
+            ended = db.set_break_glass(
+                connection, user_id=row.id, break_glass=bool(account.break_glass)
+            )
+            ended_here += ended
+            audit(
+                "break_glass_changed",
+                row.username,
+                break_glass=bool(account.break_glass),
+                sessions_revoked=ended,
+            )
+        if "disabled" in fields and (not account.disabled) == adding:
+            ended = db.set_disabled(connection, user_id=row.id, disabled=bool(account.disabled))
+            ended_here += ended
+            if account.disabled:
+                audit("account_disabled", row.username, sessions_revoked=ended)
+            else:
+                audit("account_enabled", row.username)
+        return ended_here
+
     try:
         for account in the_plan.created:
             if account.password is None:
@@ -308,36 +345,17 @@ def write(connection: Any, the_plan: Plan, *, actor: str) -> int:
                     connection, user_id=stored[account.username.lower()].id, disabled=True
                 )
                 audit("account_disabled", account.username, sessions_revoked=0)
-        for row, account, fields in the_plan.updated:
-            if "role" in fields:
-                db.set_role(connection, user_id=row.id, role=account.role)
-                audit("role_changed", row.username, role=account.role, previous=row.role)
-            if "password" in fields:
-                if account.password is None:
-                    raise ApplyError(f"{row.username}: no password to set")
-                ended = db.renew_sign_in(
-                    connection, user_id=row.id, password_hash=auth.hash_password(account.password)
-                )
-                ended_total += ended
-                audit("password_reset", row.username, sessions_revoked=ended)
-            if "break_glass" in fields:
-                ended = db.set_break_glass(
-                    connection, user_id=row.id, break_glass=bool(account.break_glass)
-                )
-                ended_total += ended
-                audit(
-                    "break_glass_changed",
-                    row.username,
-                    break_glass=bool(account.break_glass),
-                    sessions_revoked=ended,
-                )
-            if "disabled" in fields:
-                ended = db.set_disabled(connection, user_id=row.id, disabled=bool(account.disabled))
-                ended_total += ended
-                if account.disabled:
-                    audit("account_disabled", row.username, sessions_revoked=ended)
-                else:
-                    audit("account_enabled", row.username)
+        #
+        # The database guards (the last active admin, the break-glass admin
+        # sign-in through the provider needs) fire per row, so the order of
+        # the rows is the order of the checks. A file that hands admin over
+        # must not be refused because the account giving it up stands first:
+        # everything that adds comes before everything that takes away, and
+        # removals come last (review 26-11-05, A03).
+        #
+        for adding in (True, False):
+            for row, account, fields in the_plan.updated:
+                ended_total += change(row, account, fields, adding=adding)
         for row in the_plan.deleted:
             if db.delete_account(connection, user_id=row.id):
                 audit("account_deleted", row.username, role=row.role, source=row.source)

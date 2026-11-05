@@ -381,10 +381,21 @@ def command_unlock(environment: Environment, args: argparse.Namespace) -> int:
     """
 
     with connect(environment) as connection:
-        db.unlock_account(connection, username=args.username, actor=actor_name())
-        _audit(connection, "throttle_cleared", args.username)
+        #
+        # Only a name an account has: for any other the throttle keys on a
+        # digest this row could not match, and the typed text may be a
+        # password put in the wrong field, which is not kept (review
+        # 26-11-05, A07). The page's *Unlock* reaches existing accounts only.
+        #
+        user_id = _user_id(connection, args.username)
+        with connection.cursor() as cursor:
+            cursor.execute("select username from app_user where id = %s", (user_id,))
+            row = cursor.fetchone()
+        name = str(row[0]) if row is not None else args.username
+        db.unlock_account(connection, username=name, actor=actor_name())
+        _audit(connection, "throttle_cleared", name)
         connection.commit()
-    print(f"unlocked {args.username}")
+    print(f"unlocked {name}")
     return 0
 
 

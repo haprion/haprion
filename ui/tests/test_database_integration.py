@@ -6205,6 +6205,77 @@ class TheAccountToolAgainstARealDatabase(AccountToolHarness):
         self.assertIn("has no password", output)
         asked.assert_not_called()
 
+    def test_apply_hands_admin_over_whichever_account_the_file_names_first(self) -> None:
+        """Review 26-11-05, A03: the guard fires per row, and the first order was refused."""
+
+        from haprion_ui import account_apply
+        from haprion_ui.account_apply import Wanted
+
+        # (what, bob before the file, the file's two entries leaving first)
+        handovers: dict[str, tuple[dict[str, Any], tuple[Wanted, Wanted]]] = {
+            "role": (
+                {"role": "reader"},
+                (Wanted("alice", "reader", break_glass=True), Wanted("bob", "admin")),
+            ),
+            "disabled": (
+                {"disabled": True},
+                (Wanted("alice", "admin", disabled=True), Wanted("bob", "admin", disabled=False)),
+            ),
+            # With sign-in through the provider on, the break-glass admin is guarded too.
+            "break_glass": (
+                {"break_glass": False},
+                (
+                    Wanted("alice", "admin", break_glass=False),
+                    Wanted("bob", "admin", break_glass=True),
+                ),
+            ),
+        }
+
+        def reset() -> None:
+            with self.connect() as connection:
+                connection.execute("truncate app_user cascade")
+                connection.execute(
+                    "update oidc_provider set enabled = false, issuer = null, "
+                    "client_id = null, client_secret_sealed = null, key_id = null, "
+                    "admin_group = null"
+                )
+                connection.commit()
+
+        self.addCleanup(reset)
+        for what, (bob, (leaving, arriving)) in handovers.items():
+            for order in ((leaving, arriving), (arriving, leaving)):
+                with self.subTest(what=what, first=order[0].username):
+                    reset()
+                    self.add("alice", break_glass=True)
+                    self.add("bob", **{"break_glass": True, **bob})
+                    if what == "break_glass":
+                        with self.connect() as connection:
+                            connection.execute(
+                                "update oidc_provider set issuer = 'https://auth.example/', "
+                                "client_id = 'client', client_secret_sealed = '\\x00', "
+                                "key_id = 'k1', admin_group = 'g'"
+                            )
+                            connection.execute(
+                                "update oidc_provider set verified_revision = revision"
+                            )
+                            connection.execute("update oidc_provider set enabled = true")
+                            connection.commit()
+                    with self.connect() as connection:
+                        stored = account_apply.stored_accounts(connection)
+                        the_plan = account_apply.plan(order, stored, prune=False)
+                        account_apply.write(connection, the_plan, actor="operator")
+                        connection.commit()
+                        rows = connection.execute(
+                            "select username, role, disabled, break_glass from app_user order by 1"
+                        ).fetchall()
+                    self.assertEqual(
+                        [(r[0], r[1], r[2]) for r in rows],
+                        [
+                            (w.username, w.role, bool(w.disabled))
+                            for w in sorted(order, key=lambda w: w.username)
+                        ],
+                    )
+
     def test_list_names_each_account_s_kind(self) -> None:
         self.add("alice", break_glass=True)
         self.add("bob", role="reader", source="oidc", password_hash=None)
@@ -6234,6 +6305,34 @@ class TheAccountToolAgainstARealDatabase(AccountToolHarness):
         self.assertEqual(accounts, {"alice": True, "carol": False})
         self.assertEqual(self.run_tool("unlock", "alice")[0], 0)
         self.assertRegex(self.run_tool("list")[1], r"alice\s+admin\s+local\s+active")
+
+    def test_unlock_of_a_name_no_account_has_says_so_and_stores_nothing(self) -> None:
+        """Review 26-11-05, A07: it said "unlocked" and kept the typed name in clear text."""
+
+        def rows() -> tuple[list[Any], list[Any]]:
+            with self.connect() as connection:
+                return (
+                    connection.execute(
+                        "select username_normalised from login_unlock order by id"
+                    ).fetchall(),
+                    connection.execute(
+                        "select detail->>'account' from audit_event "
+                        "where action = 'throttle_cleared' order by id"
+                    ).fetchall(),
+                )
+
+        self.add("alice")
+        before = rows()
+        code, output = self.run_tool("unlock", "alise")
+        self.assertEqual(code, 66)
+        self.assertIn("no such account: alise", output)
+        self.assertEqual(rows(), before)
+
+        # A known name, typed in any case, is kept as the account's own.
+        self.assertEqual(self.run_tool("unlock", "ALICE")[0], 0)
+        unlocks, audited = rows()
+        self.assertEqual(unlocks[len(before[0]) :], [("alice",)])
+        self.assertEqual(audited[len(before[1]) :], [("alice",)])
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")

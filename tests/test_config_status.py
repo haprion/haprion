@@ -411,6 +411,43 @@ class JsonTests(StatusFixture):
         self.assertNotEqual(err.getvalue(), "")
 
 
+class FlagsInAnyOrderTests(StatusFixture):
+    """W04: `--json` is a flag like the others, wherever a script puts it."""
+
+    def test_json_is_read_wherever_it_stands(self) -> None:
+        for argv in (
+            ["--json", "-c", "alpha"],
+            ["-c", "alpha", "--json"],
+            ["--cluster", "alpha", "--json"],
+            ["--json", "--cluster", "alpha"],
+        ):
+            with self.subTest(argv):
+                code, shown, _ = self.run_status(*argv, published=stamp("alpha", 1, self.commit))
+                answer = assert_contract("haprion-config-status", shown)
+                self.assertEqual((code, answer["cluster"]), (0, "alpha"))
+
+    def test_diff_is_read_wherever_it_stands(self) -> None:
+        code, shown, _ = self.run_status("--diff", "-c", "alpha")
+        self.assertEqual(code, 0)
+        self.assertNotIn("Usage", shown)
+
+    def test_json_and_diff_together_are_still_a_mistake(self) -> None:
+        with self.assertRaises(SystemExit) as raised, redirect_stderr(io.StringIO()):
+            config_status.main(["-c", "alpha", "--json", "--diff"], stream_out=io.StringIO())
+        self.assertEqual(raised.exception.code, 64)
+
+    def test_a_cluster_that_cannot_be_looked_up_is_a_document(self) -> None:
+        def unknown(_cluster: str) -> Path:
+            raise SystemExit(64)
+
+        out = io.StringIO()
+        with self.assertRaises(SystemExit) as raised, redirect_stderr(io.StringIO()):
+            config_status.main(["--json", "-c", "nowhere"], stream_out=out, config_path=unknown)
+
+        answer = assert_contract("haprion-config-status", out.getvalue())
+        self.assertEqual((raised.exception.code, answer["error"]["code"]), (64, "bad_input"))
+
+
 class FailureTests(StatusFixture):
     def test_a_path_that_is_not_a_repository_is_diagnosed_on_stderr(self) -> None:
         out, err = io.StringIO(), io.StringIO()

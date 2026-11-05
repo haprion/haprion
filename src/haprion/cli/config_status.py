@@ -32,7 +32,7 @@ from typing import Any, TextIO
 
 from haprion import exit_codes
 from haprion.cli.caller import config_path as _config_path
-from haprion.cli.caller import usage
+from haprion.cli.caller import looked_up, usage
 from haprion.envelope import envelope, failure, new_request_id
 from haprion.git_command import GitError
 from haprion.helper_protocol import write_document
@@ -127,18 +127,30 @@ def ask_regeneration(cluster_id: str) -> Mapping[str, Any] | None:
 
 
 def _parse(argv: list[str]) -> tuple[str, bool, bool]:
-    """The cluster, whether the regeneration's diff is asked for, and whether the answer is JSON."""
+    """The cluster, whether the regeneration's diff is asked for, and whether the answer is JSON.
 
-    rest = argv
-    diff = False
-    as_json = False
-    if len(rest) == 3 and rest[2] == "--diff":
-        rest, diff = rest[:2], True
-    elif len(rest) == 3 and rest[2] == "--json":
-        rest, as_json = rest[:2], True
-    if len(rest) != 2 or rest[0] not in ("-c", "--cluster"):
+    The flags come in any order, as they do for every other command.
+    """
+
+    cluster: str | None = None
+    diff = as_json = False
+    index = 0
+    while index < len(argv):
+        word = argv[index]
+        if word in ("-c", "--cluster") and cluster is None and index + 1 < len(argv):
+            cluster = argv[index + 1]
+            index += 2
+        elif word == "--diff" and not diff:
+            diff = True
+            index += 1
+        elif word == "--json" and not as_json:
+            as_json = True
+            index += 1
+        else:
+            usage(USAGE)
+    if cluster is None or (diff and as_json):
         usage(USAGE)
-    return rest[1], diff, as_json
+    return str(cluster), diff, as_json
 
 
 def _regeneration(result: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -255,7 +267,9 @@ def main(
             )
         return exit_code
 
-    repo = config_path(cluster_id)
+    repo = looked_up(
+        config_path, cluster_id, operation=ANSWERS_AS, json_mode=as_json, writer=writer
+    )
 
     if not is_repo_root(repo):
         return stopped(

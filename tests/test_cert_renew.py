@@ -329,6 +329,25 @@ class TheDistributionIsRedone(Fixture):
         self.assertEqual(code, 0)
         self.assertIn("would renew keeper.example (forced)", said)
 
+    def test_a_flag_that_is_wrong_with_json_is_a_document(self) -> None:
+        """W04: the parser's own error left stdout empty for a script that asked for JSON."""
+
+        for argv in (
+            ["--json", "--acme-now", "Bad ID!"],
+            ["--json", "--ndes-now", "Bad ID!"],
+            ["--json", "--certbot", "relative/certbot"],
+        ):
+            shown = io.StringIO()
+            with (
+                self.subTest(argv=argv),
+                mock.patch("os.geteuid", return_value=0),
+                contextlib.redirect_stdout(shown),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                code = cert_renew.main(argv)
+            document = assert_contract("haprion-cert-renew", shown.getvalue())
+            self.assertEqual((code, document["error"]["code"]), (64, "bad_input"))
+
     def test_a_dry_run_of_a_certificate_that_is_not_there_is_refused_as_the_run_is(self) -> None:
         """K09: it said it would renew `typo.example`, and the run refused the same name."""
 

@@ -357,11 +357,11 @@ def main(argv: list[str] | None = None) -> int:
     if os.geteuid() != 0:
         return _stopped(args, "not_root", "must run as root; run it with sudo", exit_codes.NOT_ROOT)
     if any(not CERTIFICATE_ID.fullmatch(item) for item in args.acme_now):
-        parser.error("--acme-now takes a certificate ID")
+        return _stopped(args, "bad_input", "--acme-now takes a certificate ID", exit_codes.USAGE)
     if args.certbot is not None and not Path(args.certbot).is_absolute():
-        parser.error("--certbot must be an absolute path")
+        return _stopped(args, "bad_input", "--certbot must be an absolute path", exit_codes.USAGE)
     if any(not CERTIFICATE_ID.fullmatch(item) for item in args.ndes_now):
-        parser.error("--ndes-now takes a certificate ID")
+        return _stopped(args, "bad_input", "--ndes-now takes a certificate ID", exit_codes.USAGE)
     try:
         policy = load_policy(args.policy)
         runtime = load_runtime_config(policy)

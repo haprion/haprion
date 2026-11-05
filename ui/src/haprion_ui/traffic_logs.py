@@ -303,7 +303,7 @@ def _tokens(query: str) -> tuple[_Token, ...]:
             position += 1
             if not phrase:
                 raise SearchSyntaxError("A quoted search phrase cannot be empty.")
-            result.append(_Token("term", "".join(phrase).lower()))
+            result.append(_Token("term", "".join(phrase)))
         else:
             end = position
             while end < len(query) and not query[end].isspace() and query[end] not in "()":
@@ -315,11 +315,10 @@ def _tokens(query: str) -> tuple[_Token, ...]:
                 result.append(_Token(kind))
             else:
                 #
-                # `lower`, as the database's `ilike` folds the text it searches:
-                # `casefold` would make `Straße` into `strasse`, which that text
-                # does not hold.
+                # As written: `ilike` folds the pattern as it folds the text, in
+                # the database's own locale, which Python's `lower` is not.
                 #
-                result.append(_Token("term", word.lower()))
+                result.append(_Token("term", word))
             position = end
         if len(result) > MAX_SEARCH_TOKENS:
             raise SearchSyntaxError("The search expression has too many parts.")
@@ -389,9 +388,12 @@ class _Parser:
 
 
 def like_pattern(query: str) -> str:
-    """A substring pattern that matches the text and nothing it could mean to LIKE."""
+    """A substring pattern that matches the text and nothing it could mean to LIKE.
 
-    escaped = query.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    Not folded: the caller's `ilike` folds it, or the caller folds both sides.
+    """
+
+    escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
 
 

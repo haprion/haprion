@@ -947,7 +947,7 @@ def search(
             " order by array_position(%(kinds)s::text[], kind), shown_cluster, lower(title) "
             " limit %(limit)s offset %(offset)s",
             {
-                "pattern": like_pattern(query),
+                "pattern": like_pattern(query.lower()),
                 "clusters": list(clusters),
                 "kinds": kinds,
                 "limit": search_index.PAGE_SIZE,

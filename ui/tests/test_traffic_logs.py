@@ -136,16 +136,18 @@ class TheSearchNamesTheClientAndTheDestination(unittest.TestCase):
         statement = traffic_logs._search_sql(expression, parameters, destinations)
         return statement.as_string(None), parameters
 
-    def test_a_term_is_lowered_once_and_finds_the_text_it_was_written_as(self) -> None:
-        """Review 2026-11-05: `casefold` turned `Straße` into `strasse`, and
-        `ilike` lowers the text it searches to `straße`, which holds no `strasse`."""
+    def test_a_term_is_sent_as_written_and_ilike_folds_both_sides(self) -> None:
+        """Review 2026-11-05, U08: a lower-cased pattern is wrong in a database whose locale
+        folds only ASCII (`'É' ilike '%é%'` is false in the C locale); `ilike` folds the
+        pattern the way it folds the text it searches."""
 
         for term in ("Straße", '"Straße"'):
             with self.subTest(term=term):
                 statement, parameters = self.built(term)
                 self.assertIn("ilike", statement)
-                self.assertEqual(parameters[0], "%straße%")
-        self.assertEqual(self.built("API AND NOT Health")[1], ["%api%", "%health%"])
+                self.assertEqual(parameters[0], "%Straße%")
+        self.assertEqual(self.built("API AND NOT Health")[1], ["%API%", "%Health%"])
+        self.assertEqual(traffic_logs.like_pattern("Été_100%"), "%Été\\_100\\%%")
 
     def test_an_address_is_the_client_in_either_form_and_still_text(self) -> None:
         for term in ("192.0.2.5", "::ffff:192.0.2.5"):

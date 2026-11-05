@@ -700,17 +700,16 @@ def _database_held_nodes(config: CollectorConfig, *, now: datetime) -> set[tuple
 
     The mark says the database is full of today's rows, not whose. Holding every
     node let one node's flood stop the import of all the others, in every
-    cluster (review 2026-11-05, U02). The nodes held are the ones whose own part
-    of today is over its share (`_over_share`); where none stands out, all are.
+    cluster (review 2026-11-05, U02). The nodes held are the ones whose staged
+    part of today is more than an equal share of what all the nodes staged
+    today: the volume the database lives on is not the staging volume, so the
+    parts are compared with each other and with nothing else (Y03). Where none
+    stands out, and where there is one node, all are held.
     """
 
     if not _database_budget_held(config, now=now):
         return set()
     everyone = {(target.cluster, target.node) for target in config.nodes}
-    try:
-        space = os.statvfs(config.staging)
-    except OSError:
-        return everyone
     today = now.astimezone(UTC).date()
     held_by: dict[tuple[str, str], int] = {}
     for target in config.nodes:
@@ -719,7 +718,8 @@ def _database_held_nodes(config: CollectorConfig, *, now: datetime) -> set[tuple
         except (CollectorError, OSError):
             continue
         held_by[(target.cluster, target.node)] = size
-    over = _over_share(config, space.f_blocks * space.f_frsize, held_by)
+    share = sum(held_by.values()) / max(len(everyone), 1)
+    over = {key for key, size in held_by.items() if size > share}
     return over or everyone
 
 

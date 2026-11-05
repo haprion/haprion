@@ -985,16 +985,40 @@ class TrafficCollectorTests(unittest.TestCase):
         return dataclasses.replace(self.config, nodes=(self.target, node_b))
 
     def test_only_the_nodes_over_their_share_are_held_for_the_database_budget(self) -> None:
-        """Review 2026-11-05, U02: one node's flood must not stop every other node's import."""
+        """Review 2026-11-05, U02: one node's flood must not stop every other node's import.
+        Y03: the share is of the day's staged total, not of the staging volume, which is not
+        the database's and may be far larger."""
 
         configured = self.two_nodes_today(big=500, small=10)
-        # A quarter of 1600 is 400, shared by two nodes: 200 each.
-        with self.space(capacity=1600, free=1000):
+        with self.space(capacity=10**12, free=10**12 // 2):
             self.assertEqual(traffic_collector._database_held_nodes(configured, now=NOW), set())
             self.hold_mark()
             self.assertEqual(
                 traffic_collector._database_held_nodes(configured, now=NOW),
                 {("alpha", "node-a")},
+            )
+
+    def test_the_nodes_are_compared_with_each_other_whatever_the_staging_volume(self) -> None:
+        node_b = NodeTarget("alpha", "node-b", "node-b.example.com")
+        node_c = NodeTarget("alpha", "node-c", "node-c.example.com")
+        today = NOW.date().isoformat()
+        for node, size in (("node-a", 400), ("node-b", 300), ("node-c", 100)):
+            (self.staging / f"alpha--{node}--{today}.jsonl").write_bytes(b"x" * size)
+        configured = dataclasses.replace(self.config, nodes=(self.target, node_b, node_c))
+        self.hold_mark()
+        # 800 staged over three nodes: 267 each; the first two are over it.
+        with self.space(capacity=10, free=1):
+            self.assertEqual(
+                traffic_collector._database_held_nodes(configured, now=NOW),
+                {("alpha", "node-a"), ("alpha", "node-b")},
+            )
+
+    def test_the_only_node_is_held(self) -> None:
+        (self.staging / f"alpha--node-a--{NOW.date().isoformat()}.jsonl").write_bytes(b"x" * 500)
+        self.hold_mark()
+        with self.space(capacity=10**12, free=10**12 // 2):
+            self.assertEqual(
+                traffic_collector._database_held_nodes(self.config, now=NOW), {("alpha", "node-a")}
             )
 
     def test_every_node_is_held_when_none_of_them_stands_out(self) -> None:

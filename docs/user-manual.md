@@ -3755,10 +3755,10 @@ oldest finished days of both tables while either is true:
 It never drops today or a day ahead, and it writes a warning to the timer's journal for each day it
 drops. When today's partitions alone are still over the limit, it leaves a mark for the collector. Until the
 mark goes (the next hourly run finds them under the limit, or midnight passes), the collector keeps today's
-logs of the nodes whose own copy of the day is more than their share of the limit (the limit divided by
-the number of nodes) in its own copy and does not import them into the database, and the attention list
-names each of them. The other nodes are imported as usual. If no node stands out, every node's log of
-today is kept back. A node's day is imported as soon as the mark goes or the day ends at midnight UTC,
+logs of the nodes whose own copy of the day is more than an equal share of what all the nodes have
+collected today in its own copy and does not import them into the database, and the attention list
+names each of them. The other nodes are imported as usual. If no node stands out, or there is only one
+node, every node's log of today is kept back. A node's day is imported as soon as the mark goes or the day ends at midnight UTC,
 whichever comes first, all at once; the mark goes when the partitions of the database's own day, which
 starts at its local midnight, fit the limit again.
 

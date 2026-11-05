@@ -5110,6 +5110,9 @@ removes an object that was skipped. Mend the object first, or apply without `--p
 - NDES servers. A server is confirmed on this manager against the fingerprints of its CA certificates, which
   a file cannot carry; the export writes none. An NDES profile in `profiles.yaml` names one, so on a new
   installation each is added with `haprion-ndes-server add` first.
+- Clusters and their nodes, certificates and their targets, certificate receivers and API tokens. A
+  new installation needs the clusters, nodes and certificates its objects name before the objects
+  can be applied: an object that asks for a certificate its cluster does not distribute is refused.
 - Secrets. Nothing secret is read back, so none is written either: no account passwords, no OIDC client
   secret, no DNS provider credentials (`fields`), no NDES challenge. Applied where they came from, the
   stored secrets are kept.
@@ -5124,17 +5127,20 @@ control:
 
 **The order.** Some steps depend on others:
 
-1. NDES servers, before the NDES profiles that name them: a profile whose endpoint is not a confirmed server
+1. On a new installation, first the clusters and their nodes (`haprion-cluster`, `haprion-node`).
+2. NDES servers, before the NDES profiles that name them: a profile whose endpoint is not a confirmed server
    is refused.
-2. Profiles, before a certificate that is issued through one.
-3. Accounts, before the interface settings: sign-in through a provider can be turned on only while there
+3. Profiles, before a certificate that is issued through one.
+4. On a new installation, the certificates and their targets (`haprion-cert-issue`, `-import`,
+   `haprion-cert-target`), before the objects that use them.
+5. Accounts, before the interface settings: sign-in through a provider can be turned on only while there
    is an active break-glass admin. With `--prune`, an account no entry names is removed - but never one
    the provider created, and never the last active admin.
-4. Interface settings, before the backup schedules. Turning *Node backups* on starts the schedules it had
+6. Interface settings, before the backup schedules. Turning *Node backups* on starts the schedules it had
    stopped, and `haprion-settings` ends when they have run, so a schedule set after it stays as set.
-5. Per cluster: the network before the objects - an object on a VIP the cluster does not have is
+7. Per cluster: the network before the objects - an object on a VIP the cluster does not have is
    refused - then *Logs & metrics*, then the deploy.
-6. The deploy, on every run. A node that is current is left alone, and a deploy that failed on an
+8. The deploy, on every run. A node that is current is left alone, and a deploy that failed on an
    earlier run is finished on the next.
 
 **Changed and failed.** Every command answers with one envelope when given `--json`. Exit code 0 means

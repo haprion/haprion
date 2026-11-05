@@ -6277,10 +6277,11 @@ class TheAccountToolAgainstARealDatabase(AccountToolHarness):
                         stored = account_apply.stored_accounts(connection)
                         the_plan = account_apply.plan(order, stored, prune=False)
                         account_apply.write(connection, the_plan, actor="operator")
-                        connection.commit()
                         rows = connection.execute(
                             "select username, role, disabled, break_glass from app_user order by 1"
                         ).fetchall()
+                        # Not kept: its audit rows would be other tests' to count.
+                        connection.rollback()
                     self.assertEqual(
                         [(r[0], r[1], r[2]) for r in rows],
                         [

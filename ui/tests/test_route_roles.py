@@ -262,7 +262,9 @@ class EveryRouteAnswersAsTheRoleAllows(LoginTestCase):
         route added without it would be the one that writes. Walked with a valid
         token, so the only thing left to refuse each is the switch."""
 
-        client = self.client(replace(configuration(), clusters=("alpha",), management_writes=False))
+        client: Any = self.client(
+            replace(configuration(), clusters=("alpha",), management_writes=False)
+        )
         self.assertEqual(self.sign_in(client).status_code, 303)
         own = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
 

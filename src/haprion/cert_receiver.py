@@ -1618,7 +1618,19 @@ def _remove(
             lock_held=True,
         )
         layers.append(Layer("registry", "removed", receiver_id))
-    except ReceiverError:
+    except ReceiverError as exc:
+        #
+        # A refusal after the lock went (sshd -t on the rewritten drop-in) still
+        # leaves the key removed: the answer says so, as the failure below does
+        # (E08).
+        #
+        if exc.details is None and layers:
+            raise ReceiverError(
+                exc.code,
+                str(exc),
+                exit_code=exc.exit_code,
+                details={"removed": [layer.as_dict() for layer in layers]},
+            ) from exc
         raise
     except (OSError, cert_registry.RegistryError) as exc:
         #

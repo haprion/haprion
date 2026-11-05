@@ -1152,6 +1152,29 @@ class TheCommand(ReceiverFixture):
         self.assertEqual(removed, ["lock", "directory", "account"])
         self.assertIn("lb-02.example.net", self.registered())
 
+    def test_an_sftp_removal_stopped_by_sshd_says_the_key_is_already_gone(self) -> None:
+        """E08: the lock goes first, so a refusal after it left no word of it."""
+
+        self.run_cli(
+            "add",
+            "lb-02.example.net",
+            "--transport",
+            "sftp",
+            "--public-key",
+            str(self.key_file),
+            "--owner",
+            ME,
+        )
+        self.runner.failures["sshd -t"] = (1, "bad configuration directive")
+
+        code, out, _ = self.run_cli("remove", "lb-02.example.net", "--json")
+
+        self.assertNotEqual(code, 0, out)
+        document = assert_contract("haprion-cert-receiver", out)
+        removed = [layer["layer"] for layer in document["error"]["details"]["removed"]]
+        self.assertEqual(removed, ["lock"])
+        self.assertIn("lb-02.example.net", self.registered())
+
     def test_there_is_no_migrate_verb(self) -> None:
         code, out, _ = self.run_cli("migrate", "lb-02.example.net", "--finish")
 

@@ -912,6 +912,42 @@ class TheSearchIndexIsKeptBesideTheReadings(unittest.TestCase):
     def test_a_reading_the_search_does_not_cover_writes_nothing(self) -> None:
         self.assertEqual(self.index("list", {"outcome": "done", "result": {"versions": []}}), [])
 
+    def stored_after(self, write: Any, *, logged: bool = False) -> list[Any]:
+        """What the pass hands `record` for an objects listing, the search's write being `write`."""
+
+        stored: list[Any] = []
+        reading = {
+            "outcome": "done",
+            "result": {"objects": [{"name": "shop", "hostnames": []}], "fingerprint": "f2"},
+        }
+        source = poller.Source(
+            "objects", lambda *_: None, lambda _c, **kwargs: stored.append(kwargs["result"])
+        )
+        with (
+            unittest.mock.patch.object(db, "begin_cluster_pass", lambda _c, _n: None),
+            unittest.mock.patch.object(db, "settle_cluster_pass", lambda _c, _n: None),
+            unittest.mock.patch.object(poller, "poll_cluster", return_value=reading),
+            unittest.mock.patch.object(poller, "_events", return_value=frozenset()),
+            unittest.mock.patch.object(poller, "_sample"),
+            unittest.mock.patch("haprion_ui.db.replace_search_entries", side_effect=write),
+            self.assertLogs("haprion_ui.poller", level="WARNING")
+            if logged
+            else contextlib.nullcontext(),
+        ):
+            poller._poll_cluster_sources(self.Pool(), "alpha", (source,))
+        return stored
+
+    def test_the_fingerprint_is_stored_only_when_the_search_took_the_listing(self) -> None:
+        """V07: a fingerprint over rows that were not written had the next round answer unchanged."""
+
+        (kept,) = self.stored_after(lambda _c, **_k: None)
+        self.assertEqual(kept["fingerprint"], "f2")
+        (lost,) = self.stored_after(
+            unittest.mock.Mock(side_effect=RuntimeError("down")), logged=True
+        )
+        self.assertNotIn("fingerprint", lost)
+        self.assertEqual(lost["objects"], kept["objects"])
+
     def test_a_failure_to_write_is_a_log_line_not_a_failed_pass(self) -> None:
         source = poller.Source("objects", lambda *_: None, lambda *_a, **_k: None)
         with (
@@ -920,12 +956,13 @@ class TheSearchIndexIsKeptBesideTheReadings(unittest.TestCase):
             ),
             self.assertLogs("haprion_ui.poller", level="WARNING"),
         ):
-            poller._index(
+            indexed = poller._index(
                 self.Pool(),
                 source,
                 cluster="alpha",
                 reading={"outcome": "done", "result": {"objects": []}},
             )
+        self.assertFalse(indexed)
 
 
 class TheObjectsReadingSendsWhatItHolds(unittest.TestCase):
@@ -1225,11 +1262,11 @@ class EachClusterIsReadAtItsOwnPace(unittest.TestCase):
             return None
 
     def setUp(self) -> None:
-        patches = [
+        patches: list[Any] = [
             unittest.mock.patch.object(db, name, lambda _c, _n: None)
             for name in ("begin_cluster_pass", "settle_cluster_pass")
         ]
-        patches.append(unittest.mock.patch.object(poller, "_index", lambda *_a, **_k: None))
+        patches.append(unittest.mock.patch.object(poller, "_index", lambda *_a, **_k: True))
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
@@ -1816,7 +1853,7 @@ class MainWithTheRealReaders(unittest.TestCase):
             unittest.mock.patch.object(db, "record_cluster_list", lambda _c, _l: None),
             unittest.mock.patch.object(db, "begin_cluster_pass", lambda _c, _n: None),
             unittest.mock.patch.object(db, "settle_cluster_pass", lambda _c, _n: None),
-            unittest.mock.patch.object(poller, "_index", lambda *_a, **_k: None),
+            unittest.mock.patch.object(poller, "_index", lambda *_a, **_k: True),
             unittest.mock.patch.object(service, "sleep_until_notified", sleeps),
         ]
         with contextlib.ExitStack() as stack:

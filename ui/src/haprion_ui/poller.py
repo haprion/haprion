@@ -629,7 +629,15 @@ def with_joining(result: Mapping[str, Any], joining: frozenset[str]) -> Mapping[
     }
 
 
-def _index(pool: Any, source: Source, *, cluster: str, reading: Mapping[str, Any]) -> None:
+def without_fingerprint(result: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The reading without its fingerprint, so that the next round reads the listing in full."""
+
+    if not isinstance(result, Mapping) or "fingerprint" not in result:
+        return result
+    return {key: value for key, value in result.items() if key != "fingerprint"}
+
+
+def _index(pool: Any, source: Source, *, cluster: str, reading: Mapping[str, Any]) -> bool:
     """Replace what this reading contributes to the search (B222).
 
     Only from a reading that answered. A listing that failed says nothing about
@@ -637,21 +645,23 @@ def _index(pool: Any, source: Source, *, cluster: str, reading: Mapping[str, Any
     lost a cluster's objects because one read timed out would say they were gone.
 
     Its own transaction and its own failure, like a sample: the search being a
-    pass behind is not a reason for the cached reading to be one.
+    pass behind is not a reason for the cached reading to be one. False when
+    the search could not be written: the caller then stores the reading
+    without its fingerprint (V07).
     """
 
     result = reading.get("result")
     if reading.get("outcome") not in ("done", "partial") or not isinstance(result, Mapping):
-        return
+        return True
     #
     # An unchanged objects listing changes nothing in the search either.
     #
     if result.get("unchanged") is True:
-        return
+        return True
     try:
         entries = search_index.entries_for(source.operation, cluster, result)
         if entries is None:
-            return
+            return True
         with pool.connection() as connection:
             db.replace_search_entries(
                 connection, cluster=cluster, source=source.operation, entries=entries
@@ -659,6 +669,8 @@ def _index(pool: Any, source: Source, *, cluster: str, reading: Mapping[str, Any
             connection.commit()
     except Exception as exc:  # noqa: BLE001 - the search is never worth a failed pass
         logger.warning("cluster %s %s: search not updated: %s", cluster, source.operation, exc)
+        return False
+    return True
 
 
 def index_cluster_list(pool: Any, clusters: tuple[str, ...], *, listed: bool = True) -> None:
@@ -1167,19 +1179,26 @@ def _poll_cluster_sources(
             joining = _events(
                 pool, source, cluster=cluster, reading=reading, joining_seconds=joining_seconds
             )
+            #
+            # The search first: the reading is stored with its fingerprint only
+            # once the search holds what it lists. A fingerprint kept over a
+            # search that missed the write would have the next round answer
+            # `unchanged` and leave it stale until the objects changed (V07).
+            #
+            indexed = _index(pool, source, cluster=cluster, reading=reading)
+            stored = reading["result"] if indexed else without_fingerprint(reading["result"])
             with pool.connection() as connection:
                 source.record(
                     connection,
                     cluster=cluster,
                     outcome=reading["outcome"],
-                    result=with_joining(reading["result"], joining),
+                    result=with_joining(stored, joining),
                     warnings=reading.get("warnings"),
                     error=reading.get("error"),
                     poll_error=reading.get("poll_error"),
                 )
                 connection.commit()
             _sample(pool, source, cluster=cluster, result=reading["result"])
-            _index(pool, source, cluster=cluster, reading=reading)
         except Exception:  # any failure to store is this reading's alone
             logger.exception("cluster %s %s: the reading was not stored", cluster, source.operation)
             continue

@@ -25,8 +25,10 @@ import hashlib
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
 FROZEN = MIGRATIONS / "frozen.sha256"
@@ -48,9 +50,10 @@ def frozen() -> dict[str, str]:
 def shipped(root: Path) -> set[str] | None:
     """`versions/<file>` of every migration in any `v*` tag, or None where there are no tags.
 
-    No git, or no tags, is None and the test says it skipped. A tag that is there
-    and cannot be read fails: a partial clone read as "nothing shipped" would pass
-    without looking (re-review H03).
+    No git, no repository (a source tree), or no tags, is None and the test says
+    it skipped. A repository git refuses to read - of dubious ownership - or a
+    tag that is there and cannot be read fails: either read
+    as "nothing shipped" would pass without looking (re-reviews H03, 26-11-05).
     """
 
     def git(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -64,7 +67,11 @@ def shipped(root: Path) -> set[str] | None:
     if shutil.which("git") is None:
         return None
     listed = git("tag", "--list", "v*")
-    tags = listed.stdout.split() if listed.returncode == 0 else []
+    if listed.returncode != 0:
+        if "not a git repository" in listed.stderr:
+            return None
+        raise AssertionError(f"git tag --list failed: {listed.stderr.strip()}")
+    tags = listed.stdout.split()
     if not tags:
         return None
     found: set[str] = set()
@@ -119,6 +126,42 @@ class RunMigrationsStayAsTheyRan(unittest.TestCase):
             [],
             "add these to migrations/frozen.sha256 - a release has carried them",
         )
+
+    def test_a_tag_that_cannot_be_read_fails_and_one_that_can_is_read(self) -> None:
+        if shutil.which("git") is None:
+            self.skipTest("no git")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            versions = root / "ui/migrations/versions"
+            versions.mkdir(parents=True)
+            (versions / "0001_a.py").write_text("")
+            for arguments in (
+                ["init", "-q"],
+                ["add", "."],
+                ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "a"],
+                ["tag", "v1"],
+            ):
+                subprocess.run(["git", "-C", raw, *arguments], check=True)  # noqa: S603, S607
+            self.assertEqual(shipped(root), {"versions/0001_a.py"})
+            tree = subprocess.run(  # noqa: S603
+                ["git", "-C", raw, "rev-parse", "v1^{tree}"],  # noqa: S607
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            (root / ".git/objects" / tree[:2] / tree[2:]).unlink()
+            with self.assertRaisesRegex(AssertionError, "git ls-tree v1 failed"):
+                shipped(root)
+            refused = subprocess.CompletedProcess(
+                [], 128, "", "fatal: detected dubious ownership in repository"
+            )
+            with (
+                mock.patch.object(subprocess, "run", return_value=refused),
+                self.assertRaisesRegex(AssertionError, "dubious ownership"),
+            ):
+                shipped(root)
+        with tempfile.TemporaryDirectory() as raw:
+            self.assertIsNone(shipped(Path(raw)))
 
     def test_a_migration_in_a_release_and_not_listed_is_named(self) -> None:
         self.assertEqual(

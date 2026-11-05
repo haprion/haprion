@@ -289,22 +289,5 @@ else
     fi
 fi
 
-# ---------------------------------------------------------------------------
-# What 0.99.7 to 0.99.9 made for blocking over ssh and the update removes
-# (install/removal.py); one left behind is a way in the update could not close.
-section "left by an earlier release: the ssh blocking path"
-retired_left=0
-if id -u _haprion-block >/dev/null 2>&1; then
-    bad "the account _haprion-block exists; run: sudo /usr/share/haprion-ui/install/retire-block-clients"
-    retired_left=1
-fi
-for leftover in /etc/sudoers.d/haprion-block /etc/haprion/block-clients; do
-    if [[ -e $leftover || -L $leftover ]]; then
-        bad "$leftover exists; run: sudo /usr/share/haprion-ui/install/retire-block-clients"
-        retired_left=1
-    fi
-done
-[[ $retired_left -eq 1 ]] || ok "no account, sudo rule or home left by the ssh blocking path"
-
 printf '\nRESULT: %d PASS, %d FAIL, %d REVIEW\n' "$pass" "$fail" "$review"
 [[ $fail -eq 0 ]]

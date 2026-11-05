@@ -72,25 +72,5 @@ class TheProbeExpectsTheContract(unittest.TestCase):
         self.assertEqual(sorted(table), sorted([*expected, "www-data"]))
 
 
-class TheProbeFailsOnWhatTheRemovalLeft(unittest.TestCase):
-    """A failed removal of the ssh blocking path shows here, not only in apt's output (B419)."""
-
-    def test_the_account_the_rule_and_the_home_are_failures_the_removal_names(self) -> None:
-        source = (BASE / "install" / "removal.py").read_text(encoding="utf-8")
-        retired = re.findall(
-            r'^RETIRED_(?:ACCOUNT|SUDOERS|HOME) = "([^"]+)"$', source, re.MULTILINE
-        )
-        self.assertEqual(len(retired), 3)
-        section = PROBE[PROBE.index("left by an earlier release") :]
-        for name in retired:
-            with self.subTest(name=name):
-                self.assertIn(name, section)
-        self.assertEqual(section.count("bad "), 2)
-        self.assertNotIn("look ", section[: section.index("RESULT")])
-        # The command it names exists where the UI package puts it.
-        self.assertTrue((BASE / "install" / "retire-block-clients").is_file())
-        self.assertIn("/usr/share/haprion-ui/install/retire-block-clients", section)
-
-
 if __name__ == "__main__":
     unittest.main()

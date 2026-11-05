@@ -43,8 +43,6 @@ from typing import Any
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from removal import (  # noqa: E402 - after the path and the bytecode switch above
-    RETIRED_ACCOUNT,
-    RETIRED_SUDOERS,
     Host,
     Step,
     public_key,
@@ -117,7 +115,6 @@ FIXED_PATHS = (
     "/srv/certdist/manager-ui.pem",
     "/etc/sudoers.d/haprion-worker",
     "/etc/sudoers.d/haprion-poller",
-    RETIRED_SUDOERS,
     "/etc/sudoers.d/haprion-config-edit",
     "/etc/tmpfiles.d/haprion.conf",
     SYSUSERS,
@@ -323,13 +320,6 @@ def plan(host: Host, stamp: str) -> list[Step]:
     ) or "/etc/haprion/registry/certificates.yaml"
     registry = read_yaml(host, registry_name)
     users, groups = sysusers(host)
-    #
-    # Left by a release before 0.99.10 and not by this one, whose fragment no
-    # longer names it: an update removes it, and a machine that never updated
-    # still has it.
-    #
-    if RETIRED_ACCOUNT not in users:
-        users.append(RETIRED_ACCOUNT)
     receivers = [u for u in host.users() if u.pw_name.startswith(RECEIVER_PREFIX)]
     steps: list[Step] = []
 

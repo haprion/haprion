@@ -21,7 +21,6 @@ import unittest
 from pathlib import Path, PurePath
 from types import ModuleType
 from typing import Any
-from unittest import mock
 
 from haprion import accounts, node_package
 
@@ -40,7 +39,6 @@ def load(name: str) -> ModuleType:
 
 MANAGER = load("remove-manager")
 NODE = load("node-remove")
-RETIRE = load("retire-block-clients")
 
 
 class Machine(MANAGER.Host):  # type: ignore[misc, name-defined]
@@ -156,9 +154,6 @@ class AManager(unittest.TestCase):
             "/var/lib/systemd/timers/stamp-haprion-backup.timer",
             "/var/lib/systemd/timers/stamp-haprion-state-backup@alpha.timer",
             "/etc/sudoers.d/haprion-worker",
-            "/etc/sudoers.d/haprion-block",
-            "/etc/haprion/block-clients/clients.yaml",
-            "/etc/haprion/block-clients/.ssh/authorized_keys",
             "/etc/nginx/sites-available/haprion",
             "/etc/nginx/sites-available/default",
             "/etc/tmpfiles.d/haprion.conf",
@@ -185,8 +180,6 @@ class AManager(unittest.TestCase):
         )
         machine.account("_haprion-pull", "/home/_haprion-pull")
         machine.account("_haprion-web", "/")
-        # Not in the fragment: a release before 0.99.10 made it, and this one's fragment does not.
-        machine.account("_haprion-block", "/etc/haprion/block-clients")
         machine.account("crx-lb-01-example-com", "/srv/certdist/receivers/lb-01.example.com")
         machine.accounts.append(
             pwd.struct_passwd(("operator", "x", 1000, 1000, "", "/home/operator", "/bin/bash"))
@@ -274,8 +267,6 @@ class AManager(unittest.TestCase):
             "/etc/systemd/system/haprion-web.service.replaced-20261001-101010",
             "/etc/systemd/system/sockets.target.wants/haprion-web.socket",
             "/etc/sudoers.d/haprion-worker",
-            "/etc/sudoers.d/haprion-block",
-            "/etc/haprion/block-clients",
             "/etc/nginx/sites-available/haprion",
             "/etc/nginx/sites-enabled/haprion",
             "/etc/tmpfiles.d/haprion.conf",
@@ -319,7 +310,6 @@ class AManager(unittest.TestCase):
             "userdel crx-lb-01-example-com",
             "userdel _haprion-pull",
             "userdel _haprion-web",
-            "userdel _haprion-block",
             "groupdel haprion",
             "delete --non-interactive --cert-name shop.example.com",
             "ssh-keygen -R node-a.example.com",
@@ -417,130 +407,7 @@ class AManager(unittest.TestCase):
         self.assertIn("cannot be read", said)
 
 
-class TheSshBlockingOfAnEarlierReleaseIsRetired(unittest.TestCase):
-    """0.99.7 to 0.99.9 let a client block over ssh; the API replaced it (B419)."""
-
-    def setUp(self) -> None:
-        self.directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.directory.cleanup)
-        self.machine = Machine(self.directory.name)
-        for name in (
-            "/etc/sudoers.d/haprion-block",
-            "/etc/sudoers.d/haprion-block.replaced-20261031-101010",
-            "/etc/haprion/block-clients/clients.yaml",
-            "/etc/haprion/block-clients/.ssh/authorized_keys",
-            # The operator's own and Haprion's other files stay.
-            "/etc/sudoers.d/haprion-worker",
-            "/etc/sudoers.d/svc-other",
-            "/etc/haprion/runtime-policy.yaml",
-        ):
-            self.machine.write(name)
-        self.machine.account("_haprion-block", "/etc/haprion/block-clients")
-
-    def retire(self) -> tuple[int, str]:
-        import contextlib
-        import io
-
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-            code = RETIRE.main(self.machine)
-        return code, out.getvalue()
-
-    def test_the_rule_the_account_the_keys_and_the_registry_go(self) -> None:
-        code, said = self.retire()
-
-        self.assertEqual(code, 0, said)
-        for gone in (
-            "/etc/sudoers.d/haprion-block",
-            "/etc/sudoers.d/haprion-block.replaced-20261031-101010",
-            "/etc/haprion/block-clients",
-        ):
-            with self.subTest(gone=gone):
-                self.assertFalse(self.machine.path(gone).exists())
-        for kept in (
-            "/etc/sudoers.d/haprion-worker",
-            "/etc/sudoers.d/svc-other",
-            "/etc/haprion/runtime-policy.yaml",
-        ):
-            with self.subTest(kept=kept):
-                self.assertTrue(self.machine.path(kept).exists())
-        ran = [" ".join(argv) for argv in self.machine.ran]
-        self.assertEqual(
-            [line for line in ran if "_haprion-block" in line],
-            [
-                "/usr/sbin/usermod --lock --expiredate 1 _haprion-block",
-                "/usr/sbin/userdel --force _haprion-block",
-                "/usr/sbin/groupdel _haprion-block",
-            ],
-        )
-        self.assertIn("removed  user _haprion-block", said)
-
-    def test_a_second_run_finds_nothing_and_says_nothing(self) -> None:
-        self.retire()
-        self.machine.accounts.clear()
-        self.machine.groups.clear()
-        self.machine.ran.clear()
-
-        code, said = self.retire()
-
-        self.assertEqual((code, said, self.machine.ran), (0, "", []))
-
-    def test_an_account_that_cannot_be_removed_is_said_and_the_run_fails(self) -> None:
-        self.machine.fails = {"userdel"}
-
-        code, said = self.retire()
-
-        self.assertEqual(code, 1)
-        self.assertIn("could not remove user _haprion-block", said)
-        # The rule and the keys went before it: it can reach nothing.
-        self.assertFalse(self.machine.path("/etc/sudoers.d/haprion-block").exists())
-        self.assertFalse(self.machine.path("/etc/haprion/block-clients").exists())
-
-    def test_a_rule_that_cannot_be_removed_is_said_so_and_not_said_removed(self) -> None:
-        """Review 26-11-05, G06: every rule file was counted removed, whatever became of it."""
-
-        stuck = self.machine.path("/etc/sudoers.d/haprion-block")
-        unlink = Path.unlink
-
-        def refuse_one(path: Path, missing_ok: bool = False) -> None:
-            if path == stuck:
-                raise PermissionError(13, "Permission denied", str(path))
-            unlink(path, missing_ok=missing_ok)
-
-        with mock.patch.object(Path, "unlink", refuse_one):
-            code, said = self.retire()
-
-        self.assertEqual(code, 1, said)
-        self.assertTrue(stuck.exists())
-        self.assertIn(f"could not remove {stuck}", said)
-        self.assertNotIn(f"removed  {stuck}\n", said)
-        # The rule beside it went, and is said to have.
-        self.assertIn("removed  " + str(stuck) + ".replaced-20261031-101010", said)
-
-    def test_a_command_that_cannot_start_leaves_no_key_and_is_named(self) -> None:
-        """A missing binary or a refused fork raises; the keys go before any command runs."""
-
-        machine = self.machine
-
-        def cannot_start(argv: list[str], *, input_text: str | None = None) -> Any:
-            raise FileNotFoundError(2, "No such file or directory", argv[0])
-
-        machine.run = cannot_start  # type: ignore[method-assign]
-
-        code, said = self.retire()
-
-        self.assertEqual(code, 1)
-        self.assertFalse(machine.path("/etc/haprion/block-clients/.ssh/authorized_keys").exists())
-        self.assertFalse(machine.path("/etc/sudoers.d/haprion-block").exists())
-        self.assertIn("could not remove locking _haprion-block", said)
-        self.assertIn("could not remove user _haprion-block", said)
-
-    def test_the_update_runs_it_only_once_the_release_is_proved(self) -> None:
-        update = (INSTALL / "platform/update-platform-release").read_text()
-        proved = update.index("\nproved=yes\n")
-        self.assertLess(proved, update.index("\n/usr/bin/python3 -I ../retire-block-clients"))
-        self.assertTrue(os.access(INSTALL / "retire-block-clients", os.X_OK))
-
+class TheSteps(unittest.TestCase):
     def test_nothing_the_steps_install_names_the_account_any_more(self) -> None:
         self.assertFalse(hasattr(accounts, "BLOCK"))
         for script in (

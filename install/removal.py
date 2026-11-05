@@ -4,10 +4,6 @@
 --remove) each list what an installation made as steps; without --yes they print
 them and change nothing, with --yes each step's action takes its part away and
 names what it could not.
-
-It also holds `retire_block_clients`, which an update of the platform runs
-(install/retire-block-clients) to take away what an earlier release
-installed and this one does not.
 """
 
 from __future__ import annotations
@@ -175,73 +171,3 @@ def report(steps: list[Step], closing: list[str], *, yes: bool, subject: str, co
         return 1
     print("\nDone.")
     return 0
-
-
-#
-# What 0.99.7 to 0.99.9 made for blocking an address over ssh, which the API's
-# `block` token replaced in 0.99.10 (B419): the account, its sudo rule, and its
-# home, which held the registry of clients and their authorized_keys. No sshd
-# configuration was ever written for it; sshd read the home's own file.
-#
-RETIRED_ACCOUNT = "_haprion-block"
-RETIRED_SUDOERS = "/etc/sudoers.d/haprion-block"
-RETIRED_HOME = "/etc/haprion/block-clients"
-
-
-def retire_block_clients(host: Host) -> tuple[list[str], list[str]]:
-    """Take away the ssh blocking path an earlier release installed: what went, and what could not.
-
-    The rule goes first, so the account can no longer reach a helper when it is
-    locked and ended; the home with the account's keys next, so no step that
-    fails after it leaves a key behind. A step that fails is reported and the
-    rest still run. Nothing is an error when it is already gone, so an update
-    can run this every time.
-    """
-
-    removed: list[str] = []
-    failed: list[str] = []
-    rules = with_copies(host, RETIRED_SUDOERS)
-    for rule in rules:
-        stuck = remove([rule])
-        failed += stuck
-        if not stuck:
-            removed.append(str(rule))
-    home = host.path(RETIRED_HOME)
-    if home.exists() or home.is_symlink():
-        before = len(failed)
-        failed += remove([home])
-        if len(failed) == before:
-            removed.append(str(home))
-    try:
-        has_account = any(user.pw_name == RETIRED_ACCOUNT for user in host.users())
-    except (OSError, KeyError) as exc:
-        failed.append(f"reading the accounts: {exc}")
-        has_account = False
-    if has_account:
-        #
-        # Locked and expired first, so a client connecting at this moment is
-        # refused; `--force` because userdel otherwise refuses an account that
-        # still has a process, as one connected then would.
-        #
-        ran(
-            host,
-            ["/usr/sbin/usermod", "--lock", "--expiredate", "1", RETIRED_ACCOUNT],
-            f"locking {RETIRED_ACCOUNT}",
-            failed,
-        )
-        if ran(
-            host,
-            ["/usr/sbin/userdel", "--force", RETIRED_ACCOUNT],
-            f"user {RETIRED_ACCOUNT}",
-            failed,
-        ):
-            removed.append(f"user {RETIRED_ACCOUNT}")
-    group = f"group {RETIRED_ACCOUNT}"
-    try:
-        has_group = host.group_exists(RETIRED_ACCOUNT)
-    except OSError as exc:
-        failed.append(f"looking for {group}: {exc}")
-        has_group = False
-    if has_group and ran(host, ["/usr/sbin/groupdel", RETIRED_ACCOUNT], group, failed):
-        removed.append(group)
-    return removed, failed

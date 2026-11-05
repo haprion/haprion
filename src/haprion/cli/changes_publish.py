@@ -53,12 +53,13 @@ from haprion.held_ports import HeldPorts
 from haprion.helper_protocol import HelperProtocolError, JsonValue
 from haprion.managed_network import MAX_NETWORK_BYTES, load_document
 from haprion.managed_network import location as network_location
-from haprion.managed_publish import managed_files
+from haprion.managed_publish import PROXY_PREFIX, managed_files
 from haprion.proxy_model import (
     MAX_MODEL_BYTES,
     NAME,
     NAME_RULE,
     ModelError,
+    Proxy,
     load_proxy,
     load_written,
     name_refusal,
@@ -206,6 +207,18 @@ def _document(parameters: Mapping[str, JsonValue], key: str, *, limit: int) -> b
     return text(parameters, key, limit=limit).encode("utf-8")
 
 
+def _stored(base_files: Mapping[str, bytes], name: str) -> Proxy | None:
+    """The object as the version being built on has it, or None where it has none or cannot be read."""
+
+    document = base_files.get(f"{PROXY_PREFIX}{name}.yaml")
+    if document is None:
+        return None
+    try:
+        return load_proxy(name, document)
+    except ModelError:
+        return None
+
+
 def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster], Change]:
     objects = _objects(parameters)
     network = _document(parameters, "network", limit=MAX_NETWORK_BYTES)
@@ -321,6 +334,23 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
             held = HeldPorts()
             if objects or network is not None or regenerate:
                 held = held_ports.read(policy, cluster)
+            #
+            # What the nodes that answered can serve (K04): an object that
+            # starts to need the WAF engine, dnsdist or the syslog file a node
+            # lacks is refused here, as the page and the API refuse it, and not
+            # by that node's deploy.
+            #
+            for name, document in sorted(objects.items()):
+                if document is None:
+                    continue
+                said = held_ports.node_refusal(
+                    held,
+                    name,
+                    load_written(name, document),
+                    _stored(base_files, name),
+                )
+                if said:
+                    raise Refusal("changes_invalid", said, exit_codes.REFUSED)
             try:
                 files = managed_files(
                     base_files,

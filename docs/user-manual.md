@@ -692,6 +692,12 @@ A node that does not answer does not stop the publish; its ports are not checked
 rolls back if the port is taken there. `haprion-node-status` on a node shows the same
 list, as *Every address*.
 
+The same reading says what each node can serve. A publish refuses an object that starts to use the WAF
+engine, or is a DNS or syslog object, when a node that answered lacks the engine, dnsdist, or the include
+of the syslog file in its `keepalived.conf`. The refusal names the nodes. It is the same from the
+terminal, the page and the API. An object that already used the feature keeps it, and a node that does
+not answer is not asked.
+
 ### HTTP/3
 
 On *Network*, a VIP's row in edit mode has *HTTP/3*. It serves the https sites on that address over QUIC
@@ -1257,6 +1263,10 @@ above).
 | Advanced config | off | the *Advanced config* button on an object's page |
 | WAF engine | off | whether objects are offered the WAF engine, and the *WAF logs* page |
 | Update check | off | a daily check for a newer release |
+
+The switches belong to the interface. `haprion-objects apply` and the other commands do not read them: as
+root, the terminal may write advanced config or start the WAF engine on an object while its switch is off.
+What a node can serve is checked by the publish itself, wherever it comes from.
 
 Turning a capability off hides its tab, its pages and its operations. A bookmarked URL to one of its
 pages then answers 404. A new installation also enables no backup timer: an installation opts in.

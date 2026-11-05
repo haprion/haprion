@@ -23,9 +23,10 @@ from unittest import mock
 from haprion.cluster_status import parse_status
 from haprion.config import Vip
 from haprion.generate import GeneratorError, generate
-from haprion.held_ports import HeldPorts, from_status
+from haprion.held_ports import HeldPorts, from_status, node_refusal
 from haprion.proxy_model import load_proxy
-from tests.test_changes_publish_objects import ObjectsPublishFixture
+from tests.test_changes_publish_objects import ObjectsPublishFixture, proxy
+from tests.test_publish_helper import git
 from tests.test_status_addresses import envelope, node_status
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-node-status"
@@ -220,3 +221,145 @@ class ThePublishAsksTheNodes(ObjectsPublishFixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def node_that_serves(**withheld: bool) -> dict[str, Any]:
+    """A status that carries the WAF engine, dnsdist and the syslog include, less what is withheld."""
+
+    status = node_status({"active": True})
+    if not withheld.get("waf"):
+        status["waf_engine"] = {"version": "0.9.0", "active": True}
+    if not withheld.get("dns"):
+        status["dns_listener"] = {"version": "2.0.0", "active": True}
+    status["ipvs"] = {"included": not withheld.get("syslog")}
+    return status
+
+
+def two_nodes(second: dict[str, Any], *, answered: bool = True) -> Any:
+    document = envelope(node_that_serves())
+    nodes = document["result"]["nodes"]  # type: ignore[index]
+    nodes.append({**nodes[0], "name": "node-b", "status": second, "status_ok": answered})
+    return parse_status(document)
+
+
+class TheNodesSayWhatTheyServe(unittest.TestCase):
+    def test_a_node_that_answered_without_a_feature_lacks_it(self) -> None:
+        held = from_status(two_nodes(node_that_serves(waf=True, dns=True, syslog=True)))
+
+        self.assertEqual(
+            held.lacking, {"waf": ("node-b",), "dns": ("node-b",), "syslog": ("node-b",)}
+        )
+
+    def test_a_node_that_serves_everything_lacks_nothing(self) -> None:
+        self.assertEqual(from_status(two_nodes(node_that_serves())).lacking, {})
+
+    def test_a_node_that_gave_no_answer_is_not_counted_as_lacking(self) -> None:
+        held = from_status(two_nodes(node_that_serves(waf=True), answered=False))
+
+        self.assertEqual(held.lacking, {})
+
+
+def written(listen: str, extra: str = "") -> Any:
+    return load_proxy(
+        "agent",
+        f"""schema: 1
+name: agent
+listen: {listen}
+backend: pool
+{extra}backends:
+  pool: {{balance: roundrobin, servers: [{{host: 198.51.100.9, port: 9}}]}}
+""".encode(),
+    )
+
+
+def http_with_waf() -> Any:
+    return load_proxy(
+        "agent", proxy("agent", "agent.example.com").replace("routes:", "waf: {}\nroutes:").encode()
+    )
+
+
+class AnObjectIsHeldToWhatTheNodesServe(unittest.TestCase):
+    LACKING = HeldPorts(
+        lacking={"waf": ("node-b",), "dns": ("node-a", "node-b"), "syslog": ("node-b",)}
+    )
+
+    def test_what_an_object_starts_to_need_is_named_with_the_nodes(self) -> None:
+        for subject, words in (
+            (
+                http_with_waf(),
+                "The WAF engine is not installed on node-b, so agent cannot start using it.",
+            ),
+            (written("{protocol: dns, port: 53}"), "dnsdist is not installed on node-a and node-b"),
+            (
+                written("{protocol: syslog, vip: main, port: 514}"),
+                "keepalived on node-b does not read the file",
+            ),
+        ):
+            with self.subTest(words):
+                self.assertIn(words, node_refusal(self.LACKING, "agent", subject, None))
+
+    def test_an_object_that_already_needed_it_is_not_held_again(self) -> None:
+        waf = http_with_waf()
+
+        self.assertEqual(node_refusal(self.LACKING, "agent", waf, waf), "")
+
+    def test_an_object_that_needs_nothing_more_is_not_held(self) -> None:
+        plain = written("{protocol: tcp, port: 9000}")
+
+        self.assertEqual(node_refusal(self.LACKING, "agent", plain, None), "")
+        self.assertEqual(
+            node_refusal(HeldPorts(), "agent", written("{protocol: dns, port: 53}"), None), ""
+        )
+
+
+class ThePublishRefusesWhatANodeCannotServe(ObjectsPublishFixture):
+    def head(self) -> str:
+        return git(self.repo, "rev-parse", "HEAD")
+
+    def publish_lacking(self, document: str, **seeded: str) -> tuple[int, Any, str, str]:
+        lacking = HeldPorts(lacking={"waf": ("node-b",), "dns": ("node-b",), "syslog": ("node-b",)})
+        with tempfile.TemporaryDirectory() as raw, mock.patch("haprion.held_ports.read") as read:
+            read.return_value = lacking
+            policy = self.runtime(Path(raw))
+            self.seed(**seeded)
+            head = self.head()
+            code, answer, err = self.publish_objects(
+                policy, self.request(objects={"agent": document})
+            )
+            return code, answer, err, "same" if self.head() == head else "moved"
+
+    def test_a_dns_object_is_refused_before_anything_is_written(self) -> None:
+        document = """schema: 1
+name: agent
+listen: {protocol: dns, port: 53}
+backend: pool
+allow_from: [192.0.2.0/24]
+backends:
+  pool: {balance: roundrobin, servers: [{host: 198.51.100.53, port: 53}]}
+"""
+
+        code, answer, _, head = self.publish_lacking(document)
+
+        self.assertEqual(code, 65)
+        self.assertEqual(answer["error"]["code"], "changes_invalid")
+        self.assertIn("dnsdist is not installed on node-b", answer["error"]["message"])
+        self.assertEqual(head, "same")
+
+    def test_a_waf_object_is_refused_and_a_plain_one_is_published(self) -> None:
+        waf = proxy("agent", "agent.example.com").replace("routes:", "waf: {}\nroutes:")
+
+        code, answer, _, head = self.publish_lacking(waf)
+
+        self.assertEqual((code, answer["error"]["code"]), (65, "changes_invalid"))
+        self.assertIn("The WAF engine is not installed on node-b", answer["error"]["message"])
+        self.assertEqual(head, "same")
+        code, answer, _, head = self.publish_lacking(proxy("agent", "agent.example.com"))
+        self.assertEqual((code, head), (0, "moved"))
+
+    def test_an_object_that_already_used_the_engine_is_not_refused_for_it(self) -> None:
+        waf = proxy("agent", "agent.example.com").replace("routes:", "waf: {}\nroutes:")
+
+        code, answer, _, _ = self.publish_lacking(waf, agent=waf)
+
+        self.assertNotIn("not installed on node-b", json.dumps(answer))
+        self.assertIn(code, (0, 65))

@@ -204,6 +204,14 @@ class NodeStatus:
     # release that logs to the traffic socket. None when the status is unusable.
     #
     traffic_stream_reported: bool | None = None
+    #
+    # Whether the node reports the WAF engine and dnsdist installed, with a
+    # version (B231, Fas 19a B5). False on a node that answered without one - an
+    # older status script is a node the feature cannot be counted on - and None
+    # on a node that gave no usable answer.
+    #
+    waf_engine_installed: bool | None = None
+    dns_listener_installed: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -703,6 +711,12 @@ def _wildcard_listeners(
     return tuple(found)
 
 
+def _installed(status: Mapping[str, Any], key: str) -> bool:
+    """Whether the node's status names a version for the engine `key`."""
+
+    return isinstance(_mapping(status.get(key)).get("version"), str)
+
+
 def _node(entry: Mapping[str, Any]) -> NodeStatus:
     status = _mapping(entry.get("status"))
     #
@@ -735,6 +749,8 @@ def _node(entry: Mapping[str, Any]) -> NodeStatus:
         peers_synced=_peers_synced(status),
         wildcard_listeners=_wildcard_listeners(status),
         traffic_stream_reported=("traffic_stream" in status) if usable else None,
+        waf_engine_installed=_installed(status, "waf_engine") if usable else None,
+        dns_listener_installed=_installed(status, "dns_listener") if usable else None,
         error_code=_text(_mapping(entry.get("error")).get("code"))
         or (None if usable else "node_status_invalid"),
     )

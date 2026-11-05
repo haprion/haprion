@@ -2435,6 +2435,54 @@ class ARealDatabase(unittest.TestCase):
         self.assertIn(f"traffic_log_{suffix}_cluster", indexes)
         # A client address, on the days that existed and the ones made since (0111).
         self.assertIn(f"traffic_log_{suffix}_client", indexes)
+        # The insert time, for `inserted_after` without a `from` (0117).
+        self.assertIn(f"traffic_log_{suffix}_inserted", indexes)
+
+    def test_every_traffic_partition_has_a_block_range_index_on_the_insert_time(self) -> None:
+        """0117: a client following the log by `inserted_after` asks mostly in vain, and the
+        answer to that must not read every row of every day."""
+
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """select c.relname, i.indexdef
+                     from pg_inherits h join pg_class c on c.oid = h.inhrelid
+                     left join pg_indexes i on i.tablename = c.relname
+                                           and i.indexname = c.relname || '_inserted'
+                    where h.inhparent = 'traffic_log'::regclass"""
+            )
+            partitions = cursor.fetchall()
+            self.assertTrue(partitions)
+            for name, definition in partitions:
+                self.assertIsNotNone(definition, name)
+                self.assertIn("USING brin (inserted_at)", definition, name)
+            # A partition made from now on gets it too.
+            cursor.execute("select traffic_log_partition(current_date + 40)")
+            made = _first(cursor)
+            cursor.execute(
+                "select indexdef from pg_indexes where indexname = %s", (f"{made}_inserted",)
+            )
+            self.assertIn("USING brin (inserted_at)", _first(cursor))
+            # ... and a question for rows stored after a time, which mostly has none, uses it.
+            cursor.execute(
+                """insert into traffic_log
+                    (event_id, cluster, node, occurred_at, request_number, client, method, host,
+                     path, frontend, backend, server, status, request_time, queue_time,
+                     connect_time, response_time, total_time, bytes, inserted_at)
+                    select sha256(n::text::bytea), 'alpha', 'node-a',
+                           current_date + 40 + n * interval '1 second', n, '192.0.2.10', 'GET',
+                           'service.example.com', '/', 'f', 'b', 's', 200, 0, 0, 1, 2, 3, 42,
+                           current_date + 40 + n * interval '1 second'
+                      from generate_series(1, 60000) as n"""
+            )
+            cursor.execute("analyze traffic_log")
+            cursor.execute(
+                "explain select event_id from traffic_log_read "
+                "where cluster = 'alpha' and occurred_at >= '1970-01-01' "
+                "and inserted_at > current_date + 41"
+            )
+            plan = "\n".join(row[0] for row in cursor.fetchall())
+            self.assertIn(f"{made}_inserted", plan)
+            connection.rollback()
 
     def test_the_web_reads_the_traffic_log_through_a_view_and_holds_nothing_on_the_table(
         self,

@@ -331,6 +331,9 @@ class RemovingFromATarget(RetargetFixture):
         self.assertEqual(report.incomplete, ("example.com",))
         self.assertEqual([n.state for n in report.outcomes[0].nodes], ["removed", "kept"])
         self.assertIn("named by the registry again", report.outcomes[0].nodes[1].detail)
+        # 26-11-05, Q04: the copy stays because it is wanted; running it again would not remove it.
+        self.assertIn("registry names", report.outcomes[0].reason)
+        self.assertNotIn("run the removal again", report.outcomes[0].reason)
 
     def test_a_cluster_the_configuration_does_not_know_is_not_asked(self) -> None:
         report = self.retarget(self.policy_path, "remove", "shop.example", clusters=("gamma",))

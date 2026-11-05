@@ -564,6 +564,7 @@ def ask_node(
 #
 type NamedAgain = Callable[[str, str], bool]
 RECHECK_WAIT_SECONDS = 5
+NAMED_AGAIN = "named by the registry again; not removed"
 BUSY = "another certificate operation is running; run the removal again"
 
 
@@ -596,6 +597,26 @@ def registry_names(
         return entry is not None and cluster_id in entry.clusters
 
     return named
+
+
+KEPT_AS_WANTED = (
+    "a copy was kept because the registry names the certificate again; "
+    "take it out of the registry first if it should go"
+)
+
+
+def kept_only_as_wanted(layers: Sequence[Layer], nodes: Sequence[NodeCopy]) -> bool:
+    """Whether the only copies left are those the registry names again (26-11-05, Q04).
+
+    Running the removal again would keep them again, so the row must not say so.
+    """
+
+    left = [copy for copy in nodes if copy.state not in {"removed", "absent"}]
+    return (
+        all(layer.state in {"removed", "absent"} for layer in layers)
+        and bool(left)
+        and all(copy.detail == NAMED_AGAIN for copy in left)
+    )
 
 
 def remove_node_copies(
@@ -656,7 +677,7 @@ def remove_node_copies(
                             cluster.cluster_id,
                             node.name,
                             "kept",
-                            "named by the registry again; not removed",
+                            NAMED_AGAIN,
                         )
                     )
                     continue
@@ -958,10 +979,13 @@ def _outcome(
     complete = all(layer.state in {"removed", "absent"} for layer in layers) and all(
         copy.state in {"removed", "absent"} for copy in nodes
     )
+    reason = "some layers were kept; see the rows, and run the deletion again"
+    if not complete and kept_only_as_wanted(layers, nodes):
+        reason = KEPT_AS_WANTED
     return CertificateOutcome(
         certificate_id,
         "removed" if complete else "incomplete",
-        "" if complete else "some layers were kept; see the rows, and run the deletion again",
+        "" if complete else reason,
         "",
         layers,
         nodes,

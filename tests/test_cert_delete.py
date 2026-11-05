@@ -512,6 +512,10 @@ class WhatIsLeftAndSaid(DeleteFixture):
         self.assertEqual(len(self.node_calls), 1)
         self.assertEqual(report.incomplete, ("example.com",))
         self.assertEqual([n.state for n in report.outcomes[0].nodes], ["removed", "kept"])
+        # 26-11-05, Q04: the copy stays because it is wanted; running it again would not remove it.
+        reason = report.outcomes[0].reason
+        self.assertIn("registry names", reason)
+        self.assertNotIn("run the deletion again", reason)
 
     def test_a_lock_held_by_another_operation_is_waited_for_once_per_run(self) -> None:
         """26-11-05, Q03: the bound is shared by the nodes, and the row names no file."""

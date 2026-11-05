@@ -56,6 +56,7 @@ from typing import Any
 from haprion import cert_pending, cert_registry, exit_codes, labels
 from haprion.cert_delete import (
     AUTHORITY_NODE_VERB,
+    KEPT_AS_WANTED,
     NODE_VERB,
     DeleteError,
     Guards,
@@ -65,6 +66,7 @@ from haprion.cert_delete import (
     NodeRemover,
     ask_node,
     ask_the_nodes,
+    kept_only_as_wanted,
     read_guards,
     registry_names,
 )
@@ -741,10 +743,13 @@ def _remove(
                 and all(layer.state == "absent" for layer in layers)
                 and all(copy.state == "absent" for copy in nodes)
             )
+            reason = "a copy was kept; see the rows, and run the removal again"
+            if kept_only_as_wanted(layers, nodes):
+                reason = KEPT_AS_WANTED
             return CertificateOutcome(
                 certificate_id,
                 "unchanged" if nothing_there else "changed" if complete else "incomplete",
-                "" if complete else "a copy was kept; see the rows, and run the removal again",
+                "" if complete else reason,
                 "",
                 abandoned=abandoned,
                 layers=layers,

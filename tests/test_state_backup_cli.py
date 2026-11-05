@@ -8,7 +8,7 @@ from unittest import mock
 
 from haprion import exit_codes
 from haprion.cli import state_backup
-from haprion.config import Cluster, DeployIdentity
+from haprion.config import Cluster, DeployIdentity, RuntimeConfig
 from haprion.state_backup import BackupResult, NodeResult
 
 
@@ -190,3 +190,29 @@ class StateBackupJsonTests(unittest.TestCase):
         done = BackupResult("alpha", "x", ())
         code, _ = self.run_json(["--json"], done)
         self.assertEqual(code, 64)
+
+    def test_a_cluster_the_installation_has_not_is_bad_input_not_a_missing_dependency(self) -> None:
+        from tests.contract_schema import assert_contract
+
+        class Policy:
+            backup_identity = DeployIdentity("svc-backup", Path("/root/key"))
+            backup_root = Path("/srv/backups")
+
+        out = io.StringIO()
+        with (
+            mock.patch.object(state_backup, "load_policy", return_value=Policy()),
+            mock.patch.object(
+                state_backup,
+                "load_runtime_config",
+                return_value=RuntimeConfig(schema_version=1, clusters={}),
+            ),
+        ):
+            code = state_backup.main(
+                ["-c", "alpha", "--json"],
+                output_stream=out,
+                error_stream=io.StringIO(),
+                require_root=False,
+            )
+
+        document = assert_contract("haprion-backup-run", out.getvalue())
+        self.assertEqual((code, document["error"]["code"]), (64, "bad_input"))

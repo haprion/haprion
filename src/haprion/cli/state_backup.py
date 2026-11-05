@@ -29,7 +29,7 @@ from haprion.config import (
     load_runtime_config,
 )
 from haprion.envelope import failure, new_request_id
-from haprion.helper_protocol import write_document
+from haprion.helper_protocol import config_error_code, write_document
 from haprion.state_backup import BackupBusy, BackupResult, BackupRunError, run
 
 USAGE = "Usage: haprion-state-backup [-c <cluster>] | -c <cluster> --json\n"
@@ -118,7 +118,7 @@ def main(
             else tuple(runtime.clusters.items())
         )
     except ConfigError as exc:
-        return refuse(selected, "dependency_unavailable", str(exc), exc.exit_code)
+        return refuse(selected, config_error_code(exc.exit_code), str(exc), exc.exit_code)
 
     failed = False
     for cluster_id, cluster in clusters:

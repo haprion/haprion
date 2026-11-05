@@ -173,6 +173,13 @@ exec /bin/mv "$@"
 """
 
 
+# Retention stopped between `mktemp` and the move: the move is told to stop it.
+KILLING_MV_STUB = """#!/bin/sh
+kill -TERM "$PPID"
+sleep 1
+exit 0
+"""
+
 # What a collector that owns the staging directory can do between `mktemp` and the write:
 # take the file away and put a link in its place. It cannot do it anywhere else.
 SWAPPING_MKTEMP_STUB = """#!/bin/sh
@@ -196,6 +203,7 @@ class TodaysPartitionsAloneOverTheBudget(unittest.TestCase):
         marker: str | None = None,
         link: bool = False,
         swap: bool = False,
+        stopped: bool = False,
     ) -> tuple[subprocess.CompletedProcess[str], Path]:
         root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, root, True)
@@ -216,6 +224,8 @@ class TodaysPartitionsAloneOverTheBudget(unittest.TestCase):
         if link:
             (root / "elsewhere").write_text("untouched\n")
             mark.symlink_to(root / "elsewhere")
+        if stopped:
+            (root / "mv").write_text(KILLING_MV_STUB)
         if swap:
             (root / "mktemp").write_text(SWAPPING_MKTEMP_STUB)
             (root / "mktemp").chmod(0o755)
@@ -281,6 +291,15 @@ class TodaysPartitionsAloneOverTheBudget(unittest.TestCase):
         self.assertFalse(mark.is_symlink())
         self.assertEqual(sorted(path.name for path in mark.parent.iterdir()), [mark.name])
 
+    def test_a_run_stopped_before_the_move_leaves_no_temporary_file(self) -> None:
+        """B472, R03: the file is made in a directory nothing else clears."""
+
+        done, mark = self.run_budget(400_000, stopped=True)
+
+        self.assertNotEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(list(mark.parent.parent.glob(".database-budget.*")), [])
+        self.assertFalse(mark.exists())
+
     def test_a_link_in_the_marks_place_is_replaced_not_followed(self) -> None:
         done, mark = self.run_budget(400_000, link=True)
 
@@ -307,10 +326,6 @@ class TodaysPartitionsAloneOverTheBudget(unittest.TestCase):
 
         done, _ = self.run_budget(400_000)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TodaysBlockRangeIndexIsSummarized(unittest.TestCase):
@@ -354,3 +369,7 @@ class TodaysBlockRangeIndexIsSummarized(unittest.TestCase):
 
     def test_a_dry_run_summarizes_nothing(self) -> None:
         self.assertNotIn("brin_summarize_new_values", self.run_retention("--dry-run"))
+
+
+if __name__ == "__main__":
+    unittest.main()

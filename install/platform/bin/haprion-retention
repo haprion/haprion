@@ -584,19 +584,26 @@ traffic_budget() {
 # same filesystem that replaces whatever stands there - a link too - and follows
 # none. The collector accepts a mark only if root owns it.
 #
+# The file is removed again if the run is stopped between the two: the parent
+# is a directory nothing else clears.
+#
+database_budget_temporary=""
+
 database_budget_mark() {
-    local mark="${STAGING_DIRECTORY}/${DATABASE_BUDGET_MARK}" temporary
+    local mark="${STAGING_DIRECTORY}/${DATABASE_BUDGET_MARK}"
     [[ "$dry_run" -eq 0 && -d "$STAGING_DIRECTORY" ]] || return 0
     if [[ "$1" != over ]]; then
         rm -f -- "$mark" || warn "  cannot remove ${mark}"
         return 0
     fi
-    temporary="$(mktemp -p "$(dirname -- "$STAGING_DIRECTORY")" "${DATABASE_BUDGET_MARK}.XXXXXX")" \
-        || { warn "  cannot make ${mark}"; return 0; }
-    if ! { printf 'over\n' > "$temporary" && mv -fT -- "$temporary" "$mark"; }; then
-        rm -f -- "$temporary"
+    trap 'rm -f -- "$database_budget_temporary"' EXIT
+    database_budget_temporary="$(mktemp -p "$(dirname -- "$STAGING_DIRECTORY")" "${DATABASE_BUDGET_MARK}.XXXXXX")" \
+        || { database_budget_temporary=""; warn "  cannot make ${mark}"; return 0; }
+    if ! { printf 'over\n' > "$database_budget_temporary" && mv -fT -- "$database_budget_temporary" "$mark"; }; then
+        rm -f -- "$database_budget_temporary"
         warn "  cannot make ${mark}"
     fi
+    database_budget_temporary=""
 }
 
 #

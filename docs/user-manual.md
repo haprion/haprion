@@ -4630,10 +4630,16 @@ A request has the time its node accepted it (`time`), and reaches the database a
 later from a node that was behind after a flood or an outage (`nodes[].catching_up` says so). A client that
 polls with `from` set to the end of its last call therefore never sees a request that arrives after its time
 has passed. Each request also says when it reached the database (`inserted_at`), and `inserted_after` asks
-for the requests that arrived after a time, whatever time they carry. Such a client keeps the largest
-`inserted_at` it has read, and asks for `inserted_after` a few seconds before it on the next call, so a request
-stored in the same moment is not missed; it drops what it has already seen, a request being the same one by
-its `time`, `node` and `request_number`. Without `from`, a call with `inserted_after` reads back to the
+for the requests that arrived after a time, whatever time they carry. A call lists the newest requests
+first and at most `limit` of them, so a client reads every page of an answer (`next`, as `before`) before
+it moves its boundary: a request that arrived late has an old `time` and may stand on a later page. Then it
+keeps the largest `inserted_at` it has read, and asks for `inserted_after` one minute before it on the next
+call: a request carries the time its batch began, and shows only when the batch is committed, so a batch
+that waited for a lock can show later than one that began after it, by at most the 15 seconds a batch may
+take. It drops what it has already seen. `time`, `node` and
+`request_number` do not tell two requests apart, because the counter of one node can be the same for two
+requests in the same second; a request is the same one only when every field it carries is the same.
+Without `from`, a call with `inserted_after` reads back to the
 oldest request the log keeps; give `from` to narrow it.
 
 ```bash

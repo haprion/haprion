@@ -10751,15 +10751,16 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
         self.assertEqual(rows, [("kept", None), ("leaked", "restore")])
         self.assertEqual(list((self.directory / "lib/database-restore").iterdir()), [])
 
+    def test_a_dump_at_0115_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
+        self.restored_from("0115", grants_differ="0115 still grants the worker UPDATE (held_since)")
+
 
 class EveryRevisionADumpCanBeAtIsRestored(unittest.TestCase):
     """A restore migrates a dump from any revision from the baseline to the head (B436).
 
-    The baseline 0115 is the head, so no dump is migrated today and the restore's
-    migrating branch has no case. The next migration gives it one: a dump at
-    0115 restored under 0116 must be migrated, proved and held, and this fails
-    until `ADumpFromBeforeTheHead` says so with `restored_from` for every
-    revision between.
+    A dump at 0115 restored under 0116 must be migrated, proved and held, and
+    this fails until `ADumpFromBeforeTheHead` says so with `restored_from` for
+    every revision between the baseline and the head.
     """
 
     def test_each_revision_below_the_head_has_its_restore_test(self) -> None:

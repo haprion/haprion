@@ -1953,8 +1953,9 @@ def run_upgrade(
         """The schema the update leaves is the one a new installation gets (B436).
 
         A baseline replaces the migrations before it and keeps the last one's
-        number, so an update from the release before runs none of them: the
-        database keeps the schema they made. What says the baseline makes the
+        number, so an update from the release before runs none of them, only
+        the migrations after the baseline: the database keeps the schema they
+        made. What says the baseline makes the
         same is this. A database of its own on the same server is migrated from
         nothing by this release, and the two are dumped and compared, entry by
         entry: tables, indexes, constraints, functions, triggers, grants. The

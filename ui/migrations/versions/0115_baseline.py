@@ -8,11 +8,11 @@ disposable cluster. They are in Git's history before this file, each with the
 reasoning behind its change.
 
 It keeps their last number. A database 0.99.13 or earlier migrated to 0115
-stands on this schema already, so an upgrade from it runs nothing: there is no
-statement to run and no revision to rewrite, and a rollback to 0.99.13 finds
-the schema it ran on. The proof is in the release chain - the schema of a
-database upgraded from 0.99.13 and of a new installation are dumped and
-compared - and not in this file.
+stands on this schema already, so none of the sixteen runs again on it: this
+baseline has no statement to run for it and no revision to rewrite, and a
+rollback to 0.99.13 finds the schema it ran on. The proof is in the release
+chain - the schema of a database upgraded from 0.99.13 and of a new
+installation are dumped and compared - and not in this file.
 
 What differs from what they made, on purpose: `throttle_key` gets a key of
 its own, made when the migration runs, as 0114 made one; the key is never part

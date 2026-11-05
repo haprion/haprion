@@ -735,11 +735,10 @@ class RestoreSchemaCommandTests(unittest.TestCase):
         (root / "current").symlink_to(root / "releases" / current)
 
     def test_a_dump_from_before_the_real_baseline_goes_through_the_release_before(self) -> None:
-        """The real manifest: the baseline is the head, so a dump is at it or refused (B436)."""
+        """The real manifest: a dump is at the baseline or the head, or refused (B436, B444)."""
 
         document = json.loads(MANIFEST.read_text())["requires"]
         head, baseline = document["database_head"], document["database_baseline"]
-        self.assertEqual(head, baseline)
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             site = root / "releases" / "new/venv/lib/python3.12/site-packages/haprion_ui"
@@ -752,6 +751,8 @@ class RestoreSchemaCommandTests(unittest.TestCase):
             )
             (root / "current").symlink_to(root / "releases" / "new")
             self.assertEqual(self.ask(root, head), (0, f"same {head} new\n"))
+            if baseline != head:
+                self.assertEqual(self.ask(root, baseline), (0, f"migrate {head} new\n"))
             for revision in ("0100", "0114"):
                 with self.subTest(revision=revision):
                     code, said = self.ask(root, revision)

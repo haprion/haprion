@@ -8180,7 +8180,8 @@ the migration when either is too old.
 
 **The schema starts at a baseline.** One migration, `0115`, makes the whole schema. It holds what
 Haprion 0.99.0 to 0.99.13 built one migration at a time and keeps the last one's number, so a
-database 0.99.13 left is on it already and an update from there changes nothing in the schema. A
+database 0.99.13 left is on it already. An update from there runs only `0116`, which takes from the worker
+one privilege it never used (a dump is taken first, as for any migration). A
 database from before is not migrated: the check refuses it before anything runs. One from 0.99.0 to
 0.99.10 is updated to 0.99.13 first ([Updating](install.md#updating)); one from before 0.99 is
 installed afresh ([Removing](install.md#removing)). A schema is never taken

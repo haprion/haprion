@@ -1,2 +1,3 @@
 # Migrations that have run somewhere: never edited again, a change is a new migration (B241).
 # Add a line when a release carrying the migration goes out:  sha256sum versions/NNNN_name.py
+1a1203dad5a04e2f8f5c422b3a6b04e91c9a917b9284d69598a6af1ba7a59313  versions/0115_baseline.py

@@ -15,6 +15,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from haprion.cli import network, network_helper
 from tests.contract_schema import assert_contract
@@ -131,6 +132,38 @@ class TheNetworkFromAFile(NetworkPublishFixture):
             answer = assert_contract("haprion-network-apply", out)
             self.assertEqual((code, answer["result"]["changed"]), (0, False))
             self.assertEqual(git(self.repo, "rev-list", "--count", "HEAD"), before)
+
+    def test_a_check_of_the_same_network_written_another_way_asks_nothing_and_changes_nothing(
+        self,
+    ) -> None:
+        """W08: K10's comparison is what keeps `--check` from saying "Would change" and from asking."""
+
+        as_json = json.dumps(
+            {
+                "vips": {"main": {"address": "192.0.2.20", "source": "192.0.2.25"}},
+                "default_vip": "main",
+                "sources": {"outbound": "192.0.2.35"},
+                "networks": {"office": ["198.51.100.0/24"]},
+            }
+        )
+        with tempfile.TemporaryDirectory() as raw, tempfile.TemporaryDirectory() as files:
+            policy = self.runtime(Path(raw))
+            self.published(policy)
+            path = Path(files, "network.yaml")
+            path.write_text(as_json)
+            asked: list[bool] = []
+            publish = self.publish_network
+            with mock.patch.object(
+                self,
+                "publish_network",
+                side_effect=lambda *a, **k: asked.append(True) or publish(*a, **k),
+            ):
+                code, out, _ = self.run_apply(policy, path, "--check", "--json")
+
+            answer = assert_contract("haprion-network-apply", out)
+            self.assertEqual((code, answer["result"]["changed"], asked), (0, False, []))
+            code, text, _ = self.run_apply(policy, path, "--check")
+            self.assertNotIn("Would change", text)
 
     def test_check_shows_the_difference_and_publishes_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as raw, tempfile.TemporaryDirectory() as files:

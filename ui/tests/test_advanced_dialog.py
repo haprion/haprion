@@ -175,6 +175,7 @@ class TheDialogsRoute(AdvancedRouteTestCase):
         self.assertEqual(yaml.safe_load(self.saved[0]["yaml"])["advanced"], "retries 5\n")
         self.assertEqual(self.saved[0]["base_hash"], COMMIT)
         self.assertIsNone(self.saved[0]["expected_revision"])
+        self.assertEqual(self.order, ["lock alpha", "write"])
 
     def test_a_refused_text_is_not_saved(self) -> None:
         answer = self.post(self.editor(), action="save", advanced="use_backend other\n")

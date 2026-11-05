@@ -648,6 +648,9 @@ def lookup_again(
     except (ValueError, ModelError) as refusal:
         return refusal_page(request, config, str(refusal), back=proxy_path(cluster, name))
     with request.app.state.pool.connection() as connection:
+        hold_cluster_changes(
+            connection, state, cluster=cluster, key=stored.name, target=stored.name, replaces=None
+        )
         saved = db.save_change(
             connection,
             cluster=cluster,
@@ -1247,20 +1250,14 @@ def save_object_change(
     load_written(new_object_id or object_id, document.encode())
     if replaces is not None and not any(view.name == replaces for view in state.stored):
         replaces = None
-    #
-    # The check and the write under one lock, so a second save sees the first
-    # (XY02); and the rows read without clearing any, because clearing commits
-    # and this runs inside the caller's transaction (XY01).
-    #
-    db.lock_cluster_changes(connection, cluster)
-    clash = rename_clash(
-        unsettled_drafts(connection, cluster, state_reading(state)),
+    hold_cluster_changes(
+        connection,
+        state,
+        cluster=cluster,
         key=object_id,
         target=new_object_id or object_id,
         replaces=replaces,
     )
-    if clash:
-        raise db.DraftConflict(clash)
     return db.save_change(
         connection,
         cluster=cluster,
@@ -1275,6 +1272,34 @@ def save_object_change(
         saved_revision=saved_revision,
         draft_revision=draft_revision,
     )
+
+
+def hold_cluster_changes(
+    connection: Any,
+    state: EditorState,
+    *,
+    cluster: str,
+    key: str,
+    target: str,
+    replaces: str | None,
+) -> None:
+    """Take the cluster's saved-changes lock and refuse a rename the saved rows clash with.
+
+    Before every write of a saved change, whatever the path: the check and the
+    write under one lock, so a second save sees the first (XY02, V02); and the
+    rows read without clearing any, because clearing commits and this runs
+    inside the caller's transaction (XY01). Raises `db.DraftConflict`.
+    """
+
+    db.lock_cluster_changes(connection, cluster)
+    clash = rename_clash(
+        unsettled_drafts(connection, cluster, state_reading(state)),
+        key=key,
+        target=target,
+        replaces=replaces,
+    )
+    if clash:
+        raise db.DraftConflict(clash)
 
 
 def rename_clash(
@@ -1323,6 +1348,9 @@ def save_removal(
 
     if state.commit is None:
         raise ValueError("the stored proxies have not been read yet")
+    hold_cluster_changes(
+        connection, state, cluster=cluster, key=stored.name, target=stored.name, replaces=None
+    )
     return db.save_change(
         connection,
         cluster=cluster,
@@ -1541,6 +1569,14 @@ def advanced_submit(
     revision = int(expected_revision) if is_digits(expected_revision) else None
     with request.app.state.pool.connection() as connection:
         try:
+            hold_cluster_changes(
+                connection,
+                state,
+                cluster=cluster,
+                key=name,
+                target=name,
+                replaces=draft.replaces if draft is not None else None,
+            )
             saved = db.save_change(
                 connection,
                 cluster=cluster,

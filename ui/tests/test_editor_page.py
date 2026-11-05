@@ -124,6 +124,7 @@ class EditorTestCase(LoginTestCase):
         self.draft: ProxyDraft | None = None
         self.others: list[ProxyDraft] = []
         self.conflict = False
+        self.order: list[str] = []
         for target, side_effect in (
             (
                 "cluster_drafts",
@@ -139,7 +140,7 @@ class EditorTestCase(LoginTestCase):
             ("discard_draft", self._discard_draft),
             ("record_backend_renames", self._record_renames),
             ("draft_publishes", lambda _c, **_kw: []),
-            ("lock_cluster_changes", lambda _c, _cluster: None),
+            ("lock_cluster_changes", lambda _c, cluster: self.order.append(f"lock {cluster}")),
         ):
             patch = mock.patch(f"haprion_ui.db.{target}", side_effect=side_effect)
             patch.start()
@@ -176,6 +177,7 @@ class EditorTestCase(LoginTestCase):
         if self.conflict:
             raise DraftConflict("the changes to shop changed since they were read")
         target = values.get("new_object_id") or values["object_id"]
+        self.order.append("write")
         self.changes.append(values)
         self.saved.append(
             dict(values, object_id=target, expected_revision=values["saved_revision"])
@@ -1802,6 +1804,7 @@ class RemovingAnObject(EditorTestCase):
         (change,) = self.changes
         self.assertEqual(change["object_id"], "shop")
         self.assertFalse(change.get("deleted", False))
+        self.assertEqual(self.order, ["lock alpha", "write"])
 
     def test_an_object_that_is_not_there_is_a_refusal_and_not_a_form(self) -> None:
         page = self.editor().get("/proxies/alpha/nothing-here/remove")
@@ -1825,6 +1828,8 @@ class RemovingAnObject(EditorTestCase):
         self.assertEqual(self.queued, [])
         (change,) = self.changes
         self.assertTrue(change["deleted"])
+        # V02: under the cluster's saved-changes lock, as every write of a saved change is.
+        self.assertEqual(self.order, ["lock alpha", "write"])
 
     def test_the_draft_it_writes_says_the_object_should_go(self) -> None:
         client = self.editor()

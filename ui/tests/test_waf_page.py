@@ -448,6 +448,7 @@ class ThePage(EditorTestCase):
         )
         self.assertRegex(exception["at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
         self.assertIsNone(saved["expected_revision"])
+        self.assertEqual(self.order, ["lock alpha", "write"])
 
     def test_an_exception_on_an_object_a_write_would_refuse_is_not_saved(self) -> None:
         """Review 26-10-25, 5-01: it was saved, and the publish refused every saved change."""

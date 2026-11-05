@@ -1746,6 +1746,63 @@ class ARealDatabase(unittest.TestCase):
                 connection.execute("delete from proxy_draft where cluster = 'alpha'")
                 connection.commit()
 
+    def test_a_removal_waits_for_a_rename_in_the_making_and_is_then_refused(self) -> None:
+        """Review 26-11-05, V02/V03: the second save cannot pass the check before the first has committed."""
+
+        import threading
+        from types import SimpleNamespace
+
+        from haprion_ui import editor_flow
+
+        state: Any = SimpleNamespace(commit="a" * 40, stored=())
+        first = self.connect("HAPRION_UI_TEST_WEB_ROLE")
+        second = self.connect("HAPRION_UI_TEST_WEB_ROLE")
+        outcome: list[str] = []
+
+        def remove_market() -> None:
+            try:
+                editor_flow.hold_cluster_changes(
+                    second, state, cluster="alpha", key="market", target="market", replaces=None
+                )
+                outcome.append("passed")
+            except db.DraftConflict as conflict:
+                outcome.append(str(conflict))
+            finally:
+                second.rollback()
+
+        try:
+            editor_flow.hold_cluster_changes(
+                first, state, cluster="alpha", key="shop", target="shop", replaces="market"
+            )
+            db.save_change(
+                first,
+                cluster="alpha",
+                object_id="shop",
+                yaml="name: shop\n",
+                base_version=None,
+                base_hash="a" * 40,
+                updated_by="admin",
+                base_document="",
+                replaces="market",
+                saved_revision=None,
+                draft_revision=None,
+            )
+            thread = threading.Thread(target=remove_market)
+            thread.start()
+            thread.join(0.5)
+            self.assertTrue(thread.is_alive(), "the second save must wait for the first")
+            first.commit()
+            thread.join(5)
+            self.assertFalse(thread.is_alive())
+        finally:
+            first.close()
+            second.close()
+            with self.connect() as connection:
+                connection.execute("delete from proxy_draft where cluster = 'alpha'")
+                connection.commit()
+        self.assertEqual(len(outcome), 1)
+        self.assertIn("market is being renamed to shop", outcome[0])
+
     def test_saving_finishes_the_draft_in_one_transaction(self) -> None:
         """B257: the saved change is written and the draft dropped, or neither."""
 

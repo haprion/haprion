@@ -41,7 +41,12 @@ from haprion_ui import editor as editor_module
 from haprion_ui.access import current_session, forbidden_page
 from haprion_ui.config import Config, cluster_id_of
 from haprion_ui.db import AuthenticatedSession
-from haprion_ui.editor_flow import carried_base, editor_state, state_reading
+from haprion_ui.editor_flow import (
+    carried_base,
+    editor_state,
+    hold_cluster_changes,
+    state_reading,
+)
 from haprion_ui.reading import (
     OBJECTS_SOURCE,
     listed_clusters,
@@ -301,6 +306,14 @@ def _waf_save(
         return None
     with request.app.state.pool.connection() as connection:
         try:
+            hold_cluster_changes(
+                connection,
+                state,
+                cluster=cluster,
+                key=name,
+                target=name,
+                replaces=draft.replaces if draft is not None else None,
+            )
             saved = db.save_change(
                 connection,
                 cluster=cluster,

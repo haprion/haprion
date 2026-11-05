@@ -564,6 +564,7 @@ def ask_node(
 #
 type NamedAgain = Callable[[str, str], bool]
 RECHECK_WAIT_SECONDS = 5
+BUSY = "another certificate operation is running; run the removal again"
 
 
 def registry_names(
@@ -576,9 +577,20 @@ def registry_names(
     The lock is held only for the reading, not for the question.
     """
 
+    gave_up = False
+
     def named(certificate_id: str, cluster_id: str) -> bool:
-        with publish_lock(lock_path, wait=RECHECK_WAIT_SECONDS):
-            runtime = load_runtime_config(policy, require_secure=require_secure)
+        # One wait per run: once the lock has not come free in time, the nodes
+        # after are not made to wait for it again (26-11-05, Q03).
+        nonlocal gave_up
+        if gave_up:
+            raise LockError("operation_locked", BUSY)
+        try:
+            with publish_lock(lock_path, wait=RECHECK_WAIT_SECONDS):
+                runtime = load_runtime_config(policy, require_secure=require_secure)
+        except LockError:
+            gave_up = True
+            raise LockError("operation_locked", BUSY) from None
         registry = runtime.registry
         entry = registry.certificates.get(certificate_id) if registry is not None else None
         return entry is not None and cluster_id in entry.clusters

@@ -513,6 +513,39 @@ class WhatIsLeftAndSaid(DeleteFixture):
         self.assertEqual(report.incomplete, ("example.com",))
         self.assertEqual([n.state for n in report.outcomes[0].nodes], ["removed", "kept"])
 
+    def test_a_lock_held_by_another_operation_is_waited_for_once_per_run(self) -> None:
+        """26-11-05, Q03: the bound is shared by the nodes, and the row names no file."""
+
+        policy_path = self.prepared(
+            {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha", "beta"]}}
+        )
+        handle = os.open(self.lock, os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, handle)
+        real = self.node
+
+        def taking_the_lock_after_the_first(*args: Any) -> tuple[int, str]:
+            answer = real(*args)
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            return answer
+
+        with (
+            unittest.mock.patch.object(self, "node", taking_the_lock_after_the_first),
+            unittest.mock.patch.object(cert_delete, "RECHECK_WAIT_SECONDS", 1),
+            unittest.mock.patch.object(cert_delete, "publish_lock", wraps=publish_lock) as held,
+        ):
+            report = self.run_delete(policy_path, "example.com")
+
+        # The run's own, the check before the first node, and one that gave up.
+        self.assertEqual(held.call_count, 3)
+        self.assertEqual(len(self.node_calls), 1)
+        self.assertEqual(report.incomplete, ("example.com",))
+        nodes = report.outcomes[0].nodes
+        self.assertEqual([n.state for n in nodes], ["removed", "kept", "kept", "kept"])
+        for copy in nodes[1:]:
+            self.assertIn("another certificate operation is running", copy.detail)
+            self.assertNotIn(str(self.lock), copy.detail)
+            self.assertNotIn("/", copy.detail)
+
     def test_a_node_that_did_not_answer_is_not_asked_again_by_the_rest_of_the_batch(self) -> None:
         """Each question to a dead node costs its connect timeout, for as long as it is asked."""
 

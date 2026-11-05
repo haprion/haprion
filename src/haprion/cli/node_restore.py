@@ -356,11 +356,14 @@ def _step(
                 options["--run"],
                 fetch_access=restore_fetch.lazy(lambda: load_policy(policy_path)),
             )
-            out.write(
-                f"run {options['--run']} removed\n"
-                if removed
-                else f"there is no run {options['--run']}; nothing to remove\n"
-            )
+            if as_json:
+                out.write(json.dumps({"run": options["--run"], "removed": removed}) + "\n")
+            else:
+                out.write(
+                    f"run {options['--run']} removed\n"
+                    if removed
+                    else f"there is no run {options['--run']}; nothing to remove\n"
+                )
             return 0
         if step == "status":
             standing = node_restore.status(run_root, options["--run"])

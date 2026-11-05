@@ -1224,6 +1224,24 @@ class Status(Timed):
                  require_root=False)  # fmt: skip
         self.assertIn("never began writing", text.getvalue())
 
+    def discarded(self, run: str, *flags: str) -> str:
+        out = io.StringIO()
+        code = cli.main(["discard", "--run", run, *flags], run_root=self.root,
+                        output_stream=out, require_root=False)  # fmt: skip
+        self.assertEqual(code, 0)
+        return out.getvalue()
+
+    def test_discard_with_json_answers_json(self) -> None:
+        # B447 N05: --help promises one JSON document from any step.
+        run = self.prepare()
+        self.assertEqual(json.loads(self.discarded(run, "--json")), {"run": run, "removed": True})
+        self.assertEqual(json.loads(self.discarded(run, "--json")), {"run": run, "removed": False})
+
+    def test_discard_without_json_stays_text(self) -> None:
+        run = self.prepare()
+        self.assertEqual(self.discarded(run), f"run {run} removed\n")
+        self.assertEqual(self.discarded(run), f"there is no run {run}; nothing to remove\n")
+
 
 class TheNeighbourCheckIsForAnyNumberOfNodes(unittest.TestCase):
     """A cluster of three joined its other two into one name no node has, so a healthy

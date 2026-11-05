@@ -30,6 +30,7 @@ from haprion.helper_protocol import (
     config_error_code,
     read_clusterless_request,
     require_no_arguments,
+    run_bounded_helper,
     write_document,
     write_failure,
 )
@@ -37,6 +38,7 @@ from haprion.helper_protocol import (
 OPERATION = "cluster_list"
 HELPER = "/opt/haprion/current/bin/haprion-cluster-list-helper"
 SUDO = "/usr/bin/sudo"
+HELPER_TIMEOUT_SECONDS = 30
 
 
 def build_request(request_id: str) -> str:
@@ -55,12 +57,8 @@ def build_request(request_id: str) -> str:
 def run_cluster_list_helper(request_id: str) -> subprocess.CompletedProcess[str]:
     """Ask the root helper which clusters exist; the poller's one sudo rule for it."""
 
-    return subprocess.run(  # noqa: S603 - fixed helper path, no caller argv
-        [SUDO, "-n", HELPER],
-        input=build_request(request_id),
-        capture_output=True,
-        text=True,
-        check=False,
+    return run_bounded_helper(
+        [SUDO, "-n", HELPER], request=build_request(request_id), timeout=HELPER_TIMEOUT_SECONDS
     )
 
 

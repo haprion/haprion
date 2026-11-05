@@ -5,6 +5,7 @@ import math
 import os
 import re
 import signal
+import subprocess
 import sys
 import threading
 import uuid
@@ -755,3 +756,45 @@ def write_bad_input(
         message=message,
         exit_code=exit_codes.USAGE,
     )
+
+
+#
+# How long a caller gives a helper that does not answer before it is stopped
+# (D11-05). sudo passes SIGTERM on to the helper and cannot pass SIGKILL, so the
+# helper is asked to end first and killed only if it does not.
+#
+HELPER_TERMINATE_GRACE_SECONDS = 5.0
+
+
+def run_bounded_helper(
+    argv: Sequence[str], *, request: str, timeout: float
+) -> subprocess.CompletedProcess[str]:
+    """Run a root helper with `request` on stdin, and stop it at the deadline.
+
+    Raises `subprocess.TimeoutExpired` when it has not answered within
+    `timeout` seconds, after SIGTERM and, if that is not heeded, SIGKILL.
+    Nothing outlives the call.
+    """
+
+    with subprocess.Popen(  # noqa: S603 - fixed helper path, no caller argv
+        list(argv),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ) as process:
+        try:
+            stdout, stderr = process.communicate(request, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            #
+            # The process is waited for, not its pipes: a child it started may
+            # hold them open long after it is gone.
+            #
+            process.terminate()
+            try:
+                process.wait(timeout=HELPER_TERMINATE_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            raise subprocess.TimeoutExpired(list(argv), timeout) from None
+    return subprocess.CompletedProcess(list(argv), process.returncode, stdout, stderr)

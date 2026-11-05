@@ -585,3 +585,50 @@ class TheRequestWithNoCluster(unittest.TestCase):
             self.read(self.request(lifeline=True))
 
         self.assertIn("does not support a lifeline", str(caught.exception))
+
+
+class AHelperThatDoesNotAnswerIsStopped(unittest.TestCase):
+    """D11-05: the poller waited for its helpers without a limit."""
+
+    def test_a_helper_is_asked_to_end_before_it_is_killed(self) -> None:
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "terminated"
+            script = f"trap 'echo x > {marker}; exit 0' TERM; read line; sleep 30 & wait"
+            started = time.monotonic()
+            with self.assertRaises(subprocess.TimeoutExpired):
+                helper_protocol.run_bounded_helper(
+                    ["/bin/sh", "-c", script], request="{}\n", timeout=0.5
+                )
+            self.assertLess(time.monotonic() - started, 10)
+            self.assertTrue(marker.exists())
+
+    def test_a_helper_that_answers_gives_its_answer(self) -> None:
+        completed = helper_protocol.run_bounded_helper(
+            ["/bin/sh", "-c", "read line; echo got $line; echo no >&2; exit 3"],
+            request="hello\n",
+            timeout=10,
+        )
+        self.assertEqual(
+            (completed.returncode, completed.stdout, completed.stderr), (3, "got hello\n", "no\n")
+        )
+
+    def test_every_helper_the_poller_runs_has_a_deadline(self) -> None:
+        from haprion.cli import cluster_list_helper, inventory, readings_helper, status
+
+        for module in (cluster_list_helper, inventory, readings_helper, status):
+            with (
+                self.subTest(module=module.__name__),
+                unittest.mock.patch.object(module, "run_bounded_helper") as run,
+            ):
+                if module is cluster_list_helper:
+                    module.run_cluster_list_helper("id")
+                elif module is inventory:
+                    module.run_inventory_helper("alpha", "id")
+                elif module is readings_helper:
+                    module.run_readings_helper("alpha", "id", {})
+                else:
+                    module.run_status_helper("alpha", "id")
+                self.assertEqual(run.call_args.kwargs["timeout"], module.HELPER_TIMEOUT_SECONDS)

@@ -51,6 +51,7 @@ from haprion.helper_protocol import (
     JsonValue,
     read_scoped_request,
     require_no_arguments,
+    run_bounded_helper,
     write_bad_input,
     write_document,
 )
@@ -59,6 +60,11 @@ OPERATION = "readings"
 PARAMETERS = frozenset({"reads"})
 HELPER = "/opt/haprion/current/bin/haprion-readings-helper"
 SUDO = "/usr/bin/sudo"
+#
+# Regenerating a stored release can build the whole configuration again, so a
+# reading is given minutes, not seconds.
+#
+HELPER_TIMEOUT_SECONDS = 300
 #
 # What each reading's `stderr` is cut to in the answer: enough for the error a
 # helper writes there, never a page of it.
@@ -106,12 +112,10 @@ def run_readings_helper(
 ) -> subprocess.CompletedProcess[str]:
     """Ask the root helper for these readings of one cluster, or of the manager."""
 
-    return subprocess.run(  # noqa: S603 - fixed helper path, no caller argv
+    return run_bounded_helper(
         [SUDO, "-n", HELPER],
-        input=build_request(cluster, request_id, reads),
-        capture_output=True,
-        text=True,
-        check=False,
+        request=build_request(cluster, request_id, reads),
+        timeout=HELPER_TIMEOUT_SECONDS,
     )
 
 

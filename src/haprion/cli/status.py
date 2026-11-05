@@ -39,10 +39,15 @@ from haprion.cluster_status import (
     traffic_stream_unguarded,
 )
 from haprion.envelope import new_request_id
-from haprion.helper_protocol import write_document
+from haprion.helper_protocol import run_bounded_helper, write_document
 from haprion.status_collect import OPERATION
 
 HELPER = "/opt/haprion/current/bin/haprion-status-helper"
+#
+# The helper reads every node at once, each within STATUS_TIMEOUT_SECONDS, and
+# the DNS names beside them; this is the whole of that and some margin.
+#
+HELPER_TIMEOUT_SECONDS = 120
 SUDO = "/usr/bin/sudo"
 
 USAGE = (
@@ -86,12 +91,10 @@ def run_status_helper(cluster_id: str, request_id: str) -> subprocess.CompletedP
         "request_id": request_id,
         "parameters": {},
     }
-    return subprocess.run(  # noqa: S603 - fixed path, no caller-supplied arguments
+    return run_bounded_helper(
         [SUDO, "-n", HELPER],
-        input=json.dumps(request, separators=(",", ":")),
-        capture_output=True,
-        text=True,
-        check=False,
+        request=json.dumps(request, separators=(",", ":")),
+        timeout=HELPER_TIMEOUT_SECONDS,
     )
 
 

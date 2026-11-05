@@ -445,6 +445,14 @@ def _nodes_redacted(result: Any) -> Any:
     return {**result, "nodes": nodes}
 
 
+def _why(exc: Exception) -> str:
+    """Why a helper gave no answer, in the words of the row (D11-05)."""
+
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return f"the helper did not answer within {int(exc.timeout or 0)} s"
+    return str(exc)
+
+
 def poll_cluster(
     cluster: str,
     run_helper: RunHelper = run_status_helper,
@@ -472,7 +480,7 @@ def poll_cluster(
         return {
             "outcome": "unavailable",
             "result": {},
-            "poll_error": _excerpt(f"could not run the {operation} helper: {exc}"),
+            "poll_error": _excerpt(f"could not run the {operation} helper: {_why(exc)}"),
         }
     return _judge(
         completed,
@@ -968,7 +976,7 @@ def _local_readings(
         failure = exc
 
         def failed(_cluster: str | None, _request_id: str) -> Any:
-            raise RuntimeError(f"the readings helper gave no answer: {failure}")
+            raise RuntimeError(f"the readings helper gave no answer: {_why(failure)}")
 
         return asked, dict.fromkeys(reads, failed)
 

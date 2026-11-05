@@ -67,4 +67,6 @@ def upgrade() -> None:
     op.execute("drop function metric_month_partition(text, date)")
     op.execute(VIEW)
     op.execute("alter table node_event_state add column since timestamptz not null default now()")
-    op.execute("grant select (since), insert (since), update (since) on node_event_state to app_poller")
+    op.execute(
+        "grant select (since), insert (since), update (since) on node_event_state to app_poller"
+    )

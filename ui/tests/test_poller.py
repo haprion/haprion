@@ -1518,6 +1518,15 @@ class EachClusterIsReadAtItsOwnPace(unittest.TestCase):
         poller._poll_cluster_sources(Pool(), "alpha", (source,), interval_seconds=45)
         self.assertEqual(told, [node_join.JOIN_TIMEOUT_SECONDS + 90])
 
+    def test_a_helper_that_timed_out_is_a_row_that_says_so(self) -> None:
+        # D11-05
+        def hung(_cluster: str, _request: str) -> Any:
+            raise subprocess.TimeoutExpired(["helper"], 120)
+
+        reading = poller.poll_cluster("alpha", hung)
+        self.assertEqual(reading["outcome"], "unavailable")
+        self.assertIn("did not answer within 120 s", reading["poll_error"])
+
     def test_a_status_that_is_partial_or_failed_was_read(self) -> None:
         for outcome, expected in (("partial", "partial"), ("failed", "failed")):
             with self.subTest(outcome):

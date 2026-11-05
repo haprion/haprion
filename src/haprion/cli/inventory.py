@@ -11,11 +11,15 @@ from typing import Any, TextIO
 from haprion import exit_codes
 from haprion.cli.caller import helper_refusal, usage, without_answer
 from haprion.envelope import new_request_id
-from haprion.helper_protocol import write_document
+from haprion.helper_protocol import run_bounded_helper, write_document
 
 OPERATION = "inventory"
 HELPER = "/opt/haprion/current/bin/haprion-inventory-helper"
 SUDO = "/usr/bin/sudo"
+#
+# Git reads and parsing the published tree; a helper still silent after this is stuck.
+#
+HELPER_TIMEOUT_SECONDS = 120
 USAGE = "Usage:\n  haprion-inventory -c <cluster> [--json]\n"
 
 type RunHelper = Callable[[str, str], subprocess.CompletedProcess[str]]
@@ -31,12 +35,10 @@ def run_inventory_helper(cluster_id: str, request_id: str) -> subprocess.Complet
         "request_id": request_id,
         "parameters": {},
     }
-    return subprocess.run(  # noqa: S603 - fixed helper path, no caller argv
+    return run_bounded_helper(
         [SUDO, "-n", HELPER],
-        input=json.dumps(request, separators=(",", ":")),
-        capture_output=True,
-        text=True,
-        check=False,
+        request=json.dumps(request, separators=(",", ":")),
+        timeout=HELPER_TIMEOUT_SECONDS,
     )
 
 

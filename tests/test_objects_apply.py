@@ -216,6 +216,21 @@ class ObjectsFromFiles(unittest.TestCase):
             (["node-b"], ["waf"], "no_status_identity"),
         )
 
+    def test_no_answer_wins_over_no_status_identity(self) -> None:
+        """N07: of two reasons, the one a person can act on at once is the one said."""
+
+        no_identity = {"unchecked_reason": "no_status_identity"}
+        no_answer = {"unchecked_reason": "no_answer"}
+        for versions, checked, expected in (
+            ([no_identity, no_answer], [], "no_answer"),
+            ([no_answer, no_identity], [], "no_answer"),
+            ([no_identity], [no_answer], "no_answer"),
+            ([no_identity], [], "no_status_identity"),
+            ([{}], [], None),
+        ):
+            with self.subTest(expected=expected, versions=versions, checked=checked):
+                self.assertEqual(objects_apply._unchecked_reason(versions, checked), expected)
+
     def test_a_document_before_the_cluster_was_found_names_none(self) -> None:
         """W10: a file that cannot be read says nothing about a cluster; a refusal after the lookup does."""
 

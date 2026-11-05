@@ -841,10 +841,19 @@ class ANodeChangeThatWasNotPublished(unittest.TestCase):
                 }
             },
         )
-        self.assertEqual(
-            jobs.unchecked_note(silent),
+        reason = (
             "No status identity is set up, so the WAF engine could not be checked on node-b; "
-            "the deploy refuses the release on a node that lacks it.",
+            "the deploy refuses the release on a node that lacks it."
+        )
+        self.assertEqual(jobs.unchecked_note(silent), reason)
+        #
+        # The reason is read from the publish under a deploy's result as well (N07).
+        #
+        self.assertEqual(
+            jobs.unchecked_note(
+                replace(silent, result={"result": {"converged": True}, "publish": silent.result})
+            ),
+            reason,
         )
         deployed = replace(alone, result={"result": {"converged": True}, "publish": alone.result})
         for job in (alone, deployed):

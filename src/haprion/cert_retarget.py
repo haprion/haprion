@@ -654,25 +654,37 @@ def _remove(
         before_clusters, before_receivers = found
         dropped_clusters = tuple(c for c in before_clusters if c in change.clusters)
         dropped_receivers = tuple(r for r in before_receivers if r in change.receivers)
-        if not dropped_clusters and not dropped_receivers:
+        #
+        # A cluster the registry no longer names can still have a copy: an
+        # earlier removal left it on a node that did not answer. The nodes of
+        # every cluster named are asked again (an absent copy is `absent`), so
+        # "run the removal again" holds.
+        #
+        left_behind = tuple(
+            c for c in change.clusters if c not in before_clusters and c in runtime.clusters
+        )
+        if not dropped_clusters and not dropped_receivers and not left_behind:
             outcomes.append(CertificateOutcome(certificate_id, "unchanged"))
             continue
-        reason = removal_refusal(certificate_id, dropped_clusters, runtime, guards)
-        if reason is not None:
-            outcomes.append(CertificateOutcome(certificate_id, "refused", reason[1], reason[0]))
-            continue
-        try:
-            written = cert_registry.set_targets(
-                registry_path,
-                certificate_id=certificate_id,
-                clusters=tuple(c for c in before_clusters if c not in change.clusters),
-                receivers=tuple(r for r in before_receivers if r not in change.receivers),
-                runtime=runtime,
-                require_secure=require_secure,
-            )
-        except cert_registry.RegistryError as exc:
-            outcomes.append(CertificateOutcome(certificate_id, "refused", str(exc), exc.code))
-            continue
+        abandoned: tuple[str, ...] = ()
+        if dropped_clusters or dropped_receivers:
+            reason = removal_refusal(certificate_id, dropped_clusters, runtime, guards)
+            if reason is not None:
+                outcomes.append(CertificateOutcome(certificate_id, "refused", reason[1], reason[0]))
+                continue
+            try:
+                written = cert_registry.set_targets(
+                    registry_path,
+                    certificate_id=certificate_id,
+                    clusters=tuple(c for c in before_clusters if c not in change.clusters),
+                    receivers=tuple(r for r in before_receivers if r not in change.receivers),
+                    runtime=runtime,
+                    require_secure=require_secure,
+                )
+            except cert_registry.RegistryError as exc:
+                outcomes.append(CertificateOutcome(certificate_id, "refused", str(exc), exc.code))
+                continue
+            abandoned = written.abandoned
         layers = _clear_receivers(certificate_id, dropped_receivers, runtime)
         #
         # Each cluster has its own copy (B358): the one in a cluster it is
@@ -682,7 +694,7 @@ def _remove(
         #
         entry = runtime.registry.certificates.get(certificate_id) if runtime.registry else None
         authority = entry is not None and entry.source.kind == AUTHORITY
-        for dropped in dropped_clusters:
+        for dropped in dropped_clusters + left_behind:
             directory = policy.certificate_directory(dropped)
             if directory is None:
                 continue
@@ -692,8 +704,9 @@ def _remove(
                 else certificate_path(directory, certificate_id)
             )
             layers += (_unlink(copy),)
-        clusters = [runtime.clusters[c] for c in dropped_clusters if c in runtime.clusters]
-        abandoned = written.abandoned
+        clusters = [
+            runtime.clusters[c] for c in dropped_clusters + left_behind if c in runtime.clusters
+        ]
 
         def finish(
             nodes: tuple[NodeCopy, ...],

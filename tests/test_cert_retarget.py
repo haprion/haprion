@@ -292,6 +292,31 @@ class RemovingFromATarget(RetargetFixture):
         self.assertEqual(self.targets("example.com")["clusters"], ["alpha"])
         self.assertEqual([n.state for n in report.outcomes[0].nodes], ["removed", "kept"])
 
+    def test_running_the_removal_again_asks_the_nodes_that_kept_the_copy(self) -> None:
+        self.node_answers["node-b.example.com"] = (1, "refused")
+        first = self.retarget(self.policy_path, "remove", "example.com", clusters=("beta",))
+        self.assertEqual(first.incomplete, ("example.com",))
+
+        self.node_answers.pop("node-b.example.com")
+        self.node_calls.clear()
+        second = self.retarget(self.policy_path, "remove", "example.com", clusters=("beta",))
+
+        self.assertEqual(second.changed, ("example.com",))
+        self.assertEqual(
+            self.node_calls,
+            [
+                ("node-a.example.com", "example.com"),
+                ("node-b.example.com", "example.com"),
+            ],
+        )
+        self.assertEqual(self.targets("example.com")["clusters"], ["alpha"])
+
+    def test_a_cluster_the_configuration_does_not_know_is_not_asked(self) -> None:
+        report = self.retarget(self.policy_path, "remove", "shop.example", clusters=("gamma",))
+
+        self.assertEqual(report.unchanged, ("shop.example",))
+        self.assertEqual(self.node_calls, [])
+
     def test_a_receiver_loses_its_pair_and_the_host_is_not_asked(self) -> None:
         report = self.retarget(self.policy_path, "remove", "shop.example", receivers=("lb-01",))
 
@@ -340,11 +365,15 @@ class RemovingFromATarget(RetargetFixture):
         self.assertFalse((self.receiver_dir / "shop.example").exists())
         self.assertTrue((self.receiver_dir / "other.example" / FULLCHAIN).exists())
 
-    def test_a_certificate_not_on_that_target_is_unchanged(self) -> None:
+    def test_a_cluster_the_registry_does_not_name_is_still_asked_about_the_copy(self) -> None:
         report = self.retarget(self.policy_path, "remove", "shop.example", clusters=("beta",))
 
-        self.assertEqual(report.unchanged, ("shop.example",))
-        self.assertEqual(self.node_calls, [])
+        self.assertEqual(report.changed, ("shop.example",))
+        self.assertEqual(self.targets("shop.example")["clusters"], ["alpha"])
+        self.assertEqual(
+            self.node_calls,
+            [("node-a.example.com", "shop.example"), ("node-b.example.com", "shop.example")],
+        )
 
 
 class WhatRemovalRefuses(RetargetFixture):

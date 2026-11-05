@@ -605,6 +605,23 @@ class AHelperThatDoesNotAnswerIsStopped(unittest.TestCase):
             self.assertLess(time.monotonic() - started, 10)
             self.assertTrue(marker.exists())
 
+    def test_a_helper_is_started_in_a_session_of_its_own(self) -> None:
+        """V10: sudo drops a signal sent from its own process group; the poller's TERM must not be one."""
+
+        import sys
+
+        completed = helper_protocol.run_bounded_helper(
+            [
+                sys.executable,
+                "-c",
+                "import os; input(); print(os.getsid(0) == os.getpid(), os.getpgrp() != "
+                f"{os.getpgrp()})",
+            ],
+            request="{}\n",
+            timeout=10,
+        )
+        self.assertEqual(completed.stdout.strip(), "True True", completed.stderr)
+
     def test_a_helper_that_answers_gives_its_answer(self) -> None:
         completed = helper_protocol.run_bounded_helper(
             ["/bin/sh", "-c", "read line; echo got $line; echo no >&2; exit 3"],

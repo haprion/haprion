@@ -773,8 +773,10 @@ def run_bounded_helper(
 
     Raises `subprocess.TimeoutExpired` when it has not answered within
     `timeout` seconds, after SIGTERM and, if that is not heeded, SIGKILL.
-    The signals reach the process started here - sudo, which relays SIGTERM
-    to the helper; a process the helper started is the helper's to end.
+    The signals go to the process started here, sudo. It is started in a
+    session of its own: sudo passes on a signal to the helper, but not one
+    sent by a process in its own process group, and without a group of its own
+    that would be this one. A process the helper started is the helper's to end.
     """
 
     with subprocess.Popen(  # noqa: S603 - fixed helper path, no caller argv
@@ -783,13 +785,15 @@ def run_bounded_helper(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        start_new_session=True,
     ) as process:
         try:
             stdout, stderr = process.communicate(request, timeout=timeout)
-        except subprocess.TimeoutExpired:
+        except (subprocess.TimeoutExpired, KeyboardInterrupt) as stopped:
             #
             # The process is waited for, not its pipes: a child it started may
-            # hold them open long after it is gone.
+            # hold them open long after it is gone. A Ctrl-C of the terminal
+            # reaches this process only, its helper being in another session.
             #
             process.terminate()
             try:
@@ -797,5 +801,7 @@ def run_bounded_helper(
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+            if isinstance(stopped, KeyboardInterrupt):
+                raise
             raise subprocess.TimeoutExpired(list(argv), timeout) from None
     return subprocess.CompletedProcess(list(argv), process.returncode, stdout, stderr)

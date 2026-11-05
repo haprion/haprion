@@ -186,13 +186,15 @@ class WhatCoreIsHeldTo(unittest.TestCase):
 
 
 class WhichPathsAskTheQuestion(unittest.TestCase):
-    """A publish is checked; a revert is not, and that is the whole point.
+    """A publish is refused; a revert is warned, and that is the whole point.
 
     Every path that builds a node artifact reads a tree that contains
     `core/haproxy.cfg`, so the check could have gone in one place and covered
-    them all. It must not: `revert_helper` builds one too, and a revert is what
-    somebody runs while something is on fire. Going back to a release that was
-    good before cannot depend on a file being current.
+    them all. It must not refuse there: `revert_helper` builds one too, and a
+    revert is what somebody runs while something is on fire. Going back to a
+    release that was good before cannot depend on a file being current. Since
+    B443 the revert runs the same checks (`release_checks.all_problems`) and
+    says each one as a warning, so it is neither refused nor silent.
 
     Held here because the difference is a decision, not something the code
     shows: a fourth publish path added later would be silently unchecked.
@@ -213,15 +215,25 @@ class WhichPathsAskTheQuestion(unittest.TestCase):
         here = Path(__file__).resolve().parents[1]
         return (here / "src" / "haprion" / "cli" / f"{module}.py").read_text(encoding="utf-8")
 
-    def test_every_publish_path_checks(self) -> None:
+    def test_every_publish_path_refuses_on_the_checks(self) -> None:
+        checks = (Path(__file__).resolve().parents[1] / "src/haprion/release_checks.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("core_defaults_problem", checks)
         for module in self.CHECKED:
             with self.subTest(module=module):
-                self.assertIn("core_defaults_problem", self.source(module))
+                source = self.source(module)
+                self.assertIn("release_checks.before_the_sandbox(", source)
+                self.assertIn("release_checks.after_the_sandbox(", source)
 
-    def test_a_revert_is_never_checked(self) -> None:
+    def test_a_revert_warns_and_is_never_refused_on_them(self) -> None:
         for module in self.DELIBERATELY_NOT:
             with self.subTest(module=module):
-                self.assertNotIn("core_defaults_problem", self.source(module))
+                source = self.source(module)
+                self.assertIn("release_checks.all_problems(", source)
+                self.assertNotIn("release_checks.before_the_sandbox(", source)
+                self.assertNotIn("release_checks.after_the_sandbox(", source)
+                self.assertNotIn("release_checks.first(", source)
 
     def test_the_list_names_every_path_that_builds_an_artifact(self) -> None:
         """So a new one has to be classified rather than forgotten."""

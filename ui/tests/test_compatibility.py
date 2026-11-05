@@ -411,6 +411,31 @@ class ADatabaseFromBeforeTheBaseline(unittest.TestCase):
             compatibility.before_baseline(replace(requirements, database_baseline=None), "0091")
         )
 
+    def test_under_apt_the_refusal_says_how_to_get_out_of_it(self) -> None:
+        """Review 26-11-05, G05: "upgrade to 0.99.13" is a downgrade for an `iF` package."""
+
+        requirements = compatibility.load_requirements(MANIFEST)
+        for revision in ("0100", "0114"):
+            with self.subTest(revision=revision):
+                said = compatibility.before_baseline(requirements, revision, under_apt=True)
+                if said is None:
+                    self.fail(f"a database at {revision} was not refused")
+                self.assertIn(
+                    "sudo apt install --allow-downgrades haprion-cli=<version> "
+                    "haprion-ui=<version>, the 0.99.13 versions that apt list -a haprion-ui "
+                    "shows, and then sudo apt upgrade again; sudo dpkg --configure -a is not "
+                    "needed",
+                    said,
+                )
+        outside = compatibility.before_baseline(requirements, "0114")
+        if outside is None:
+            self.fail("a database at 0114 was not refused")
+        self.assertNotIn("apt install", outside)
+        before_0100 = compatibility.before_baseline(requirements, "0091", under_apt=True)
+        if before_0100 is None:
+            self.fail("a database at 0091 was not refused")
+        self.assertNotIn("apt install", before_0100)
+
     def test_the_carrier_of_a_baseline_ran_its_chain_to_it(self) -> None:
         """The release named for a baseline is the one before it, at that head (B436)."""
 

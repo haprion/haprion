@@ -288,13 +288,17 @@ CHAIN_CARRIERS = {"0115": ("0100", "0.99.13")}
 
 
 def before_baseline(
-    requirements: Requirements, revision: str, *, restore: bool = False
+    requirements: Requirements, revision: str, *, restore: bool = False, under_apt: bool = False
 ) -> str | None:
     """Why a database at `revision` cannot be taken to this release at all, or None (B369).
 
     `restore`: the revision is a dump's, not the database's. The way is then the
     other way round: the carrier release is installed, the dump read back with
     it, and the update run again (B441).
+
+    `under_apt`: the refusal stops an `apt upgrade`, which leaves the package
+    half configured on this release. "Upgrade to 0.99.13" is then a downgrade
+    apt will not do unasked, so the way out is said in apt's words (B444, G05).
     """
 
     baseline = requirements.database_baseline
@@ -317,6 +321,14 @@ def before_baseline(
             f"haprion-ui package of Haprion {carrier[1]} (apt install --allow-downgrades "
             f"haprion-ui=<its version>, or the file from its GitHub release), restore the dump "
             f"with it, which migrates it to {baseline}, and then update again"
+        )
+    if carrier is not None and revision >= carrier[0] and under_apt:
+        return (
+            f"{revision} is from before this release's baseline {baseline}. Haprion {carrier[1]} "
+            f"migrates the database to {baseline}: sudo apt install --allow-downgrades "
+            "haprion-cli=<version> haprion-ui=<version>, the "
+            f"{carrier[1]} versions that apt list -a haprion-ui shows, and then sudo apt "
+            "upgrade again; sudo dpkg --configure -a is not needed"
         )
     if carrier is not None and revision >= carrier[0]:
         return (
@@ -1217,7 +1229,11 @@ def main(argv: list[str] | None = None) -> int:
         except CompatibilityError as exc:
             report.fail("schema revision", str(exc))
         else:
-            refusal = before_baseline(requirements, revision)
+            refusal = before_baseline(
+                requirements,
+                revision,
+                under_apt=bool(os.environ.get("DPKG_MAINTSCRIPT_PACKAGE")),
+            )
             if refusal is not None:
                 report.fail("schema revision", refusal)
             elif args.upgrade_from_current:

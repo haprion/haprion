@@ -149,6 +149,14 @@ An installation on Haprion 0.99.10 or older is updated to 0.99.13 first. Later r
 where 0.99.11 to 0.99.13 left it, and refuse an older one before they change the database. The packages of 0.99.13
 are on its [GitHub release](https://github.com/haprion/haprion/releases/tag/v0.99.13).
 
+If `sudo apt upgrade` already refused such an installation, install the 0.99.13 packages from the repository
+(`apt list -a haprion-ui` shows their versions), then upgrade again. `sudo dpkg --configure -a` is not needed:
+
+```bash
+sudo apt install --allow-downgrades haprion-cli=<version> haprion-ui=<version>
+sudo apt upgrade
+```
+
 Do not add the repository to unattended-upgrades. An update is something you choose the moment for.
 
 ### Removing

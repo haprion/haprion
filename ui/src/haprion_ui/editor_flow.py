@@ -1017,6 +1017,17 @@ def editor_submit(
             settled_work(connection, cluster, name, state_reading(state)) if name else ObjectWork()
         )
     #
+    # A draft this page did not show (XX07). It was started on top of the saved
+    # change after the page was opened, and a Save that moved the saved change
+    # under it would leave the draft's owner to write over it later without a
+    # word about what changed: the draft remembers no revision it was made on.
+    #
+    if form.action == "save" and work.draft is not None and draft_revision is None:
+        raise db.DraftConflict(
+            f"{name} has a draft that was started after this page was opened; "
+            "open the proxy again to see it before saving"
+        )
+    #
     # The published name this work takes the place of. A rename of a published
     # object records it on the row (B257), so the publish that eventually
     # carries the row removes the old name too - worked out at the moment of

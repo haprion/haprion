@@ -1915,6 +1915,18 @@ class SavedChangesAndDrafts(EditorTestCase):
         (change,) = self.changes
         self.assertEqual((change["draft_revision"], change["saved_revision"]), (4, None))
 
+    def test_save_over_a_draft_the_page_did_not_show_is_refused(self) -> None:
+        """Review 26-11-05, XX07: the saved row moved under a draft, and the draft then wrote over it."""
+
+        self.draft = self.row("draft", 1)
+        client = self.editor()
+
+        answer = self.submit(client, "/proxies/alpha/shop/edit", action="save", saved_revision="2")
+
+        self.assertEqual(answer.status_code, 409)
+        self.assertIn("has a draft that was started after this page was opened", answer.text)
+        self.assertEqual(self.changes, [])
+
     def test_save_as_draft_leaves_the_saved_change_alone(self) -> None:
         self.draft = self.row("saved", 2)
         client = self.editor()

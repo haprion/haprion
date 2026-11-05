@@ -273,6 +273,28 @@ class HelperBoundary(ScepFixture):
         entry = self.registered()["web.example.com"]
         self.assertEqual((entry["clusters"], entry["receivers"]), (["alpha"], ["lb-01"]))
 
+    def test_a_resume_whose_every_target_has_gone_says_so_before_the_ca_is_asked(self) -> None:
+        """26-11-05, CC02: the import would refuse with a bare "at least one target"."""
+
+        self.pending("web.example.com")
+        write_targets(
+            self.ndes_policy.state_root,
+            "web.example.com",
+            clusters=("removed",),
+            receivers=("removed-receiver",),
+        )
+        directory = request_directory(self.ndes_policy.state_root, "web.example.com")
+        with mock.patch.object(ndes, "enroll") as engine:
+            code, doc, errors = self.helper({"id": "web.example.com", "resume": True})
+
+        engine.assert_not_called()
+        self.assertEqual(code, exit_codes.REFUSED, errors)
+        message = doc["error"]["message"]
+        self.assertIn("removed, removed-receiver", message)
+        self.assertIn("abandon", message)
+        self.assertTrue(directory.exists(), "the request stays, to be abandoned or resumed")
+        self.assertNotIn("web.example.com", self.registered())
+
     def test_an_exportable_request_keeps_its_mark_through_the_wait(self) -> None:
         """B255: decided at the request, registered with it when the CA answers."""
 

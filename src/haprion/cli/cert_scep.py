@@ -161,9 +161,18 @@ def enroll(
             # not a target any more, as an import of a signed request treats it
             # (26-11-05, C08).
             #
+            named = [*clusters, *receivers]
             clusters = [name for name in clusters if name in runtime.clusters]
             known = runtime.registry.receivers if runtime.registry is not None else {}
             receivers = [name for name in receivers if name in known]
+            if named and not clusters and not receivers:
+                raise ScepRefusal(
+                    "bad_input",
+                    f"every target this request named has been removed ({', '.join(named)}), "
+                    "so the certificate would have nowhere to go; add the target back or "
+                    "abandon the request",
+                    exit_codes.REFUSED,
+                )
             formats = {k: v for k, v in (formats or {}).items() if k in receivers}
         if any(name not in runtime.clusters for name in clusters):
             raise ScepRefusal("bad_input", "unknown target cluster", exit_codes.REFUSED)

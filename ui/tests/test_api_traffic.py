@@ -141,6 +141,31 @@ class TheTrafficRoute(ApiTestCase):
         )
         self.assertIsNone(asked.kwargs["owned"])
 
+    def test_every_outcome_the_collector_writes_is_in_the_schema(self) -> None:
+        """Review 2026-11-05, T04: `clock` is the node's exit 66; a value outside the
+        enum would make an answer the contract does not describe."""
+
+        import json
+
+        from haprion.traffic_collector import ClockSkew, ProtocolError, SSHError, _failure_outcome
+
+        schema = json.loads(
+            (
+                Path(traffic_logs.__file__).parent / "api/schemas/traffic_list.schema.json"
+            ).read_text()
+        )
+        enum = schema["properties"]["nodes"]["items"]["properties"]["outcome"]["enum"]
+        written = {
+            _failure_outcome(ClockSkew("x")),
+            _failure_outcome(ProtocolError("x")),
+            _failure_outcome(SSHError("x")),
+            _failure_outcome(OSError()),
+            "ok",
+            "budget",
+            "database",
+        }
+        self.assertEqual(sorted(written - set(enum)), [])
+
     def test_a_rule_and_how_the_session_ended_are_said_in_words(self) -> None:
         self.read.return_value = Reading(
             (entry(rule="admin-post:deny", termination="SH", status=403),), (), 0, False

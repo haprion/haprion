@@ -55,7 +55,7 @@
           "node": { "type": "string", "description": "Value. The node's name." },
           "last_attempt": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When the manager last tried to fetch the node's log; null where it never did." },
           "last_success": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When it last succeeded; null where it never did." },
-          "outcome": { "enum": ["ok", "ssh", "protocol", "disk", "budget", "database", "unknown"], "description": "Code. How the last attempt ended: ok, or what went wrong (ssh: the node did not answer, protocol, disk, budget: ran out of time, database), unknown where no record was kept." },
+          "outcome": { "enum": ["ok", "ssh", "protocol", "disk", "budget", "database", "clock", "unknown"], "description": "Code. How the last attempt ended: ok, or what went wrong (ssh: the node did not answer, protocol, disk, budget: the manager's copy was over its space budget and nothing was fetched, database, clock: the node's clock differs from the manager's and it does not hold the day asked for), unknown where no record was kept." },
           "catching_up": { "type": "boolean", "description": "Value. True where the manager has not yet fetched everything the node holds, so the newest rows may be missing." }
         },
         "additionalProperties": true

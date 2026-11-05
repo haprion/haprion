@@ -84,6 +84,15 @@ class SSHError(CollectorError):
     pass
 
 
+class ClockSkew(CollectorError):
+    """The node does not hold the day it was asked for (its exit 66).
+
+    Two clocks a minute apart disagree about which day it is just after
+    midnight UTC, and the node keeps its fourteen days by its own clock. Told
+    apart from an SSH failure, which it was reported as (review 2026-11-05, T04).
+    """
+
+
 class ProtocolError(CollectorError):
     pass
 
@@ -332,6 +341,8 @@ def ssh_fetch(config: CollectorConfig, target: NodeTarget, wanted: date, offset:
         code, stdout, _stderr = _bounded_ssh(argv)
     except OSError as exc:
         raise SSHError(f"cannot run SSH request: {exc}") from exc
+    if code == 66:
+        raise ClockSkew("the node's clock differs from the manager's: it does not hold that day")
     if code != 0:
         raise SSHError(f"SSH request failed with exit {code}")
     return _parse_response(stdout, wanted, offset)
@@ -579,6 +590,8 @@ def _write_waf_outcome(
 
 
 def _failure_outcome(exc: CollectorError | OSError) -> str:
+    if isinstance(exc, ClockSkew):
+        return "clock"
     if isinstance(exc, SSHError):
         return "ssh"
     if isinstance(exc, ProtocolError):
@@ -625,7 +638,17 @@ def collect_node(
         # for today and one for the oldest open day, so a today that keeps
         # growing faster than it is read cannot starve the backlog either.
         #
-        current_complete, remaining_bytes = _catch_up(config, target, today, fetch, deadline)
+        try:
+            current_complete, remaining_bytes = _catch_up(config, target, today, fetch, deadline)
+        except ClockSkew:
+            #
+            # A node a minute behind has not begun the day the manager is in.
+            # For the minutes the clocks may disagree about midnight that is
+            # no fault: it holds nothing of today yet. Later it is a clock.
+            #
+            if utc_now - datetime.combine(today, datetime.min.time(), UTC) >= CLOSED_DAY_GRACE:
+                raise
+            current_complete, remaining_bytes = True, 0
         for wanted in days[:-1]:
             marker = config.staging / f"{prefix}{wanted.isoformat()}.done"
             if marker.exists() or marker.is_symlink():
@@ -635,9 +658,19 @@ def collect_node(
                 wanted == today - timedelta(days=1)
                 and utc_now - datetime.combine(today, datetime.min.time(), UTC) < CLOSED_DAY_GRACE
             )
-            complete, _ = _catch_up(
-                config, target, wanted, fetch, deadline, closed=not yesterday_still_open
-            )
+            try:
+                complete, _ = _catch_up(
+                    config, target, wanted, fetch, deadline, closed=not yesterday_still_open
+                )
+            except ClockSkew:
+                #
+                # The oldest day is on the edge of the node's window, and a
+                # node whose clock is ahead has just let it go. Asked again
+                # next run; the days after it are not held back.
+                #
+                if wanted != days[0]:
+                    raise
+                continue
             if complete and not yesterday_still_open:
                 _replace(marker, b"", 0o600)
             #

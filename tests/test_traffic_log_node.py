@@ -65,12 +65,19 @@ class TrafficLogNodeReaderTests(unittest.TestCase):
             "2026-09-08 0 extra",
             "../../etc/passwd 0",
             "2026-02-30 0",
-            "2026-08-25 0",
-            "2026-09-09 0",
             "2026-09-08 1234567890123",
         ):
             with self.subTest(request=request):
                 self.assertEqual(self.call(request), (64, None, b""))
+
+    def test_a_day_the_node_does_not_hold_is_its_own_answer(self) -> None:
+        """Review 2026-11-05, T04: a manager whose clock differs from the node's
+        asks for a day on the other side of the node's window. That is not a
+        request the node does not understand (64), and the collector says which."""
+
+        for request in ("2026-08-25 0", "2026-09-09 0"):
+            with self.subTest(request=request):
+                self.assertEqual(self.call(request), (66, None, b""))
 
     def test_missing_day_is_an_empty_result(self) -> None:
         code, header, payload = self.call("2026-09-08 0")

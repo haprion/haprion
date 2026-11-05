@@ -8519,6 +8519,12 @@ nodes after it are imported as usual, and the failed node shows `database` in th
 under Needs attention instead of `ok`. Root or the `haproxy` account on a node can still write such a
 line, so one node's log is not trusted beyond that node.
 
+A node keeps its days by its own clock. Just after midnight UTC, a node whose clock is behind the manager's
+has not begun the day the manager asks for. The first five minutes of the day pass quietly; after that the
+log warning says that the node's clock differs from the manager's (`clock`) instead of an SSH failure. A
+node whose clock is ahead has already let go of the oldest day the manager asks for, which is skipped
+until the clocks agree.
+
 The WAF engine's journal is read apart from the traffic log, and its result is kept apart: a node whose
 journal cannot be read, or whose matches the database refused, stays current in the traffic log and shows
 *WAF findings not collected* in the log warning and under Needs attention. The *Findings* tab says the list

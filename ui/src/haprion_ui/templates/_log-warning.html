@@ -18,6 +18,7 @@
           {%- elif stale is not none and node.latest_attempt_failed() -%}
             last try {{ attempted | round | int }} s ago —
             {%- if node.outcome == 'budget' %} paused: {{ "this node's logs are most of the manager's copy until midnight UTC" if node.budget_reason == 'share' else "the manager's copy is over its space budget" }}
+            {%- elif node.outcome == 'clock' %} failed: the node's clock differs from the manager's
             {%- else %} failed ({{ node.outcome }})
             {%- endif %}; last success
             {%- if stale < 90 %} {{ stale | round | int }} s ago

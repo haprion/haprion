@@ -720,6 +720,8 @@ def from_traffic_logs(nodes: Iterable[Any], *, now: datetime) -> list[Item]:
                 if node.budget_reason == "share"
                 else "log collection paused: the manager's copy is over its space budget"
             )
+        elif node.latest_attempt_failed() and node.outcome == "clock":
+            message = "log collection failed: the node's clock differs from the manager's"
         elif node.latest_attempt_failed():
             message = f"log collection failed ({node.outcome})"
         elif stale is None:

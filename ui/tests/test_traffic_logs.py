@@ -499,6 +499,23 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertIn("this node&#39;s logs are most of the manager&#39;s copy", page)
         self.assertNotIn("failed (budget)", page)
 
+    def test_a_node_whose_clock_differs_says_so_and_not_ssh(self) -> None:
+        """Review 2026-11-05, T04: exit 66 from the node read as `failed (ssh)`."""
+
+        (self.root / "alpha--node-a.meta.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "last_attempt": NOW.isoformat(),
+                    "last_success": (NOW - timedelta(minutes=3)).isoformat(),
+                    "outcome": "clock",
+                }
+            )
+        )
+        page = self.page(now=NOW)
+        self.assertIn("the node's clock differs from the manager's", page)
+        self.assertNotIn("failed (clock)", page)
+
     def test_a_journal_that_could_not_be_collected_is_in_the_log_warning(self) -> None:
         (self.root / "alpha--node-a.meta.json").write_text(
             json.dumps(

@@ -46,6 +46,15 @@ class RequestError(ValueError):
     pass
 
 
+class OutsideWindow(RequestError):
+    """A date that is a date, but not one of the days this node keeps.
+
+    Its own answer (66), apart from a request this program does not understand
+    (64): the manager's clock and this node's differ around midnight UTC, and
+    the collector tells a clock from a fault in the request (review 2026-11-05, T04).
+    """
+
+
 def _request(raw: str, today: date) -> tuple[date, int]:
     match = REQUEST.fullmatch(raw)
     if match is None:
@@ -55,7 +64,7 @@ def _request(raw: str, today: date) -> tuple[date, int]:
     except ValueError as exc:
         raise RequestError("invalid date") from exc
     if not today - timedelta(days=RETENTION_DAYS - 1) <= wanted <= today:
-        raise RequestError("date outside retention")
+        raise OutsideWindow("date outside retention")
     return wanted, int(match.group(2))
 
 
@@ -107,6 +116,8 @@ def serve(raw: str, root: Path, output: BinaryIO, *, today: date | None = None) 
 
     try:
         wanted, offset = _request(raw, today or datetime.now(UTC).date())
+    except OutsideWindow:
+        return 66
     except RequestError:
         return 64
 

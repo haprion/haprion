@@ -177,6 +177,56 @@ class TrafficCollectorTests(unittest.TestCase):
             payload=payload,
         )
 
+    def test_a_node_that_does_not_hold_the_day_asked_for_is_a_clock_not_ssh(self) -> None:
+        """Review 2026-11-05, T04: exit 66 is the node saying the day is outside
+        its window, which two clocks a minute apart produce around midnight."""
+
+        with (
+            patch("haprion.traffic_collector._bounded_ssh", return_value=(66, b"", b"")),
+            self.assertRaises(traffic_collector.ClockSkew) as raised,
+        ):
+            traffic_collector.ssh_fetch(self.config, self.target, NOW.date(), 0)
+        self.assertIn("clock", str(raised.exception))
+        self.assertEqual(_failure_outcome(raised.exception), "clock")
+
+    def test_today_refused_by_a_node_behind_is_forgiven_just_after_midnight(self) -> None:
+        shortly_after_midnight = datetime.combine(NOW.date(), time(0, 2), UTC)
+        asked: list[date] = []
+
+        def fetch(_target: NodeTarget, wanted: date, offset: int) -> Response:
+            asked.append(wanted)
+            if wanted == shortly_after_midnight.date():
+                raise traffic_collector.ClockSkew("the node does not hold this day")
+            return self.response(wanted, offset, b"")
+
+        collect_node(self.config, self.target, now=shortly_after_midnight, fetch=fetch)
+
+        meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_bytes())
+        self.assertEqual(meta["outcome"], "ok")
+        self.assertIn(shortly_after_midnight.date() - timedelta(days=1), asked)
+
+    def test_today_refused_by_a_node_behind_later_in_the_day_is_a_clock_problem(self) -> None:
+        def fetch(_target: NodeTarget, _wanted: date, _offset: int) -> Response:
+            raise traffic_collector.ClockSkew("the node does not hold this day")
+
+        with self.assertRaises(traffic_collector.ClockSkew):
+            collect_node(self.config, self.target, now=NOW, fetch=fetch)
+        meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_bytes())
+        self.assertEqual(meta["outcome"], "clock")
+
+    def test_the_oldest_day_a_node_ahead_has_dropped_is_passed_over_not_failed(self) -> None:
+        oldest = NOW.date() - timedelta(days=RETENTION_DAYS - 1)
+
+        def fetch(_target: NodeTarget, wanted: date, offset: int) -> Response:
+            if wanted == oldest:
+                raise traffic_collector.ClockSkew("the node does not hold this day")
+            return self.response(wanted, offset, b"")
+
+        collect_node(self.config, self.target, now=NOW, fetch=fetch)
+        meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_bytes())
+        self.assertEqual(meta["outcome"], "ok")
+        self.assertFalse((self.staging / f"alpha--node-a--{oldest.isoformat()}.done").exists())
+
     def test_a_record_the_database_cannot_take_is_the_row_parser_s_refusal(self) -> None:
         """One exception type for everything a record can be, so `_ingest_part`
         can step over it. A stamp past the year 9999 raised OSError or

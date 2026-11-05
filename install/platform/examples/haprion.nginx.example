@@ -44,12 +44,13 @@ map $request_method$uri $haprion_sign_in {
 limit_req_zone $haprion_sign_in zone=haprion_sign_in:1m rate=10r/m;
 
 #
-# The API (B416), per client: ten calls a second with room for a burst of
-# fifty, enough for a fail2ban that bans a list at once. A token that is not
-# valid is counted harder by the application itself, which closes the source
-# for a minute after ten of them.
+# The API (B416), per client as the application counts one - an IPv6 host by
+# its /64, an IPv4-mapped address as the IPv4 one: ten calls a second with room
+# for a burst of fifty, enough for a fail2ban that bans a list at once. A token
+# that is not valid is counted harder by the application itself, which closes
+# the source for a minute after ten of them.
 #
-limit_req_zone $binary_remote_addr zone=haprion_api:1m rate=10r/s;
+limit_req_zone $haprion_source zone=haprion_api:1m rate=10r/s;
 
 #
 # nginx's own answers on /api/ carry a request id in the envelope, as the

@@ -117,6 +117,12 @@ class TheSiteParses(unittest.TestCase):
         self.assertIn('default          "";', site)
         self.assertIn("limit_req zone=haprion_sign_in", site)
 
+    def test_the_api_is_limited_per_client_as_the_application_counts_it(self) -> None:
+        # V04: a host with a /64 has as many places as it likes under the whole address.
+        site = (TEMPLATE / "haprion.nginx.example").read_text()
+        self.assertIn("limit_req_zone $haprion_source zone=haprion_api:", site)
+        self.assertNotIn("limit_req_zone $binary_remote_addr", site)
+
 
 class TheSignInLimitCountsAnIpv6SourceAsItsPrefix(unittest.TestCase):
     """Review 26-11-05, A06: the application counts a /64, so nginx must too -

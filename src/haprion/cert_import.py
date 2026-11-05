@@ -287,7 +287,13 @@ def _names(certificate: str) -> tuple[str, str]:
     return subject, issuer
 
 
-def read_pkcs12(path: Path, password_file: Path | None, *, password: str | None = None) -> str:
+def read_pkcs12(
+    path: Path | None,
+    password_file: Path | None,
+    *,
+    password: str | None = None,
+    data: bytes | None = None,
+) -> str:
     """Everything in a PKCS#12 as PEM: the key unencrypted, the certificates as they are.
 
     The password reaches openssl from the operator's file, or - for the
@@ -296,12 +302,22 @@ def read_pkcs12(path: Path, password_file: Path | None, *, password: str | None 
     read it, and never a file this function writes. OpenSSL 3 refuses the
     RC2-40 that older Windows exports use unless told `-legacy`; tried
     second, so a modern file is read the modern way.
+
+    The file is `path`, or `data` - the bytes of an upload, which go to openssl
+    on stdin and are written nowhere (26-11-05, C05).
     """
 
-    if not path.is_file():
-        raise ImportError_("bad_input", f"the PKCS#12 file does not exist: {path}")
-    if path.stat().st_size > MAX_CERTIFICATE_BYTES:
-        raise ImportError_("bad_input", f"the PKCS#12 file is implausibly large: {path}")
+    if path is None:
+        if data is None:
+            raise ImportError_("bad_input", "no PKCS#12 file was given")
+    elif data is not None:
+        raise ImportError_("bad_input", "a PKCS#12 file and its bytes are two sources")
+
+    if path is not None:
+        if not path.is_file():
+            raise ImportError_("bad_input", f"the PKCS#12 file does not exist: {path}")
+        if path.stat().st_size > MAX_CERTIFICATE_BYTES:
+            raise ImportError_("bad_input", f"the PKCS#12 file is implausibly large: {path}")
     if password_file is not None and password is not None:
         raise ImportError_("bad_input", "a password file and a password are two passwords")
     if password_file is not None and not password_file.is_file():
@@ -325,12 +341,13 @@ def read_pkcs12(path: Path, password_file: Path | None, *, password: str | None 
             passin = f"fd:{read_end}"
         else:
             passin = "pass:"
-        base = ["pkcs12", "-in", str(path), "-nodes", "-passin", passin]
+        base = ["pkcs12", *(["-in", str(path)] if path is not None else []), "-nodes"]
+        base += ["-passin", passin]
         try:
             completed = subprocess.run(  # noqa: S603 - fixed binary, paths from the operator
                 [OPENSSL, *base, *extra],
+                input=data,
                 capture_output=True,
-                text=True,
                 timeout=OPENSSL_TIMEOUT,
                 check=False,
                 pass_fds=pass_fds,
@@ -345,8 +362,8 @@ def read_pkcs12(path: Path, password_file: Path | None, *, password: str | None 
             for descriptor in pass_fds:
                 os.close(descriptor)
         if completed.returncode == 0:
-            return completed.stdout
-        lines = (completed.stderr or "").strip().splitlines()
+            return completed.stdout.decode("utf-8", errors="replace")
+        lines = completed.stderr.decode("utf-8", errors="replace").strip().splitlines()
         last = lines[-1] if lines else ""
         if "unsupported" not in last.lower() and "legacy" not in last.lower():
             break
@@ -371,18 +388,18 @@ def _pkcs7_certificates(text: str) -> list[str]:
     return certificates
 
 
-def _openssl_file(arguments: Sequence[str], *, what: str) -> str | None:
-    """Like `_openssl` for a file the caller named, or None when openssl refuses it.
+def _openssl_der(arguments: Sequence[str], *, data: bytes, what: str) -> str | None:
+    """Like `_openssl` for binary bytes on stdin, or None when openssl refuses them.
 
     None rather than an error because the caller is trying forms in turn and
     the refusal of one is not the answer; a missing binary still raises.
     """
 
     try:
-        completed = subprocess.run(  # noqa: S603 - fixed binary, a private temporary file
+        completed = subprocess.run(  # noqa: S603 - fixed binary, fixed arguments
             [OPENSSL, *arguments],
+            input=data,
             capture_output=True,
-            text=True,
             timeout=OPENSSL_TIMEOUT,
             check=False,
         )
@@ -392,7 +409,9 @@ def _openssl_file(arguments: Sequence[str], *, what: str) -> str | None:
             f"openssl could not {what}: {exc}",
             exit_code=exit_codes.CONFIG,
         ) from exc
-    return completed.stdout if completed.returncode == 0 else None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.decode("utf-8", errors="replace")
 
 
 def read_bytes(data: bytes, *, password: str | None = None) -> tuple[list[str], list[str]]:
@@ -403,9 +422,8 @@ def read_bytes(data: bytes, *, password: str | None = None) -> tuple[list[str], 
     three binary DER forms tried in turn - PKCS#12 (`.pfx`/`.p12`, the only
     one that can carry a key and the only one that takes a password), a
     single X.509 certificate (`.cer`/`.crt`/`.der`), and a PKCS#7 bundle
-    (`.p7b`). The bytes touch the disk once, in a private 0600 file that is
-    gone before this returns, because `openssl pkcs12` reads a file; the
-    password never does - it goes down a pipe.
+    (`.p7b`). The bytes go to openssl on stdin and the password down a pipe:
+    neither is written to disk (26-11-05, C05).
     """
 
     if len(data) > MAX_UPLOAD_BYTES:
@@ -427,41 +445,31 @@ def read_bytes(data: bytes, *, password: str | None = None) -> tuple[list[str], 
             raise ImportError_("bad_input", "no certificate or key block was found in the file")
         return certificates, keys
 
-    directory = tempfile.mkdtemp(prefix="haproxy-cert-upload-")
     try:
-        path = Path(directory) / "upload"
-        with open(path, "wb", opener=lambda p, f: os.open(p, f, 0o600)) as handle:
-            handle.write(data)
-        try:
-            return split_blocks(read_pkcs12(path, None, password=password or None))
-        except ImportError_ as pkcs12_refusal:
-            if pkcs12_refusal.code != "bad_input":
-                raise
-            if password:
-                #
-                # A password was given, so PKCS#12 was meant: say what openssl
-                # said rather than sliding on to forms that take no password.
-                #
-                raise
-        for arguments, what in (
-            (["x509", "-inform", "DER", "-in", str(path)], "read the DER certificate"),
-            (
-                ["pkcs7", "-inform", "DER", "-in", str(path), "-print_certs"],
-                "read the PKCS#7 bundle",
-            ),
-        ):
-            printed = _openssl_file(arguments, what=what)
-            if printed is not None:
-                certificates, keys = split_blocks(printed)
-                if certificates:
-                    return certificates, keys
-        raise ImportError_(
-            "bad_input",
-            "the file is not PEM, PKCS#12, a DER certificate or a PKCS#7 bundle "
-            "(a PKCS#12 with a password needs the password)",
-        )
-    finally:
-        shutil.rmtree(directory, ignore_errors=True)
+        return split_blocks(read_pkcs12(None, None, password=password or None, data=data))
+    except ImportError_ as pkcs12_refusal:
+        if pkcs12_refusal.code != "bad_input":
+            raise
+        if password:
+            #
+            # A password was given, so PKCS#12 was meant: say what openssl
+            # said rather than sliding on to forms that take no password.
+            #
+            raise
+    for arguments, what in (
+        (["x509", "-inform", "DER"], "read the DER certificate"),
+        (["pkcs7", "-inform", "DER", "-print_certs"], "read the PKCS#7 bundle"),
+    ):
+        printed = _openssl_der(arguments, data=data, what=what)
+        if printed is not None:
+            certificates, keys = split_blocks(printed)
+            if certificates:
+                return certificates, keys
+    raise ImportError_(
+        "bad_input",
+        "the file is not PEM, PKCS#12, a DER certificate or a PKCS#7 bundle "
+        "(a PKCS#12 with a password needs the password)",
+    )
 
 
 def stored_key(store: Path, certificate_id: str) -> str | None:

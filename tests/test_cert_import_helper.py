@@ -68,31 +68,31 @@ class ReadingOneFile(unittest.TestCase):
         certificates, keys = read_bytes(bundle.read_bytes(), password=PKCS12_PASSWORD)
         self.assertEqual((len(certificates), len(keys)), (2, 1))
 
-    def test_the_password_never_touches_the_disk(self) -> None:
-        """B165's promise, at the one place a file is written: only the upload itself.
+    def test_neither_the_upload_nor_the_password_touches_the_disk(self) -> None:
+        """B165 promise: the bytes go to openssl on stdin, the password down a pipe (C05).
 
-        The temporary directory is gone when the call returns, and the
-        password reached `read_pkcs12` as a value, not as a file.
+        No temporary file or directory is made at all, for any of the binary forms.
         """
 
-        written: list[str] = []
-        real_mkdtemp = tempfile.mkdtemp
-
-        def watched(*args: Any, **kwargs: Any) -> str:
-            directory = str(real_mkdtemp(*args, **kwargs))
-            written.append(directory)
-            return directory
-
+        der = subprocess.run(
+            [OPENSSL, "x509", "-in", str(self.pki.leaf), "-outform", "DER"],
+            capture_output=True,
+            check=True,
+        ).stdout
         bundle = self.pki.pkcs12(PKCS12_PASSWORD)
         with (
-            mock.patch.object(tempfile, "mkdtemp", side_effect=watched),
+            mock.patch.object(tempfile, "mkdtemp", side_effect=AssertionError("mkdtemp")),
+            mock.patch.object(tempfile, "mkstemp", side_effect=AssertionError("mkstemp")),
+            mock.patch.object(
+                tempfile, "NamedTemporaryFile", side_effect=AssertionError("tempfile")
+            ),
             mock.patch.object(cert_import, "read_pkcs12", wraps=cert_import.read_pkcs12) as spied,
         ):
-            read_bytes(bundle.read_bytes(), password=PKCS12_PASSWORD)
-        self.assertEqual(len(written), 1)
-        self.assertFalse(Path(written[0]).exists())
-        self.assertIsNone(spied.call_args.args[1])
-        self.assertEqual(spied.call_args.kwargs["password"], PKCS12_PASSWORD)
+            self.assertEqual(len(read_bytes(bundle.read_bytes(), password=PKCS12_PASSWORD)[1]), 1)
+            self.assertEqual(len(read_bytes(der)[0]), 1)
+        first = spied.call_args_list[0]
+        self.assertEqual(first.kwargs["password"], PKCS12_PASSWORD)
+        self.assertEqual(first.kwargs["data"], bundle.read_bytes())
 
     def test_pkcs12_with_the_wrong_password_says_so(self) -> None:
         bundle = self.pki.pkcs12(PKCS12_PASSWORD)

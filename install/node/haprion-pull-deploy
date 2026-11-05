@@ -960,7 +960,10 @@ if (( ! REJOINING )) && diff -qr "$OLD_RELEASE" "$STAGE" >/dev/null; then
         # never did; validated again through the paths systemd uses.
         #
         log "An earlier run switched to this configuration but never reloaded. Finishing..."
-        haproxy -c -f "${HAPROXY_DIR}/haproxy.cfg" -f "${HAPROXY_DIR}/conf.d"
+        haproxy -c -f "${HAPROXY_DIR}/haproxy.cfg" -f "${HAPROXY_DIR}/conf.d" || {
+            log "ERROR: HAProxy rejected the configuration an earlier run switched to."
+            exit 1
+        }
         sync_waf_engine 1
         sync_dns_listener "$RUNNING"
         "$SERVER_STATE" reload

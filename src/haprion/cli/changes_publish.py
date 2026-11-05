@@ -339,12 +339,13 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                 said = str(exc)
                 if regenerate and "certificate mismatch override" in said:
                     #
-                    # The interface cannot send the override; say who can.
+                    # The interface cannot send the override; say who can. Worded
+                    # for both readers: the terminal's is already in one.
                     #
                     said += (
-                        f" The interface does not send it: run haprion-publish -c {cluster.cluster_id}"
-                        " --regenerate --allow-certificate-mismatch in a terminal, or install a"
-                        " certificate that covers the name."
+                        f" Run haprion-publish -c {cluster.cluster_id} --regenerate"
+                        " --allow-certificate-mismatch (the interface does not send the"
+                        " override), or install a certificate that covers the name."
                     )
                 raise Refusal("changes_invalid", said, exit_codes.REFUSED) from exc
             #

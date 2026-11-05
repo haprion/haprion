@@ -3579,18 +3579,34 @@ class WafEngineThatNeverAnswers(WafEngineThatDoesNotAnswer):
 
     engine_silent = True
 
+    #
+    # Whether HAProxy sees the client go before its own 500 ms timeout is its
+    # event loop's to decide, and under load it often does not (measured with
+    # 40 busy processes on 8 cores: from 1 of 8 to 7 of 8 requests ended in
+    # code 1). Eight requests were taken to be enough, and sometimes were not.
+    # So the clients go on leaving until HAProxy has seen two of them go, and
+    # the limit is high enough that a proxy that never names it fails.
+    #
+    ATTEMPTS_AT_LEAST = 8
+    ATTEMPTS_AT_MOST = 80
+    SEEN_LEAVING = 2
+
     def leave(self, host: str, name: str, how: str) -> list[dict[str, object]]:
-        """Eight clients that leave after a tenth of a second, and their records.
+        """Clients that leave after a tenth of a second, and their records.
 
         `how` is `reset` (RST) or `half` (the request sent, then writing shut
         down - the case a missing refusal would forward to the server).
         HAProxy does not always notice the close before its own 500 ms
-        timeout (2 of 14 on 3.4.7: code 1), so one request cannot prove a code 4.
+        timeout (code 1), so one request cannot prove a code 4: the clients
+        keep coming until `SEEN_LEAVING` of them were seen to leave.
         """
 
-        entries = []
-        for number in range(8):
-            path = f"/{name}-{number}"
+        entries: list[dict[str, object]] = []
+        seen = 0
+        while len(entries) < self.ATTEMPTS_AT_LEAST or (
+            seen < self.SEEN_LEAVING and len(entries) < self.ATTEMPTS_AT_MOST
+        ):
+            path = f"/{name}-{len(entries)}"
             client = socket.create_connection(("127.0.0.1", self.port), timeout=5)
             try:
                 client.sendall(f"GET {path} HTTP/1.1\r\nHost: {host}\r\n\r\n".encode())
@@ -3602,6 +3618,7 @@ class WafEngineThatNeverAnswers(WafEngineThatDoesNotAnswer):
             finally:
                 client.close()
             entries.append(self.record(path))
+            seen += entries[-1]["waf_error"] == 4
         return entries
 
     def reached_the_server(self, name: str) -> list[str]:

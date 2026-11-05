@@ -789,6 +789,26 @@ class JsonModeTests(RevertFixture):
             self.assertEqual(document["result"]["new_version"], 4)
             self.assertEqual(output.count("\n"), 1)
 
+    def test_a_draft_on_a_loose_head_is_an_envelope_not_a_traceback(self) -> None:
+        """`git checkout <commit>` left in the draft: review 26-11-05, D06."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+            git(self.repo, "checkout", "-q", "--detach", "HEAD~1")
+
+            code, output = self.run_caller(policy_path, "-c", "alpha", "1", "--json")
+
+            document = assert_contract("haprion-revert", output)
+            self.assertEqual(document["outcome"], "failed")
+            self.assertIn("not on a branch", document["error"]["message"])
+            self.assertEqual(self.requests, [])
+            self.assertNotEqual(code, 0)
+
+            plain, text = self.run_caller(policy_path, "-c", "alpha", "1")
+            self.assertEqual(plain, code)
+            self.assertIn("not on a branch", text)
+
     def test_the_current_version_is_done_without_a_change(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy_path = self.runtime(Path(raw))

@@ -38,7 +38,7 @@ from haprion.envelope import failure
 from haprion.git_command import GitError
 from haprion.helper_protocol import config_error_code, write_document
 from haprion.repo_health import describe_problem, is_repo_root, unsaved_changes
-from haprion.repo_snapshot import resolve_head
+from haprion.repo_snapshot import PublishError, resolve_head
 from haprion.version_history import (
     count_versions,
     stopped_before_the_files,
@@ -245,7 +245,7 @@ def main(
             raise CallerError(f"could not find version {version}.")
         _, head = resolve_head(repo)
         summary = version_summary(repo, version, commit)
-    except (CallerError, GitError) as exc:
+    except (CallerError, GitError, PublishError) as exc:
         return refuse(
             "bad_input" if exc.exit_code == exit_codes.USAGE else "refused", str(exc), exc.exit_code
         )

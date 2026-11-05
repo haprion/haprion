@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import tempfile
 import types
@@ -766,6 +767,33 @@ class RegistryListingTests(unittest.TestCase):
         one_behind = distribution({"alpha": material, "beta": older})
         self.assertFalse(one_behind["current"])
         self.assertIsNotNone(one_behind["published_at"])
+
+    def test_each_clusters_own_copy_time_is_reported_beside_the_oldest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "live" / "lineage"
+            source.mkdir(parents=True)
+            material = _pem("shared.example.net")
+            (source / "fullchain.pem").write_text(material, encoding="ascii")
+            stamps = {"alpha": 1_700_000_000, "beta": 1_750_000_000}
+            for cluster_id, stamp in stamps.items():
+                copy = root / "certdist" / cluster_id / "shared.pem"
+                copy.parent.mkdir(parents=True)
+                copy.write_text(material, encoding="ascii")
+                os.utime(copy, (stamp, stamp))
+            registry = self._registry(
+                root,
+                certificates={
+                    "shared": self._entry("shared", lineage="lineage", clusters=("alpha", "beta"))
+                },
+            )
+            distribution = self._run(root, registry)["certificates"][0]["distribution"]
+
+        self.assertEqual(
+            distribution["clusters"],
+            {"alpha": "2023-11-14T22:13:20Z", "beta": "2025-06-15T15:06:40Z"},
+        )
+        self.assertEqual(distribution["published_at"], "2023-11-14T22:13:20Z")
 
     def test_the_private_key_never_reaches_the_listing(self) -> None:
         #

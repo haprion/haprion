@@ -524,13 +524,23 @@ def _distribution(
         _published(_distributed(certificate_root, entry, cluster_id), fingerprint)
         for cluster_id in entry.clusters
     ]
+    #
+    # Each cluster's own time beside the oldest: a cluster added later holds a
+    # newer copy than the first, and what counts as "since when" is its own
+    # (26-11-05, XX06).
+    #
+    per_cluster = {
+        cluster_id: copy["published_at"]
+        for cluster_id, copy in zip(entry.clusters, copies, strict=True)
+    }
     missing = next((copy for copy in copies if copy["published_at"] is None), None)
     if missing is not None:
-        return missing
+        return {**missing, "clusters": per_cluster}
     currents = {copy["current"] for copy in copies}
     return {
         "published_at": min(str(copy["published_at"]) for copy in copies),
         "current": False if False in currents else None if None in currents else True,
+        "clusters": per_cluster,
     }
 
 

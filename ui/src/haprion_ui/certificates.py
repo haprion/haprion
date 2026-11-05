@@ -855,9 +855,10 @@ def _placed(
         label, detail, tone = _node_state(
             certificate.identifier,
             certificate.fingerprint,
-            [carriage] if carriage else [],
+            [(carriage, _received_since(certificate.began_at, placed, cluster))]
+            if carriage
+            else [],
             chain=certificate.chain,
-            since=certificate.began_at,
             now=now,
         )
     return replace(
@@ -884,29 +885,56 @@ def holds_other_bytes(
     )
 
 
+def _received_since(
+    began_at: datetime | None, targets: Iterable[TargetView], cluster: str
+) -> datetime | None:
+    """When a cluster's nodes could first have carried this certificate.
+
+    The later of the certificate's own start and the time the manager put the
+    cluster's copy in place: an imported certificate that began long ago has
+    only had the days since it was published (26-11-05, XX06). A time the engine
+    did not give leaves the certificate's start, as before.
+    """
+
+    published = next(
+        (
+            target.published_at
+            for target in targets
+            if target.kind == "cluster" and target.name == cluster
+        ),
+        None,
+    )
+    if began_at is None or published is None:
+        return began_at or published
+    return max(began_at, published)
+
+
 def _node_state(
     identifier: str,
     fingerprint: str,
-    carriages: Iterable[NodeCarriage | None],
+    carriages: Iterable[tuple[NodeCarriage | None, datetime | None]],
     *,
     chain: str = "",
-    since: datetime | None = None,
     now: datetime | None = None,
 ) -> tuple[str, str, Tone]:
     """What the given clusters' nodes report carrying, said without overreaching.
 
     Shared by the registry row, which asks about every cluster a certificate
-    goes to, and the cluster row, which asks about one. `None` in the list is
-    a cluster nobody has read yet and counts towards nothing.
+    goes to, and the cluster row, which asks about one. `None` for the nodes is
+    a cluster nobody has read yet and counts towards nothing. Beside each
+    cluster's nodes, the time since which they could have carried it.
     """
 
     on, total = 0, 0
     wrong = False
-    for nodes in carriages:
+    since: datetime | None = None
+    for nodes, cluster_since in carriages:
         if nodes is None:
             continue
         if holds_other_bytes(nodes, identifier, fingerprint, chain):
             wrong = True
+            if cluster_since is not None and (since is None or cluster_since < since):
+                since = cluster_since
         on += nodes.holders.get(identifier, 0)
         total += nodes.reporting
     if total == 0:
@@ -1024,6 +1052,11 @@ def _published_label(published_at: datetime | None) -> str:
 
 def _target_views(entry: Mapping[str, Any]) -> tuple[TargetView, ...]:
     targets = _mapping(entry.get("targets"))
+    #
+    # Each cluster's own copy time, where the engine says it (26-11-05, XX06).
+    # Kept out of the label: the clusters' column shows nothing for it.
+    #
+    copies = _mapping(_mapping(entry.get("distribution")).get("clusters"))
     views: list[TargetView] = []
     for name in targets.get("clusters", []) if isinstance(targets.get("clusters"), list) else []:
         if isinstance(name, str) and name:
@@ -1031,7 +1064,7 @@ def _target_views(entry: Mapping[str, Any]) -> tuple[TargetView, ...]:
                 TargetView(
                     name=name,
                     kind="cluster",
-                    published_at=None,
+                    published_at=_expiry(copies.get(name)),
                     published_label="",
                     current=None,
                 )
@@ -1175,9 +1208,14 @@ def _registry_state(
         label, detail, tone = _node_state(
             identifier,
             fingerprint,
-            (carriage.get(cluster) for cluster in clusters),
+            (
+                (
+                    carriage.get(cluster),
+                    _received_since(_expiry(entry.get("not_before")), targets, cluster),
+                )
+                for cluster in clusters
+            ),
             chain=chain,
-            since=_expiry(entry.get("not_before")),
             now=now,
         )
         #

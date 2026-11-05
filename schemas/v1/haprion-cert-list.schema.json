@@ -84,7 +84,12 @@
       "required": ["published_at", "current"],
       "properties": {
         "published_at": { "type": ["string", "null"], "format": "date-time" },
-        "current": { "type": ["boolean", "null"] }
+        "current": { "type": ["boolean", "null"] },
+        "clusters": {
+          "description": "Additive: for the cluster copy, each cluster's own published_at by cluster ID, where published_at above is the oldest of them. Absent from an older producer.",
+          "type": "object",
+          "additionalProperties": { "type": ["string", "null"], "format": "date-time" }
+        }
       },
       "additionalProperties": false
     },

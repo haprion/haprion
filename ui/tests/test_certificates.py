@@ -672,6 +672,55 @@ class TheRegistryViewSaysOnlyWhatIsMeasured(unittest.TestCase):
             registry_of(view).certificates[0].state_detail, "Still different 10 days after renewal"
         )
 
+    def test_the_week_counts_from_when_the_cluster_received_the_copy(self) -> None:
+        """26-11-05, XX06: an imported certificate with an old not_before is not critical at once."""
+
+        def rows(published_days_ago: int) -> tuple[tuple[str, str], tuple[str, str]]:
+            at = _stamp(NOW - timedelta(days=published_days_ago))
+            entry = registered(
+                fingerprint="a" * 64,
+                renewed_days_ago=40,
+                distribution={"published_at": at, "current": True, "clusters": {"alpha": at}},
+            )
+            listed = certificate(fingerprint="a" * 64, renewed_days_ago=40)
+            view = overview(
+                with_registry(reading(certificates=[listed]), entry),
+                status=(status(node(("example.com", "b" * 64))),),
+            )
+            registry_row = registry_of(view).certificates[0]
+            cluster_row = view.clusters[0].certificates[0]
+            return (
+                (registry_row.state_label, registry_row.state_tone),
+                (cluster_row.state_label, cluster_row.state_tone),
+            )
+
+        for days, tone in ((0, "warning"), (7, "warning"), (8, "critical")):
+            with self.subTest(days=days):
+                self.assertEqual(rows(days), (("Nodes hold an older copy", tone),) * 2)
+
+    def test_each_cluster_is_counted_from_its_own_copy_and_not_the_oldest(self) -> None:
+        old, new = _stamp(NOW - timedelta(days=20)), _stamp(NOW - timedelta(days=1))
+        entry = registered(
+            fingerprint="a" * 64,
+            clusters=("alpha", "beta"),
+            renewed_days_ago=40,
+            distribution={
+                "published_at": old,
+                "current": True,
+                "clusters": {"alpha": old, "beta": new},
+            },
+        )
+        view = overview(
+            with_registry(reading(), entry),
+            clusters=("alpha", "beta"),
+            status=(
+                status(node(("example.com", "a" * 64)), cluster="alpha"),
+                status(node(("example.com", "b" * 64)), cluster="beta"),
+            ),
+        )
+
+        self.assertEqual(registry_of(view).certificates[0].state_tone, "warning")
+
     def test_only_the_cluster_holding_the_older_copy_is_named_for_deploy(self) -> None:
         entry = registered(fingerprint="a" * 64, clusters=("alpha", "beta"))
         view = overview(

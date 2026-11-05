@@ -2512,13 +2512,18 @@ class ARealDatabase(unittest.TestCase):
             for name, definition in partitions:
                 self.assertIsNotNone(definition, name)
                 self.assertIn("USING brin (inserted_at)", definition, name)
+                # Summarized as rows arrive, not only by a vacuum that never sees the last
+                # fifth of a finished day (B469).
+                self.assertIn("autosummarize='on'", definition, name)
             # A partition made from now on gets it too.
             cursor.execute("select traffic_log_partition(current_date + 40)")
             made = _first(cursor)
             cursor.execute(
                 "select indexdef from pg_indexes where indexname = %s", (f"{made}_inserted",)
             )
-            self.assertIn("USING brin (inserted_at)", _first(cursor))
+            made_definition = _first(cursor)
+            self.assertIn("USING brin (inserted_at)", made_definition)
+            self.assertIn("autosummarize='on'", made_definition)
             # ... and a question for rows stored after a time, which mostly has none, uses it.
             cursor.execute(
                 """insert into traffic_log

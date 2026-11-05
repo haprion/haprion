@@ -19,9 +19,11 @@ it (`inserted_after`). A client that follows the log by it asks, for the most
 part, in vain, and without an index every such question reads every row of
 every day. One BRIN index on `inserted_at` per partition answers it from a few
 block ranges: rows arrive in time order, so the ranges are tight, and the index
-is a fraction of a btree's size. `traffic_log_partition()` makes it for the days
-made from now on, and this makes it for the days that exist, as 0111 did for the
-client index. The build holds a day's writes for as long as it takes, a second
+is a fraction of a btree's size. The index is made with `autosummarize`: a range
+is summarized when it is full, not when a vacuum sees it, and the last fifth of a
+day that is finished is never vacuumed (B469). `traffic_log_partition()` makes it
+for the days made from now on, and this makes it for the days that exist, as 0111
+did for the client index. The build holds a day's writes for as long as it takes, a second
 or so; the collector re-reads from its checkpoint, so a write waiting for it is
 only late.
 
@@ -89,7 +91,8 @@ create or replace function public.traffic_log_partition(day date) returns text
             partition || '_client', partition
         );
         execute format(
-            'create index if not exists %I on %I using brin (inserted_at)',
+            'create index if not exists %I on %I using brin (inserted_at) '
+            'with (autosummarize = on)',
             partition || '_inserted', partition
         );
         return partition;
@@ -106,7 +109,8 @@ begin
         select inhrelid::regclass from pg_inherits where inhparent = 'traffic_log'::regclass
     loop
         execute format(
-            'create index if not exists %I on %s using brin (inserted_at)',
+            'create index if not exists %I on %s using brin (inserted_at) '
+            'with (autosummarize = on)',
             substring(child::text from '[^.]+$') || '_inserted', child
         );
         -- A day that is full is never analyzed again by autovacuum.

@@ -65,7 +65,13 @@ class Fakes:
             return subprocess.CompletedProcess([], 65, json.dumps(answer), "")
         parameters = sent["parameters"]
         unchecked = (
-            {"unchecked_nodes": ["node-b"], "unchecked_features": ["waf"]} if self.unchecked else {}
+            {
+                "unchecked_nodes": ["node-b"],
+                "unchecked_features": ["waf"],
+                "unchecked_reason": "no_status_identity",
+            }
+            if self.unchecked
+            else {}
         )
         if parameters["expected_head"] != self.head:
             answer = {
@@ -200,10 +206,14 @@ class ObjectsFromFiles(unittest.TestCase):
         _, out, _ = self.run_cli(unchecked(), "apply", "-c", "alpha", str(self.root))
         _, answer, _ = self.run_cli(unchecked(), "apply", "-c", "alpha", str(self.root), "--json")
 
-        self.assertIn("WARNING: node-b did not answer, so the WAF engine could not be checked", out)
+        self.assertIn(
+            "WARNING: No status identity is set up, so the WAF engine could not be checked on node-b",
+            out,
+        )
         result = assert_contract("haprion-objects-apply", answer)["result"]
         self.assertEqual(
-            (result["unchecked_nodes"], result["unchecked_features"]), (["node-b"], ["waf"])
+            (result["unchecked_nodes"], result["unchecked_features"], result["unchecked_reason"]),
+            (["node-b"], ["waf"], "no_status_identity"),
         )
 
     def test_a_document_before_the_cluster_was_found_names_none(self) -> None:

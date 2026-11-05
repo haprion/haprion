@@ -50,14 +50,20 @@
           "items": { "type": "string", "minLength": 1, "maxLength": 253 }
         },
         "unchecked_nodes": {
-          "description": "The nodes that did not answer when an applied object started to need what only a node can have. A warning.",
+          "description": "The nodes that were not asked, or did not answer, when an applied object started to need what only a node can have. A warning.",
           "type": "array",
+          "maxItems": 64,
           "items": { "type": "string", "minLength": 1, "maxLength": 253 }
         },
         "unchecked_features": {
           "description": "What those nodes were not asked: waf, dns or syslog.",
           "type": "array",
+          "maxItems": 3,
           "items": { "enum": ["waf", "dns", "syslog"] }
+        },
+        "unchecked_reason": {
+          "description": "Why: `no_answer` (asked, no answer) or `no_status_identity` (the installation has none to ask with); null when nothing was unchecked.",
+          "enum": ["no_answer", "no_status_identity", null]
         },
         "check_tls_mismatches": {
           "description": "The applied objects' pools whose health check and traffic disagree about TLS on the same port, one sentence each. A warning.",

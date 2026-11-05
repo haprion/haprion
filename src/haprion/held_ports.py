@@ -41,6 +41,12 @@ class HeldPorts:
     """Per feature (`waf`, `dns`, `syslog`), the nodes that answered and cannot serve it."""
     unchecked: tuple[str, ...] = ()
     """The nodes nothing was read from - all of them when the reading failed altogether."""
+    unchecked_reason: str | None = None
+    """`no_answer` when the nodes were asked and did not answer, `no_status_identity` when none was asked."""
+
+
+NO_ANSWER = "no_answer"
+NO_STATUS_IDENTITY = "no_status_identity"
 
 
 def from_status(status: ClusterStatus) -> HeldPorts:
@@ -65,10 +71,12 @@ def from_status(status: ClusterStatus) -> HeldPorts:
         )
         if names:
             lacking[feature] = names
+    silent = tuple(sorted(node.name for node in status.nodes if not node.status_ok))
     return HeldPorts(
         held={key: tuple(holders) for key, holders in sorted(held.items())},
         lacking=lacking,
-        unchecked=tuple(sorted(node.name for node in status.nodes if not node.status_ok)),
+        unchecked=silent,
+        unchecked_reason=NO_ANSWER if silent else None,
     )
 
 
@@ -77,7 +85,7 @@ def read(policy: PathPolicy, cluster: Cluster) -> HeldPorts:
 
     everyone = tuple(sorted(node.name for node in cluster.nodes))
     if policy.status_identity is None:
-        return HeldPorts(unchecked=everyone)
+        return HeldPorts(unchecked=everyone, unchecked_reason=NO_STATUS_IDENTITY)
     #
     # Imported here: the deploy helper is a command module, and the reading is
     # its `read_status` so a publish and a deploy ask the nodes one way.
@@ -87,7 +95,7 @@ def read(policy: PathPolicy, cluster: Cluster) -> HeldPorts:
     try:
         return from_status(read_status(cluster, policy.status_identity))
     except (StatusError, OSError):
-        return HeldPorts(unchecked=everyone)
+        return HeldPorts(unchecked=everyone, unchecked_reason=NO_ANSWER)
 
 
 def _joined(names: tuple[str, ...]) -> str:
@@ -116,12 +124,24 @@ def starting_needs(written: Proxy, stored: Proxy | None) -> frozenset[str]:
 FEATURES = {"waf": "the WAF engine", "dns": "dnsdist", "syslog": "the syslog file's include"}
 
 
-def unchecked_warning(nodes: Sequence[str], features: Sequence[str]) -> str:
-    """What is said when an object starts to need a feature and a node was not asked."""
+def unchecked_warning(
+    nodes: Sequence[str], features: Sequence[str], reason: str | None = None
+) -> str:
+    """What is said when an object starts to need a feature and a node was not asked.
 
-    wanted = [FEATURES[feature] for feature in features if feature in FEATURES]
+    A node that was asked and did not answer is told apart from an installation
+    that has no status identity to ask with (Z09); a result without a reason is
+    from a release before it, and says the first.
+    """
+
+    wanted = _joined(tuple(FEATURES[feature] for feature in features if feature in FEATURES))
+    if reason == NO_STATUS_IDENTITY:
+        return (
+            f"No status identity is set up, so {wanted} could not be checked on "
+            f"{_joined(tuple(nodes))}; the deploy refuses the release on a node that lacks it"
+        )
     return (
-        f"{_joined(tuple(nodes))} did not answer, so {_joined(tuple(wanted))} could not be "
+        f"{_joined(tuple(nodes))} did not answer, so {wanted} could not be "
         "checked there; the deploy refuses the release on a node that lacks it"
     )
 

@@ -702,9 +702,10 @@ The same reading says what each node can serve. A publish refuses an object that
 engine, or is a DNS or syslog object, when a node that answered lacks the engine, dnsdist, or the include
 of the syslog file in its `keepalived.conf`. The refusal names the nodes. It is the same from the
 terminal, the page and the API. An object that already used the feature keeps it, and a node that does
-not answer is not asked. When an object starts to need one of these and a node did not answer, the
+not answer is not asked. When an object starts to need one of these and a node did not answer, or the
+installation has no status identity to ask with, the
 publish goes ahead and says so: the terminal prints a warning, the job's page shows it, and the result
-lists the nodes as `unchecked_nodes`. Such a node that comes up without the feature refuses every later
+lists the nodes as `unchecked_nodes` and the cause as `unchecked_reason`. Such a node that comes up without the feature refuses every later
 release until the object is changed, so look at it before you deploy.
 
 ### HTTP/3

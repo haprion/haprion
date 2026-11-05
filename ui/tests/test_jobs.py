@@ -831,6 +831,21 @@ class ANodeChangeThatWasNotPublished(unittest.TestCase):
                 }
             },
         )
+        silent = replace(
+            alone,
+            result={
+                "result": {
+                    "unchecked_nodes": ["node-b"],
+                    "unchecked_features": ["waf"],
+                    "unchecked_reason": "no_status_identity",
+                }
+            },
+        )
+        self.assertEqual(
+            jobs.unchecked_note(silent),
+            "No status identity is set up, so the WAF engine could not be checked on node-b; "
+            "the deploy refuses the release on a node that lacks it.",
+        )
         deployed = replace(alone, result={"result": {"converged": True}, "publish": alone.result})
         for job in (alone, deployed):
             with self.subTest(embedded=job is deployed):

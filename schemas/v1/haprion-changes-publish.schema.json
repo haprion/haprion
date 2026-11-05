@@ -38,7 +38,7 @@
      "type": "boolean"
     },
     "unchecked_nodes": {
-     "description": "The nodes that did not answer, when an object starts to need what only a node can have; every node when the reading failed. A warning.",
+     "description": "The nodes that did not answer or were not asked, when an object starts to need what only a node can have; every node when the reading failed. A warning.",
      "type": "array",
      "maxItems": 64,
      "items": {
@@ -47,9 +47,17 @@
       "maxLength": 253
      }
     },
+    "unchecked_reason": {
+     "description": "Why they were not asked: the nodes were asked and did not answer, or the installation has no status identity to ask with. Absent from an older release, which meant the first.",
+     "enum": [
+      "no_answer",
+      "no_status_identity"
+     ]
+    },
     "unchecked_features": {
      "description": "What those nodes were not asked: waf, dns or syslog.",
      "type": "array",
+     "maxItems": 3,
      "items": {
       "enum": [
        "waf",

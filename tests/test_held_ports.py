@@ -330,6 +330,16 @@ class ThePublishSaysWhatItCouldNotCheck(ObjectsPublishFixture):
         self.assertEqual(code, 0)
         self.assertEqual(answer["result"]["unchecked_nodes"], ["node-b"])
         self.assertEqual(answer["result"]["unchecked_features"], ["waf"])
+        self.assertNotIn("unchecked_reason", answer["result"])
+
+    def test_the_reason_is_in_the_result(self) -> None:
+        waf = proxy("agent", "agent.example.com").replace("routes:", "waf: {}\nroutes:")
+
+        _, answer = self.publish_with(
+            HeldPorts(unchecked=("node-b",), unchecked_reason="no_status_identity"), waf
+        )
+
+        self.assertEqual(answer["result"]["unchecked_reason"], "no_status_identity")
 
     def test_nothing_is_said_when_the_object_needs_nothing_of_the_nodes(self) -> None:
         code, answer = self.publish_with(
@@ -370,7 +380,32 @@ class TheReadingSaysWhoWasNotAsked(unittest.TestCase):
     def test_no_identity_to_ask_with_leaves_every_node_unchecked(self) -> None:
         held = read(SimpleNamespace(status_identity=None), self.cluster)  # type: ignore[arg-type]
 
-        self.assertEqual(held.unchecked, ("node-a", "node-b"))
+        self.assertEqual(
+            (held.unchecked, held.unchecked_reason), (("node-a", "node-b"), "no_status_identity")
+        )
+
+    def test_the_reason_a_node_was_not_asked_is_kept(self) -> None:
+        policy = SimpleNamespace(status_identity=object())
+        with mock.patch("haprion.cli.deploy_helper.read_status", side_effect=StatusError("no key")):
+            failed = read(policy, self.cluster)  # type: ignore[arg-type]
+
+        self.assertEqual(failed.unchecked_reason, "no_answer")
+        self.assertEqual(
+            from_status(two_nodes(node_that_serves(), answered=False)).unchecked_reason, "no_answer"
+        )
+        self.assertIsNone(from_status(two_nodes(node_that_serves())).unchecked_reason)
+
+    def test_the_words_for_an_installation_with_no_status_identity_do_not_say_a_node_was_silent(
+        self,
+    ) -> None:
+        said = unchecked_warning(("node-a", "node-b"), ("waf",), "no_status_identity")
+
+        self.assertNotIn("did not answer", said)
+        self.assertEqual(
+            said,
+            "No status identity is set up, so the WAF engine could not be checked on node-a and "
+            "node-b; the deploy refuses the release on a node that lacks it",
+        )
 
 
 class ThePublishRefusesWhatANodeCannotServe(ObjectsPublishFixture):

@@ -1034,7 +1034,9 @@ def unchecked_note(job: Job) -> str | None:
     if not isinstance(nodes, list) or not isinstance(features, list) or not nodes:
         return None
     return (
-        held_ports.unchecked_warning([str(name) for name in nodes], [str(f) for f in features])
+        held_ports.unchecked_warning(
+            [str(name) for name in nodes], [str(f) for f in features], body.get("unchecked_reason")
+        )
         + "."
     )
 

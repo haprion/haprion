@@ -333,6 +333,7 @@ def _summary(
         #
         "unchecked_nodes": _unchecked(versions, checked, "unchecked_nodes"),
         "unchecked_features": _unchecked(versions, checked, "unchecked_features"),
+        "unchecked_reason": _unchecked_reason(versions, checked),
     }
 
 
@@ -340,6 +341,18 @@ def _unchecked(
     versions: Sequence[Mapping[str, Any]], checked: Sequence[Mapping[str, Any]], key: str
 ) -> list[str]:
     return sorted({str(name) for v in (*versions, *checked) for name in v.get(key) or ()})
+
+
+def _unchecked_reason(
+    versions: Sequence[Mapping[str, Any]], checked: Sequence[Mapping[str, Any]]
+) -> str | None:
+    """Why they were not asked: `no_answer` wins, as it is the one a person can act on at once."""
+
+    reasons = {v.get("unchecked_reason") for v in (*versions, *checked)}
+    for reason in (held_ports.NO_ANSWER, held_ports.NO_STATUS_IDENTITY):
+        if reason in reasons:
+            return reason
+    return None
 
 
 def _tls_mismatches(plan: Plan) -> list[str]:
@@ -377,7 +390,9 @@ def _render(cluster: str, plan: Plan, summary: Mapping[str, Any], writer: TextIO
         writer.write(
             "WARNING: "
             + held_ports.unchecked_warning(
-                summary["unchecked_nodes"], summary["unchecked_features"]
+                summary["unchecked_nodes"],
+                summary["unchecked_features"],
+                summary["unchecked_reason"],
             )
             + "\n"
         )

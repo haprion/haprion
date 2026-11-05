@@ -373,6 +373,8 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
             if starting and held.unchecked:
                 named["unchecked_nodes"] = list(held.unchecked)
                 named["unchecked_features"] = sorted(starting)
+                if held.unchecked_reason:
+                    named["unchecked_reason"] = held.unchecked_reason
             try:
                 files = managed_files(
                     base_files,

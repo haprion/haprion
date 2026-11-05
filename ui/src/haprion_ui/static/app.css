@@ -456,6 +456,10 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
   width: 5px;
   content: "";
 }
+/* A positioned block inside the card (the backup schedule) paints after the
+   rule and its bottom border cut across it. The rule sits above the card's
+   own content instead. */
+.cluster-card::before { z-index: 1; }
 /* The row divider is drawn on the entry's own bottom border, which is outside
    the rule's containing block - so a rule that stops at bottom: 0 is cut into
    segments once per row. It reaches one pixel further instead, and the column

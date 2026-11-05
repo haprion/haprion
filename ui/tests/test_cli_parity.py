@@ -551,6 +551,33 @@ def _write_routes(routes: Any, prefix: str = "") -> set[tuple[str, str, str]]:
     return found
 
 
+#
+# The applications mounted without routes of their own, which a walk cannot look
+# into, and why none of them takes a write (Z07, 26-11-05).
+#
+NOT_WRITES: dict[str, str] = {"/static": "files served for GET and HEAD only"}
+
+
+def _unwalked(routes: Any, prefix: str = "") -> set[str]:
+    """The mounts whose application has no `routes` to walk: where a write would go unseen."""
+
+    found: set[str] = set()
+    for route in routes:
+        router = getattr(route, "original_router", None)
+        if router is not None:
+            found |= _unwalked(router.routes, prefix)
+            continue
+        inner = getattr(route, "app", None)
+        if inner is None or hasattr(route, "methods"):
+            continue
+        path = prefix + str(getattr(route, "path", ""))
+        if hasattr(inner, "routes"):
+            found |= _unwalked(inner.routes, path)
+        else:
+            found.add(path)
+    return found
+
+
 def _app() -> Any:
     return create_app(replace(configuration(), management_writes=True))
 
@@ -826,6 +853,20 @@ class EveryWriteHasItsCommand(unittest.TestCase):
         self.assertEqual(len(writes), len(API_PARITY), "the walk no longer reaches the mounted API")
         self.assertEqual(sorted(writes - set(API_PARITY)), [], "an API write with no counterpart")
         self.assertEqual(sorted(set(API_PARITY) - writes), [], "listed here, but no such route")
+
+    def test_every_mount_a_walk_cannot_enter_is_said_to_take_no_write(self) -> None:
+        self.assertEqual(sorted(_unwalked(_app().routes)), sorted(NOT_WRITES))
+
+    def test_a_mounted_application_without_routes_would_be_found(self) -> None:
+        """Z07: `app.mount("/hook", raw_asgi)` takes a POST nothing here would otherwise hear of."""
+
+        async def raw(scope: Any, receive: Any, send: Any) -> None:
+            return None
+
+        app = _app()
+        app.mount("/hook", raw)
+
+        self.assertEqual(sorted(_unwalked(app.routes)), ["/hook", *sorted(NOT_WRITES)])
 
     def test_the_writes_with_no_command_are_the_ones_said(self) -> None:
         said = sorted(

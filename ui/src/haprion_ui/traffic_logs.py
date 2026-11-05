@@ -141,6 +141,13 @@ class Freshness:
     # than the field.
     #
     first_attempt: datetime | None = None
+    #
+    # Why a run was `budget`: `share` when this node's own parts are what fill
+    # the manager's copy (the other nodes are fetched as usual), `volume` when
+    # the filesystem is short of room for another reason (review 2026-11-05,
+    # T02).
+    #
+    budget_reason: str | None = None
 
     def being_joined(self, *, now: datetime) -> bool:
         return (
@@ -591,6 +598,7 @@ def _freshness(path: Path, cluster: str, node: str) -> Freshness:
     remaining = value.get("remaining_bytes")
     pending = value.get("pending_days")
     behind = value.get("behind_runs")
+    reason = value.get("budget_reason")
     return Freshness(
         cluster=cluster,
         node=node,
@@ -604,6 +612,7 @@ def _freshness(path: Path, cluster: str, node: str) -> Freshness:
         pending_days=pending if type(pending) is int and 0 <= pending <= 90 else None,
         behind_runs=behind if type(behind) is int and 0 <= behind <= 2**31 else None,
         first_attempt=_stamp(value.get("first_attempt")),
+        budget_reason=reason if reason in {"share", "volume"} else None,
     )
 
 

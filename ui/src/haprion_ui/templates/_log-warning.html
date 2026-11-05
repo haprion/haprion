@@ -14,7 +14,10 @@
         {% for node, stale, attempted in freshness_warnings %}
         <p><b>{{ node.cluster }} / {{ node.node }}</b><span>
           {%- if stale is not none and node.latest_attempt_failed() -%}
-            last try {{ attempted | round | int }} s ago — failed ({{ node.outcome }}); last success
+            last try {{ attempted | round | int }} s ago —
+            {%- if node.outcome == 'budget' %} paused: {{ "this node's logs are most of the manager's copy until midnight UTC" if node.budget_reason == 'share' else "the manager's copy is over its space budget" }}
+            {%- else %} failed ({{ node.outcome }})
+            {%- endif %}; last success
             {%- if stale < 90 %} {{ stale | round | int }} s ago
             {%- elif stale < 5400 %} {{ (stale / 60) | round | int }} min ago
             {%- else %} {{ (stale / 3600) | round(1) }} h ago

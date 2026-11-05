@@ -467,6 +467,26 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertIn("1234 bytes remaining", page)
         self.assertIn("2 older days pending", page)
 
+    def test_a_node_paused_for_its_share_of_the_copy_says_so_on_the_page(self) -> None:
+        """Review 2026-11-05, T02: `failed (budget)` named neither the node's
+        part in it nor when it ends."""
+
+        (self.root / "alpha--node-a.meta.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "last_attempt": NOW.isoformat(),
+                    "last_success": (NOW - timedelta(minutes=3)).isoformat(),
+                    "outcome": "budget",
+                    "budget_reason": "share",
+                }
+            )
+        )
+        page = self.page(now=NOW)
+        self.assertIn("paused", page)
+        self.assertIn("this node&#39;s logs are most of the manager&#39;s copy", page)
+        self.assertNotIn("failed (budget)", page)
+
     def test_the_warning_is_drawn_alone_for_the_page_to_ask_again(self) -> None:
         #
         # The page asks /logs/warning every 15 s (26-10-12); it answers the

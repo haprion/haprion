@@ -713,7 +713,12 @@ def from_traffic_logs(nodes: Iterable[Any], *, now: datetime) -> list[Item]:
             continue
         stale = node.stale_seconds(now=now)
         if node.latest_attempt_failed() and node.outcome == "budget":
-            message = "log collection paused: the manager's copy is over its space budget"
+            message = (
+                "log collection paused: this node's logs are most of the manager's copy"
+                " until midnight UTC"
+                if node.budget_reason == "share"
+                else "log collection paused: the manager's copy is over its space budget"
+            )
         elif node.latest_attempt_failed():
             message = f"log collection failed ({node.outcome})"
         elif stale is None:

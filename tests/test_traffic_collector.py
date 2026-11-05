@@ -520,6 +520,58 @@ class TrafficCollectorTests(unittest.TestCase):
         self.assertEqual(meta["outcome"], "budget")
         self.assertTrue((self.staging / f"alpha--node-a--{NOW.date().isoformat()}.jsonl").exists())
 
+    def test_one_nodes_day_over_the_budget_pauses_that_node_and_no_other(self) -> None:
+        """Review 2026-11-05, T02: today's parts cannot shrink before midnight
+        UTC, so one node's flood left the copy over budget for the day, and
+        every node of every cluster was told `nothing was fetched`."""
+
+        other = NodeTarget("beta", "node-b", "node-b.example.com")
+        configured = dataclasses.replace(self.config, nodes=(self.target, other))
+        today = NOW.date().isoformat()
+        (self.staging / f"alpha--node-a--{today}.jsonl").write_bytes(b"x" * 30)
+        (self.staging / f"beta--node-b--{today}.jsonl").write_bytes(b"x" * 2)
+        calls: list[str] = []
+
+        def fetch(target: NodeTarget, wanted: date, offset: int) -> Response:
+            calls.append(target.node)
+            return self.response(wanted, offset, b"")
+
+        # A quarter of 100 bytes is 25; shared by two nodes, 12 each: node-a is over it.
+        with (
+            self.space(capacity=100, free=100),
+            patch("haprion.traffic_collector._ingest_database", return_value=(0, 0, {})),
+            redirect_stderr(StringIO()) as errors,
+        ):
+            self.assertEqual(collect(configured, now=NOW, fetch=fetch, fetch_waf_page=no_waf), 1)
+
+        self.assertEqual(set(calls), {"node-b"})
+        meta_a = json.loads((self.mirror / "alpha--node-a.meta.json").read_bytes())
+        meta_b = json.loads((self.mirror / "beta--node-b.meta.json").read_bytes())
+        self.assertEqual((meta_a["outcome"], meta_b["outcome"]), ("budget", "ok"))
+        self.assertEqual(meta_a["budget_reason"], "share")
+        self.assertIn("alpha/node-a: ", errors.getvalue())
+        self.assertNotIn("node-b: the mirror", errors.getvalue())
+
+    def test_a_volume_nearly_full_of_something_else_pauses_every_node(self) -> None:
+        other = NodeTarget("beta", "node-b", "node-b.example.com")
+        configured = dataclasses.replace(self.config, nodes=(self.target, other))
+        calls: list[str] = []
+
+        def fetch(target: NodeTarget, wanted: date, offset: int) -> Response:
+            calls.append(target.node)
+            return self.response(wanted, offset, b"")
+
+        with (
+            self.space(capacity=1000, free=10),
+            patch("haprion.traffic_collector._ingest_database", return_value=(0, 0, {})),
+            redirect_stderr(StringIO()),
+        ):
+            collect(configured, now=NOW, fetch=fetch, fetch_waf_page=no_waf)
+
+        self.assertEqual(calls, [])
+        meta = json.loads((self.mirror / "beta--node-b.meta.json").read_bytes())
+        self.assertEqual((meta["outcome"], meta["budget_reason"]), ("budget", "volume"))
+
     def test_within_its_budget_the_mirror_keeps_everything(self) -> None:
         (self.staging / "alpha--node-a--2026-09-05.jsonl").write_bytes(b"x" * 100)
         with self.space(capacity=10_000, free=9_000):

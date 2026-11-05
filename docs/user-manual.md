@@ -3715,9 +3715,11 @@ It never drops today or a day ahead, and it writes a warning to the timer's jour
 drops.
 
 The collector keeps its copy of the nodes' days within the same share of its own filesystem. It removes
-the oldest finished days first. While today alone is over the limit, it fetches nothing, and the
-attention list says that collection is paused. The nodes keep their days, within their own budget,
-until it can fetch again.
+the oldest finished days first. While today alone is over the limit, it stops fetching from the nodes
+whose own day is more than their share of it (the limit divided by the number of nodes), and the
+attention list names each of them as paused until midnight UTC. The other nodes are fetched as usual.
+When the volume is short of room for another reason, every node is paused. The nodes keep their days,
+within their own budget, until it can fetch again.
 
 **The reports.** The quick report adds up estimated row counts and total storage (indexes included),
 from the leaf partitions only. It labels the counts as estimates, and lists partitions that have no

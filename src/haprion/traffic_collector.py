@@ -507,6 +507,7 @@ def _write_meta(
     current_complete: bool | None = None,
     remaining_bytes: int | None = None,
     pending_days: int | None = None,
+    budget_reason: str | None = None,
 ) -> None:
     path = _meta_path(config, target)
     previous = _previous_success(path)
@@ -538,6 +539,7 @@ def _write_meta(
             "remaining_bytes": remaining_bytes,
             "pending_days": pending_days,
             "behind_runs": behind,
+            "budget_reason": budget_reason,
         },
         separators=(",", ":"),
         sort_keys=True,
@@ -713,22 +715,30 @@ def _over_budget(held: int, capacity: int, free: int) -> bool:
     return held > capacity * SPACE_SHARE or free < capacity * FREE_SHARE
 
 
-def _staging_budget(config: CollectorConfig, *, today: date) -> bool:
+def _staging_budget(config: CollectorConfig, *, today: date) -> dict[tuple[str, str], str]:
     """Remove the oldest finished days' parts while staging is over its budget.
 
     Whole days, every node's at once, never today, and each with the marker
-    that says the day is complete, so it is not fetched again. Answers whether
-    staging is still over its budget - today alone, or another hand on the
-    filesystem - in which case the run fetches nothing.
+    that says the day is complete, so it is not fetched again. Answers which
+    nodes the run must not fetch from, and why, when staging is still over its
+    budget - today alone, or another hand on the filesystem.
+
+    Today's parts cannot shrink before midnight UTC, so what is left over
+    budget stays over it for the day. Stopping every node for that let one
+    node's flood silence all the others, in every cluster (review 2026-11-05,
+    T02). The nodes held are the ones whose own parts are over their share of
+    the budget (`share`); where nothing but the volume's free space is short,
+    none can be told from the rest (`volume`).
     """
 
     try:
         space = os.statvfs(config.staging)
     except OSError:
-        return False
+        return {}
     capacity = space.f_blocks * space.f_frsize
     free = space.f_bavail * space.f_frsize
     days: dict[str, list[tuple[Path, int]]] = {}
+    held_by: dict[tuple[str, str], int] = {}
     held = 0
     for path in config.staging.glob("*--*--*.jsonl"):
         try:
@@ -738,6 +748,9 @@ def _staging_budget(config: CollectorConfig, *, today: date) -> bool:
         if not stat.S_ISREG(metadata.st_mode):
             continue
         held += metadata.st_size
+        cluster, _, rest = path.name.partition("--")
+        node = rest.partition("--")[0]
+        held_by[(cluster, node)] = held_by.get((cluster, node), 0) + metadata.st_size
         day = path.name.rsplit("--", 1)[-1][: -len(".jsonl")]
         if day != today.isoformat():
             days.setdefault(day, []).append((path, metadata.st_size))
@@ -754,12 +767,21 @@ def _staging_budget(config: CollectorConfig, *, today: date) -> bool:
                 checkpoint.unlink()
             held -= size
             free += size
+            cluster, _, rest = part.name.partition("--")
+            held_by[(cluster, rest.partition("--")[0])] -= size
             lost = "" if ingested else ", with records the database did not have yet"
             print(
                 f"{part.name}: removed before its time: the mirror is over its space budget{lost}",
                 file=sys.stderr,
             )
-    return _over_budget(held, capacity, free)
+    if not _over_budget(held, capacity, free):
+        return {}
+    everyone = {(target.cluster, target.node): "volume" for target in config.nodes}
+    if held <= capacity * SPACE_SHARE or not config.nodes:
+        return everyone
+    share = capacity * SPACE_SHARE / len(config.nodes)
+    over = {key: "share" for key in everyone if held_by.get(key, 0) > share}
+    return over or everyone
 
 
 def _database_checkpoint(config: CollectorConfig, part: Path) -> Path:
@@ -1653,18 +1675,30 @@ def collect(
         selected = fetch or (lambda node, day, offset: ssh_fetch(config, node, day, offset))
         selected_waf = fetch_waf_page or (lambda node, cursor: ssh_fetch_waf(config, node, cursor))
 
-        full = _staging_budget(config, today=attempted.astimezone(UTC).date())
+        paused = _staging_budget(config, today=attempted.astimezone(UTC).date())
 
         def one(target: NodeTarget) -> _NodeRun:
             problem = None
-            if full:
+            reason = paused.get((target.cluster, target.node))
+            if reason is not None:
                 #
-                # Nothing more is fetched while the copy cannot shrink: the
-                # node keeps its own, within its own budget, and the next run
-                # looks again.
+                # Nothing more is fetched from a node while the copy cannot
+                # shrink and its own parts are what fills it: the node keeps
+                # its own, within its own budget, and the next run looks again.
                 #
-                problem = "the mirror is over its space budget; nothing was fetched"
-                _write_meta(config, target, attempted=attempted, outcome="budget", success=False)
+                problem = (
+                    "the mirror is over its space budget and this node's day is most of it"
+                    if reason == "share"
+                    else "the mirror is over its space budget"
+                ) + "; nothing was fetched"
+                _write_meta(
+                    config,
+                    target,
+                    attempted=attempted,
+                    outcome="budget",
+                    success=False,
+                    budget_reason=reason,
+                )
             else:
                 try:
                     collect_node(config, target, now=attempted, fetch=selected, window=window)
@@ -1697,7 +1731,9 @@ def collect(
         for target, run in zip(config.nodes, runs, strict=True):
             if run.waf is not None:
                 pages.append((target, run.waf))
-            joining = not full and _joining(config, target, attempted)
+            joining = (target.cluster, target.node) not in paused and _joining(
+                config, target, attempted
+            )
             note = " (never reached since it was added; not counted yet)" if joining else ""
             if run.waf_problem is not None:
                 print(

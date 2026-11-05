@@ -38,6 +38,9 @@ import psycopg_pool
 from haprion import config as config_module
 from haprion import exit_codes
 from haprion.config import ConfigError
+from starlette.applications import Starlette
+from starlette.endpoints import HTTPEndpoint
+from starlette.routing import Route
 
 from haprion_ui import api
 from haprion_ui import config as ui_config
@@ -565,7 +568,11 @@ NOT_WRITES: dict[str, str] = {"/static": "files served for GET and HEAD only"}
 
 
 def _unwalked(routes: Any, prefix: str = "") -> set[str]:
-    """The mounts whose application has no `routes` to walk: where a write would go unseen."""
+    """Where a write would go unseen: a mount with no `routes` to walk, and a route with no `methods`.
+
+    A route given no `methods` (a class endpoint, a raw ASGI application) answers
+    whichever the endpoint defines, so the walk cannot say it takes none (N04).
+    """
 
     found: set[str] = set()
     for route in routes:
@@ -573,10 +580,13 @@ def _unwalked(routes: Any, prefix: str = "") -> set[str]:
         if router is not None:
             found |= _unwalked(router.routes, prefix)
             continue
+        path = prefix + str(getattr(route, "path", ""))
+        if hasattr(route, "methods") and route.methods is None:
+            found.add(path)
+            continue
         inner = getattr(route, "app", None)
         if inner is None or hasattr(route, "methods"):
             continue
-        path = prefix + str(getattr(route, "path", ""))
         if hasattr(inner, "routes"):
             found |= _unwalked(inner.routes, path)
         else:
@@ -1051,6 +1061,27 @@ class EveryWriteHasItsCommand(unittest.TestCase):
         app.mount("/hook", raw)
 
         self.assertEqual(sorted(_unwalked(app.routes)), ["/hook", *sorted(NOT_WRITES)])
+
+    def test_a_route_without_methods_would_be_found(self) -> None:
+        """N04: a class endpoint answers every method it defines, and a raw ASGI route all of them."""
+
+        class Endpoint(HTTPEndpoint):
+            async def post(self, request: Any) -> Any:
+                return None
+
+        class Raw:
+            async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+                return None
+
+        app = _app()
+        app.router.routes.append(Route("/ep", Endpoint))
+        app.router.routes.append(Route("/rawroute", Raw()))
+        app.mount("/sub", Starlette(routes=[Route("/p", Endpoint)]))
+
+        self.assertEqual(
+            sorted(_unwalked(app.routes)),
+            sorted(["/ep", "/rawroute", "/sub/p", *NOT_WRITES]),
+        )
 
     def test_the_writes_with_no_command_are_the_ones_said(self) -> None:
         said = sorted(

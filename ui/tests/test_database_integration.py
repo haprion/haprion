@@ -5679,6 +5679,7 @@ class AccountsFromTheWeb(unittest.TestCase):
             "insert into app_user (username, role, source, oidc_issuer, oidc_subject) "
             "values ('dora', 'admin', 'oidc', 'https://id.example/', 's1')"
         )
+        self.addCleanup(self.forget_cli_audit)
         sign_in_connection = self.connect("HAPRION_UI_TEST_WEB_ROLE")
         apply_connection = self.connect("HAPRION_UI_TEST_WEB_ROLE")
         failures: list[BaseException] = []
@@ -5728,6 +5729,13 @@ class AccountsFromTheWeb(unittest.TestCase):
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select role, disabled from app_user where username = 'dora'")
             self.assertEqual(cursor.fetchone(), ("reader", True))
+
+    def forget_cli_audit(self) -> None:
+        """The apply's audit rows, which later tests of the account tool count."""
+
+        with self.connect() as connection:
+            connection.execute("delete from audit_event where detail->>'via' = 'cli'")
+            connection.commit()
 
     def locked_from(self, connection: Any, name: str, address: str, limit: int = 10) -> bool:
         return db.login_locked(
@@ -11168,6 +11176,7 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
                     "write_dump",
                     "keep_newest",
                     "dump_before_restore",
+                    "record_replaced",
                     "dump_revision",
                     "do_after_restore",
                     "active_token_hashes",

@@ -4225,7 +4225,8 @@ when the manager read its list of clusters within that time. It is `false`:
 - when the manager has stopped reading even its list of clusters.
 
 The second is Prometheus's text format: `haprion_attention_items{kind, severity}` for every kind, and
-`haprion_status_age_seconds{cluster}` for every cluster that has been read.
+`haprion_status_age_seconds{cluster}` for every cluster that has been read, and `haprion_fresh`, which is 1
+when the JSON says `fresh: true` and 0 otherwise - also for a cluster that has never been read.
 
 **Who may ask.** The allowed monitors are a list on *Settings → External monitoring* (*Edit* on its row):
 addresses or networks, one per line. An address that stays on the list keeps who added it and when.
@@ -4277,6 +4278,7 @@ haprion_attention_items{kind="certificate",severity="warning"} 0
 haprion_attention_items{kind="job",severity="critical"} 0
 haprion_status_age_seconds{cluster="alpha"} 12
 haprion_status_age_seconds{cluster="beta"} 14
+haprion_fresh 1
 ```
 
 `kind` is one of `api_token`, `backup`, `certificate`, `cluster`, `forwarding`, `host_name`, `job`, `logs`, `manager`, `node`,
@@ -4335,6 +4337,9 @@ groups:
         for: 1h
       - alert: HaprionStatusStale
         expr: max(haprion_status_age_seconds) > 300
+        for: 5m
+      - alert: HaprionNotFresh
+        expr: haprion_fresh == 0
         for: 5m
       - alert: HaprionEndpointDown
         expr: up{job="haprion"} == 0

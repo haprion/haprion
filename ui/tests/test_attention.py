@@ -1220,6 +1220,13 @@ class TheTwoForms(unittest.TestCase):
         self.assertIn('haprion_attention_items{kind="certificate",severity="warning"} 0', text)
         self.assertIn('haprion_status_age_seconds{cluster="alpha"} 10', text)
 
+    def test_the_metrics_say_fresh_as_the_json_does(self) -> None:
+        # D11-07: a cluster never read has no age, and so no series to alert on.
+        self.assertIn("\nhaprion_fresh 1\n", self.built({"alpha": 10}).as_metrics())
+        never = self.built({"alpha": None}).as_metrics()
+        self.assertIn("\nhaprion_fresh 0\n", never)
+        self.assertNotIn("haprion_status_age_seconds{", never)
+
 
 class TheAccessList(unittest.TestCase):
     def test_addresses_and_networks_one_per_line(self) -> None:

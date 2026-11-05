@@ -183,7 +183,7 @@ class Attention:
         )
 
     def as_metrics(self) -> str:
-        """The Prometheus text format: one gauge per kind and severity, one age per cluster."""
+        """The Prometheus text format: one gauge per kind and severity, one age per cluster, and `fresh`."""
 
         kinds = sorted({item.kind for item in self.items} | set(KINDS))
         lines = [
@@ -203,6 +203,11 @@ class Attention:
         for cluster, age in sorted(self.status_age.items()):
             if age is not None:
                 lines.append(f'haprion_status_age_seconds{{cluster="{cluster}"}} {age}')
+        lines += [
+            "# HELP haprion_fresh 1 when every cluster's status reading is recent, as `fresh` in the JSON.",
+            "# TYPE haprion_fresh gauge",
+            f"haprion_fresh {int(self.fresh)}",
+        ]
         return "\n".join(lines) + "\n"
 
 

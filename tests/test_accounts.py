@@ -171,16 +171,6 @@ class AnOldAnswersFile(unittest.TestCase):
                 check=False,
             )
 
-    def test_one_still_naming_an_account_is_refused_by_name(self) -> None:
-        done = self.load('MANAGER_HOST="mgr.example.com"\nWEB_USER=svc-web\n')
-        self.assertNotEqual(done.returncode, 0)
-        self.assertIn("sets WEB_USER, which is no longer an answer", done.stderr)
-
-    def test_one_still_naming_the_platform_root_is_refused(self) -> None:
-        done = self.load('MANAGER_HOST="mgr.example.com"\nPLATFORM_ROOT=/srv/platform\n')
-        self.assertNotEqual(done.returncode, 0)
-        self.assertIn("sets PLATFORM_ROOT, which is no longer an answer", done.stderr)
-
     def test_one_without_account_names_loads(self) -> None:
         done = self.load('MANAGER_HOST="mgr.example.com"\n')
         self.assertEqual(done.returncode, 0, done.stderr)

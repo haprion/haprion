@@ -109,17 +109,6 @@ load_answers() {
     fi
     file="$(caller_path "$file")"
     [[ -r "$file" ]] || die "answers file not readable: $file"
-    #
-    # Account, group and database names are fixed since B266 (accounts.sh). An
-    # answers file still setting one is from before that, and is refused by name
-    # rather than failing on a readonly variable or being silently overruled.
-    #
-    for name in "${RETIRED_ANSWERS[@]}"; do
-        if grep -Eq "^[[:space:]]*(export[[:space:]]+)?${name}=" "$file"; then
-            die "${file} sets ${name}, which is no longer an answer (B266): names and places are fixed.
-  Remove the line; see install/accounts.sh for what is used now."
-        fi
-    done
     ( set -e; # shellcheck disable=SC1090
       source "$file" ) >/dev/null 2>&1 || die "answers file is not valid shell: $file"
     # shellcheck disable=SC1090

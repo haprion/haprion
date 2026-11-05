@@ -322,7 +322,7 @@ keep_newest() {
 # everything since the one chosen. Its own directory, like before-migration, so
 # the daily retention neither counts nor removes it; the newest three kept.
 # Nothing to dump when the database does not exist yet (a restore onto a new
-# machine.
+# machine).
 #
 BEFORE_RESTORE_KEPT=3
 
@@ -521,8 +521,9 @@ do_verify_restore() {
 # starting again (review 2026-10-20, R1). The worker holds what was queued
 # before a boot by itself; a restore without one needs this. Every waiting or
 # running job is held for an admin's Run or Discard on *Jobs* - they are the
-# backup's, and ran then; an answer given before is cleared (0085) - and every session is ended: the restored ones
-# include sessions signed out since. Both are written to the audit record.
+# backup's, and ran then; an answer given before is cleared (0085) - and every
+# session is ended: the restored ones include sessions signed out since. Both
+# are written to the audit record.
 #
 # API tokens are the same case (review 26-10-31, P2-1): the trigger that makes a
 # revocation final guards an update, not a row written back from a dump, so a

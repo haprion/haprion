@@ -39,7 +39,7 @@
             <label class="schedule-time">at <select name="backup_hour" aria-label="Hour">{% for hour in range(24) %}{% set text = '%02d' % hour %}<option value="{{ text }}"{% if schedule.time[:2] == text %} selected{% endif %}>{{ text }}</option>{% endfor %}</select><b>:</b><select name="backup_minute" aria-label="Minute">{% for minute in range(0, 60, 5) %}{% set text = '%02d' % minute %}<option value="{{ text }}"{% if schedule.time[3:] == text %} selected{% endif %}>{{ text }}</option>{% endfor %}</select> {{ clock }}{% if schedule.reader_time %} ({{ schedule.reader_time }}){% endif %}</label>
           </div>
           <div class="schedule-row">
-            <label>Keep <input type="number" name="backup_retention" value="{{ schedule.retention or 14 }}" min="{{ retention_bounds[0] }}" max="{{ retention_bounds[1] }}" required> archives per node</label>
+            <label>Keep <input type="number" name="backup_retention" value="{{ schedule.retention or default_retention }}" min="{{ retention_bounds[0] }}" max="{{ retention_bounds[1] }}" required> archives per node</label>
             <label><input type="checkbox" name="backup_enabled"{% if schedule.enabled %} checked{% endif %}> Enabled</label>
             <button class="secondary-button" type="submit">Save schedule</button>
           </div>

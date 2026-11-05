@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from haprion_ui import attention
@@ -498,3 +499,16 @@ class CountTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheFormTakesItsDefaultFromTheEngine(unittest.TestCase):
+    """Review 2026-11-05: `schedule.retention or 14` was a second copy of DEFAULT_RETENTION."""
+
+    SOURCE = Path(__file__).resolve().parents[1] / "src/haprion_ui"
+
+    def test_the_template_names_no_count_of_its_own(self) -> None:
+        template = (self.SOURCE / "templates/backups.html").read_text(encoding="utf-8")
+        self.assertNotIn("or 14", template)
+        self.assertIn("schedule.retention or default_retention", template)
+        page = (self.SOURCE / "pages/backups.py").read_text(encoding="utf-8")
+        self.assertIn('"default_retention": backup_retention.DEFAULT_RETENTION', page)

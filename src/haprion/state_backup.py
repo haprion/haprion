@@ -420,8 +420,8 @@ def _lock_within(
         except BlockingIOError:
             if clock() >= until:
                 raise BackupBusy(
-                    "another node backup or restore holds the backup lock; try again when it has "
-                    "finished"
+                    "another node backup (the schedule's, a manual one or an overwrite's) holds "
+                    "the backup lock; try again when it has finished"
                 ) from None
             wait(0.5)
         else:

@@ -1,6 +1,7 @@
 """Renew every certbot lineage that is due, then every NDES certificate.
 
-What the renewal timer runs. A certbot lineage is renewed with the DNS profile
+What the renewal timer runs. It ends by publishing the registry and rolling out
+what is still due, whether or not anything renewed (`redistribute`). A certbot lineage is renewed with the DNS profile
 environment it needs: most plugins persist a credentials-file flag in
 ``renewal/*.conf``, but Route53 has no such flag - boto3 only discovers its
 file through an environment variable, which Certbot cannot persist. The timer
@@ -27,8 +28,9 @@ from haprion.cert_issue import (
     IssueError,
     renewal_invocation,
 )
+from haprion.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer, PublishError, publish
 from haprion.cli import arguments, cert_scep
-from haprion.cli.cert_publish import default_deployer
+from haprion.cli.cert_publish import default_deployer, print_summary, result_envelope
 from haprion.config import (
     CERTIFICATE_ID,
     DEFAULT_POLICY_PATH,
@@ -230,10 +232,55 @@ def renew_ndes(
     return failed
 
 
+def redistribute(
+    policy: PathPolicy,
+    runtime: RuntimeConfig,
+    *,
+    errors: TextIO = sys.stderr,
+    live: Path = LETSENCRYPT_LIVE,
+    store: Path = IMPORT_STORE,
+    lock_path: Path = DEFAULT_LOCK_PATH,
+    deployer: Deployer | None = None,
+    installer: Installer | None = ui_interface.install,
+) -> bool:
+    """The distribution pass: publish the whole registry and roll out what is due. True on a failure.
+
+    What `haprion-cert-publish --deploy` does for certbot's hook, run from the
+    timer whether or not anything renewed. The hook only runs after a renewal
+    that succeeded, so a rollout that failed (a node down, a deploy holding
+    the cluster lock) or a hook the certificate lock refused would otherwise
+    wait for the next renewal of some certificate. Idempotent: files are
+    compared and written only when they differ, and a cluster is rolled out
+    only when it was changed or the ledger (`cert_pending`) says an earlier
+    run left it unconfirmed - so a day with nothing due asks no node.
+    """
+
+    if runtime.registry is None:
+        return False
+    try:
+        report = publish(
+            runtime,
+            policy,
+            live=live,
+            store=store,
+            lock_path=lock_path,
+            deployer=deployer or default_deployer(errors),
+            installer=installer,
+        )
+    except PublishError as exc:
+        print(f"ERROR: [{exc.code}] distribution pass: {exc}", file=errors)
+        return True
+    if report.changed_clusters or report.deployments or report.failed or report.warnings:
+        print_summary(report, errors)
+    _, exit_code = result_envelope(report, request_id=new_request_id())
+    return exit_code == exit_codes.FAILED
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = arguments.ArgumentParser(
         description="Renew every certbot lineage that is due, then every NDES certificate; "
-        "what the renewal timer runs."
+        "what the renewal timer runs. It ends by publishing the registry and rolling out "
+        "what is still due, so a rollout that failed is made again."
     )
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY_PATH)
     parser.add_argument("--certbot", help="certbot binary used by the upgrade gate")
@@ -346,7 +393,14 @@ def main(argv: list[str] | None = None) -> int:
     ndes_failed = renew_ndes(
         policy, runtime, only=tuple(args.ndes_now), dry_run=args.dry_run, policy_path=args.policy
     )
-    return 1 if failed or ndes_failed else 0
+    #
+    # Last, and only for the ordinary run: a dry run publishes nothing, and the
+    # named renewals publish and roll out what they renewed themselves.
+    #
+    redo_failed = False
+    if not (args.dry_run or args.acme_now or args.ndes_now):
+        redo_failed = redistribute(policy, runtime)
+    return 1 if failed or ndes_failed or redo_failed else 0
 
 
 if __name__ == "__main__":

@@ -113,7 +113,7 @@ def default_deployer(errors: TextIO) -> Deployer:
     return deploy
 
 
-def _summary(report: Report, writer: TextIO) -> None:
+def print_summary(report: Report, writer: TextIO) -> None:
     for entry in report.certificates:
         line = f"{entry.certificate_id}: {entry.status}"
         if entry.targets:
@@ -282,7 +282,7 @@ def main(
     document, exit_code = result_envelope(report, request_id=request_id)
     if json_mode:
         return write_document(writer, document, exit_code)
-    _summary(report, writer)
+    print_summary(report, writer)
     return exit_code
 
 

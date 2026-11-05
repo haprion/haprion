@@ -2522,6 +2522,11 @@ certificate is imported, or the CA takes a request for it, whichever way that wa
 removes it too. A pass that finds another enrollment running for the certificate skips it and asks
 again next time.
 
+After both passes the run publishes the whole registry and rolls out the clusters that are still due, as the
+deploy hook does. It changes nothing when nothing is due, and it asks no node. This is what makes a rollout that
+failed after a renewal be made again the next time the timer runs, usually within a day. A failed publication or
+rollout makes the run end with an error. The named renewals below and `--dry-run` skip it.
+
 **Renewing by hand.**
 
 - `sudo haprion-cert-renew --ndes-now <id>` renews one NDES certificate at once, due or not, and skips
@@ -6536,7 +6541,9 @@ If the hook directory holds another hook that publishes certificates - for examp
 single lineage, or one that walks a list file - remove it. Otherwise every renewal publishes twice.
 
 The hook renews nothing itself. `haprion-certbot-renew.timer` runs certbot twice a day; the hook is what
-publishes after a renewal.
+publishes after a renewal. The same run ends with the hook's own publication, whether or not anything
+renewed, so a rollout that failed (a node down, a deploy holding the cluster lock) is made again by the
+next run rather than waiting for the next renewal of some certificate.
 
 #### ACME configuration and challenge routing
 

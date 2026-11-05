@@ -15,7 +15,7 @@ from haprion import cert_issue, dns_profiles, dns_provider_catalog
 from haprion.cli import cert_renew
 from haprion.config import ConfigError, load_policy, load_runtime_config
 from haprion.dns_profile_keys import generate, render_private_key
-from tests.test_cert_publish import Fixture
+from tests.test_cert_publish import Fixture, issue
 
 
 def _commands(*args: Any, **kwargs: Any) -> tuple[cert_renew.RenewalInvocation, ...]:
@@ -167,6 +167,7 @@ class RenewalInvocations(Fixture):
             mock.patch.object(cert_renew, "RENEWAL_DIRECTORY", self.renewal),
             mock.patch("subprocess.run", side_effect=certbot),
             mock.patch.object(cert_renew, "renew_ndes", return_value=False) as ndes,
+            mock.patch.object(cert_renew, "redistribute", return_value=False),
             contextlib.redirect_stderr(errors),
         ):
             code = cert_renew.main([])
@@ -192,6 +193,84 @@ class RenewalInvocations(Fixture):
             cert_renew._scrub("secret-value and secret", ("secret", "secret-value")),
             "[redacted] and [redacted]",
         )
+
+
+class TheDistributionIsRedone(Fixture):
+    """A rollout that failed after a renewal is finished by the timer, not by the next renewal."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        issue(self.live / "keeper.example", "keeper.example")
+        self.policy_path = self.write_config(self.keeper())
+        self.policy = load_policy(self.policy_path, require_secure=False)
+        self.runtime = load_runtime_config(self.policy, require_secure=False)
+        self.deployed: list[str] = []
+
+    def redo(self, answer: int, errors: io.StringIO | None = None) -> bool:
+        def deployer(cluster_id: str) -> int:
+            self.deployed.append(cluster_id)
+            return answer
+
+        return cert_renew.redistribute(
+            self.policy,
+            self.runtime,
+            errors=errors or io.StringIO(),
+            live=self.live,
+            store=self.store,
+            lock_path=self.lock,
+            deployer=deployer,
+            installer=None,
+        )
+
+    def test_a_cluster_whose_rollout_failed_is_rolled_out_by_the_next_pass(self) -> None:
+        first = self.run_publish(self.policy_path, deployer=lambda _cluster_id: 3)
+        self.assertEqual([d.exit_code for d in first.deployments], [3])
+
+        self.assertFalse(self.redo(0))
+        self.assertEqual(self.deployed, ["alpha"])
+
+        self.assertFalse(self.redo(0))
+        self.assertEqual(self.deployed, ["alpha"], "settled: the next pass finds nothing due")
+
+    def test_a_rollout_that_fails_again_makes_the_pass_fail_and_says_which_cluster(self) -> None:
+        self.run_publish(self.policy_path, deployer=lambda _cluster_id: 3)
+        errors = io.StringIO()
+
+        self.assertTrue(self.redo(3, errors))
+        self.assertIn("deploy alpha: exit 3", errors.getvalue())
+
+    def test_a_pass_with_nothing_due_asks_no_node(self) -> None:
+        self.run_publish(self.policy_path, deployer=lambda _cluster_id: 0)
+
+        self.assertFalse(self.redo(0))
+        self.assertEqual(self.deployed, [])
+
+    def run_main(self, *argv: str) -> mock.Mock:
+        with (
+            mock.patch("os.geteuid", return_value=0),
+            mock.patch.object(cert_renew, "load_policy", return_value=self.policy),
+            mock.patch.object(cert_renew, "load_runtime_config", return_value=self.runtime),
+            mock.patch.object(cert_renew, "RENEWAL_DIRECTORY", self.root / "absent"),
+            mock.patch.object(cert_renew, "renew_ndes", return_value=False),
+            mock.patch.object(cert_renew, "redistribute", return_value=False) as again,
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            cert_renew.main(list(argv))
+        return again
+
+    def test_the_timer_s_ordinary_run_ends_with_the_pass(self) -> None:
+        self.run_main().assert_called_once()
+
+    def test_a_dry_run_and_the_named_renewals_do_not_publish(self) -> None:
+        for argv in (["--dry-run"], ["--acme-now", "keeper.example"], ["--ndes-now", "x.example"]):
+            renewed = mock.Mock(
+                certbot_seconds=1.0, publish=mock.Mock(certificates=(), failed=(), warnings=())
+            )
+            with (
+                self.subTest(argv=argv),
+                mock.patch.object(cert_issue, "renew", return_value=renewed),
+            ):
+                self.run_main(*argv).assert_not_called()
 
 
 if __name__ == "__main__":

@@ -1495,6 +1495,31 @@ class TrafficCollectorTests(unittest.TestCase):
         self.assertTrue(closed.exists(), "how far a node was fetched is not touched")
         self.assertEqual(forget_database_positions(self.config), 0)
 
+    def test_a_replay_does_not_count_the_skipped_records_a_second_time(self) -> None:
+        """Review 2026-11-05, Y04: the staged days are read again from their first byte, and
+        what the import steps over is counted again; what the budget removed is not."""
+
+        today, yesterday = NOW.date().isoformat(), (NOW.date() - timedelta(days=1)).isoformat()
+        with patch("haprion.traffic_collector._ingest_database", lambda *_a, **_k: (0, 0, {})):
+            collect(
+                self.config,
+                now=NOW,
+                fetch=lambda _t, wanted, offset: self.response(wanted, offset, b""),
+                fetch_waf_page=no_waf,
+            )
+        traffic_collector._amend_meta(
+            self.config,
+            self.target,
+            gaps={today: {"skipped": 2, "lost": 0}, yesterday: {"skipped": 3, "lost": 7}},
+        )
+        meta = self.mirror / "alpha--node-a.meta.json"
+
+        forget_database_positions(self.config)
+
+        self.assertEqual(
+            json.loads(meta.read_bytes())["gaps"], {yesterday: {"skipped": 0, "lost": 7}}
+        )
+
     def test_a_replay_refuses_a_position_that_is_not_a_plain_file(self) -> None:
         (self.staging / ".x.jsonl.database-offset").symlink_to(self.staging / "elsewhere")
         with self.assertRaises(CollectorError):

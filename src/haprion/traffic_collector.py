@@ -11,7 +11,7 @@ import re
 import stat
 import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -392,25 +392,35 @@ def _forget_checkpoint(config: CollectorConfig, part: Path) -> None:
         checkpoint.unlink()
 
 
-def _forget_skipped(config: CollectorConfig, target: NodeTarget, day: date) -> None:
-    """Drop the records counted as skipped for a day whose part is to be read again.
+def _forget_skipped(
+    config: CollectorConfig, target: NodeTarget, days: Collection[date] | None = None
+) -> None:
+    """Drop the records counted as skipped for days whose parts are to be read again.
 
-    The import reads the rebuilt part from its first byte and counts what it
-    steps over once more; the earlier count was of the same records (review
-    2026-11-05, U06). What was removed before it was imported stays counted.
+    The import reads the part from its first byte and counts what it steps over
+    once more; the earlier count was of the same records (review 2026-11-05,
+    U06). `days` is every day when none is given: a replay of the database reads
+    them all again (Y04). What was removed before it was imported stays counted.
     """
 
     earlier = _previous(_meta_path(config, target)).get("gaps")
-    key = day.isoformat()
-    if not isinstance(earlier, dict) or not isinstance(earlier.get(key), dict):
+    if not isinstance(earlier, dict):
         return
+    keys = list(earlier) if days is None else [day.isoformat() for day in days]
     gaps = {
         name: dict(entry) if isinstance(entry, dict) else entry for name, entry in earlier.items()
     }
-    gaps[key]["skipped"] = 0
-    if not gaps[key].get("lost"):
-        del gaps[key]
-    _amend_meta(config, target, gaps=gaps or None)
+    changed = False
+    for key in keys:
+        entry = gaps.get(key)
+        if not isinstance(entry, dict) or not entry.get("skipped"):
+            continue
+        entry["skipped"] = 0
+        changed = True
+        if not entry.get("lost"):
+            del gaps[key]
+    if changed:
+        _amend_meta(config, target, gaps=gaps or None)
 
 
 def _update_day(
@@ -436,7 +446,7 @@ def _update_day(
         #
         _replace(path, b"", 0o600)
         _forget_checkpoint(config, path)
-        _forget_skipped(config, target, wanted)
+        _forget_skipped(config, target, (wanted,))
         return False, response.size
     _append(path, response.payload)
     if closed and not response.eof and not response.payload and response.size > _safe_size(path):
@@ -1898,6 +1908,10 @@ def forget_database_positions(config: CollectorConfig) -> int:
     positions too (see `_ingest_waf`), and without them the next runs read each
     node's journal again from its oldest entry.
 
+    The skipped records counted for the days are dropped too: the replay steps
+    over them again and counts them again (review 2026-11-05, Y04). What the
+    budget removed before it was imported stays counted.
+
     Waits for a run in progress rather than racing it: that run's import would
     otherwise write a position back after it was dropped.
     """
@@ -1910,6 +1924,8 @@ def forget_database_positions(config: CollectorConfig) -> int:
                 _regular(checkpoint, maximum=maximum)
                 checkpoint.unlink()
                 dropped += 1
+        for target in config.nodes:
+            _forget_skipped(config, target)
         return dropped
 
 

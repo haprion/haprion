@@ -3373,7 +3373,7 @@ sudo -u <collector> /opt/haprion/current/bin/haprion-traffic-collector \
   --replay-database /etc/haprion/traffic-collector.json
 ```
 
-It waits for a run in progress, then forgets the import positions and nothing else. The day files, and
+It waits for a run in progress, then forgets the import positions and the count of records the import could not read (the replay counts them again). The day files, and
 how far each node has been fetched, stay. The next run imports every staged day again. The table's own
 duplicate check passes over records the database already holds, so nothing is counted twice. What
 staging no longer holds (older than the retention window plus one day) cannot be replayed.

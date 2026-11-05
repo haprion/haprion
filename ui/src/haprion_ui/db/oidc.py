@@ -203,9 +203,12 @@ def account_by_oidc(
 ) -> Account | None:
     """The account bound to this provider identity (B199: bound to `sub`, not the name).
     `share_lock` holds the row to the end of the transaction, as for
-    `account_by_username`."""
+    `account_by_username`, but as `for no key update`: the sign-in may change
+    the role next, and two sign-ins of one account each holding a shared lock
+    would wait for the other's to go (AA04). This one lock still makes the
+    second wait, and a session's own key-share lock passes it."""
 
-    lock = " for share" if share_lock else ""
+    lock = " for no key update" if share_lock else ""
     with connection.cursor(row_factory=class_row(Account)) as cursor:
         cursor.execute(
             "select id, username, role, disabled, password_hash, source, break_glass, oidc_issuer "  # noqa: S608 - constant

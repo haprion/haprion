@@ -5440,6 +5440,46 @@ class AccountsFromTheWeb(unittest.TestCase):
         self.assertTrue(waited, "the change must wait for the sign-in")
         self.assertEqual(ended, 1)
 
+    def test_two_provider_sign_ins_of_one_account_changing_its_role_do_not_deadlock(self) -> None:
+        """Review 26-11-05, AA04: both read the row under a share lock and then
+        updated it, each waiting for the other's lock."""
+
+        import threading
+
+        self.web(
+            "insert into app_user (username, role, source, oidc_issuer, oidc_subject) "
+            "values ('dora', 'reader', 'oidc', 'https://id.example/', 's1')"
+        )
+        first = self.connect("HAPRION_UI_TEST_WEB_ROLE")
+        second = self.connect("HAPRION_UI_TEST_WEB_ROLE")
+        failures: list[BaseException] = []
+
+        def sign_in(connection: Any) -> None:
+            try:
+                account = db.account_by_oidc(
+                    connection, issuer="https://id.example/", subject="s1", share_lock=True
+                )
+                if account is None:
+                    self.fail("no account")
+                time.sleep(0.3)
+                db.set_role(connection, user_id=account.id, role="admin")
+                connection.commit()
+            except psycopg.Error as exc:
+                connection.rollback()
+                failures.append(exc)
+
+        try:
+            threads = [threading.Thread(target=sign_in, args=(c,)) for c in (first, second)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(10)
+                self.assertFalse(thread.is_alive())
+        finally:
+            first.close()
+            second.close()
+        self.assertEqual(failures, [])
+
     def locked_from(self, connection: Any, name: str, address: str, limit: int = 10) -> bool:
         return db.login_locked(
             connection,

@@ -6573,6 +6573,42 @@ class TheProviderRowFromTheWeb(unittest.TestCase):
         self.assertEqual(other, 2)
         self.assertEqual(self.live_sessions(), self.alive("alice", "local"))
 
+    def test_a_new_issuer_ends_the_saving_admin_s_own_session_signed_in_the_old_way(self) -> None:
+        """Review 26-11-05, AA03: `keep` spares the admin only for the local
+        sign-in rule. An admin the old issuer signed in cannot sign in again
+        either, so a session spared here could never be renewed."""
+
+        with self.web() as connection:
+            self.turned_on(connection)
+            db.create_oidc_account(
+                connection,
+                username="user-s1",
+                role="admin",
+                issuer=self.SETTINGS["issuer"],
+                subject="s1",
+            )
+            account = db.account_by_oidc(connection, issuer=self.SETTINGS["issuer"], subject="s1")
+            if account is None:
+                self.fail("no account")
+            db.create_session(
+                connection,
+                token_hash=auth.token_hash("old-admin"),
+                user_id=account.id,
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+            connection.commit()
+            ended = db.save_oidc_provider(
+                connection,
+                settings={**self.SETTINGS, "issuer": "https://other.example.com/"},
+                actor="user-s1",
+                verified=True,
+                keep=auth.token_hash("old-admin"),
+            )
+            connection.commit()
+
+        self.assertEqual(ended, 1)
+        self.assertEqual(self.live_sessions(), set())
+
     def add_sessions(self, tokens: dict[str, str]) -> None:
         """Accounts bob (local admin, not break-glass) and carol (local reader) with sessions."""
 

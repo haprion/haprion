@@ -111,7 +111,8 @@ def save_oidc_provider(
     provider is on ends the live sessions of the local accounts it turns away,
     and a new issuer ends those of the accounts the old one signed in, in the
     same transaction; the answer is how many. `keep` is the session of the
-    admin who saved.
+    admin who saved, spared by the first only: an admin the old issuer signed
+    in cannot sign in again, so a new issuer ends that session too.
     """
 
     unknown = set(settings) - set(OIDC_SETTINGS)
@@ -130,7 +131,8 @@ def save_oidc_provider(
             if "issuer" in settings:
                 #
                 # While on, the old issuer's accounts cannot sign in again
-                # (`other_issuer`), so their sessions end now (A05, B402).
+                # (`other_issuer`), so their sessions end now, the saving
+                # admin's own included if it was made that way (A05, AA03, B402).
                 #
                 ended += end_sessions_where(
                     cursor,

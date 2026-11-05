@@ -17,9 +17,13 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import signal
 import sys
 import tempfile
-from collections.abc import Callable, Mapping
+import threading
+import time
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -308,6 +312,66 @@ def _checked(
     )
 
 
+CHECK_OBJECTS = "haprion-check-objects-"
+STALE_CHECK_OBJECTS_SECONDS = 3600
+
+
+def _sweep_stale_check_objects() -> None:
+    """Remove object directories a killed check left behind (KILL cannot be caught).
+
+    Only this account's, only older than an hour: a check of another cluster
+    holds its own lock and may be using a fresh one.
+    """
+
+    root = Path(tempfile.gettempdir())
+    now = time.time()
+    try:
+        candidates = list(root.glob(CHECK_OBJECTS + "*"))
+    except OSError:
+        return
+    for path in candidates:
+        try:
+            info = path.lstat()
+            if (
+                path.is_symlink()
+                or not path.is_dir()
+                or info.st_uid != os.geteuid()
+                or now - info.st_mtime < STALE_CHECK_OBJECTS_SECONDS
+            ):
+                continue
+        except OSError:
+            continue
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def _terminated(signum: int, _frame: object) -> None:
+    raise SystemExit(128 + signum)
+
+
+@contextmanager
+def _check_objects(check: bool) -> Iterator[Path | None]:
+    """A check builds the candidate's tree in a directory of its own, so the repository keeps no objects for a version that was never made (W06).
+
+    TERM, which a timeout sends, ends the process through the cleanup instead of
+    leaving the directory (Z03).
+    """
+
+    if not check:
+        yield None
+        return
+    _sweep_stale_check_objects()
+    scratch = Path(tempfile.mkdtemp(prefix=CHECK_OBJECTS))
+    previous = None
+    if threading.current_thread() is threading.main_thread():
+        previous = signal.signal(signal.SIGTERM, _terminated)
+    try:
+        yield scratch
+    finally:
+        if previous is not None:
+            signal.signal(signal.SIGTERM, previous)
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def _publish(
     *,
     words: Words,
@@ -371,8 +435,7 @@ def _publish(
     # A check builds the candidate's tree in a directory of its own, so the
     # repository keeps no objects for a version that was never made (W06).
     #
-    scratch = Path(tempfile.mkdtemp(prefix="haprion-check-objects-")) if change.check else None
-    try:
+    with _check_objects(change.check) as scratch:
         if retry:
             snapshot = committed_snapshot(repo, head)
             named: Mapping[str, Any] = {
@@ -389,9 +452,6 @@ def _publish(
                 repo, head, managed, prefixes=(MANAGED_PREFIX,), objects=scratch
             )
         published_files = read_tree_files(repo, snapshot.tree, objects=scratch)
-    finally:
-        if scratch is not None:
-            shutil.rmtree(scratch, ignore_errors=True)
     artifact = build_node_artifact(published_files)
     index = build_release_index(published_files)
 

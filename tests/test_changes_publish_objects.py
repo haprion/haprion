@@ -11,6 +11,7 @@ import io
 import json
 import os
 import shutil
+import signal
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,7 +22,7 @@ import yaml
 
 from haprion import tls_policy
 from haprion.candidate_validation import ValidationResult
-from haprion.cli import changes_publish
+from haprion.cli import changes_publish, managed_helper
 from haprion.version_history import count_versions, recent_versions, request_id_of
 from tests.contract_schema import assert_contract
 from tests.test_publish_helper import PublishFixture, Recorder, git
@@ -209,6 +210,52 @@ class ObjectPublicationTests(ObjectsPublishFixture):
 
             self.assertEqual((code, document["result"]["checked_only"]), (0, True))
             self.assertEqual(self.loose_objects(), before)
+
+    def check_objects(self, temporary: Path) -> list[str]:
+        return sorted(path.name for path in temporary.glob("haprion-check-objects-*"))
+
+    def test_a_check_stopped_by_term_removes_its_object_directory(self) -> None:
+        """Z03: a timeout sends TERM; the directory the check built goes with it."""
+
+        with tempfile.TemporaryDirectory() as raw, tempfile.TemporaryDirectory() as temporary:
+            policy = self.runtime(Path(raw))
+            self.seed()
+
+            def terminated(*_args: object, **_kwargs: object) -> None:
+                os.kill(os.getpid(), signal.SIGTERM)
+                for _ in range(1000):
+                    pass
+
+            before = signal.getsignal(signal.SIGTERM)
+            with (
+                mock.patch.object(tempfile, "tempdir", temporary),
+                mock.patch.object(managed_helper, "build_candidate_tree", terminated),
+                self.assertRaises(SystemExit) as stopped,
+            ):
+                self.publish_objects(policy, self.request(check=True))
+
+            self.assertEqual(stopped.exception.code, 128 + signal.SIGTERM)
+            self.assertEqual(self.check_objects(Path(temporary)), [])
+            self.assertEqual(signal.getsignal(signal.SIGTERM), before)
+
+    def test_the_next_check_removes_a_directory_a_killed_one_left(self) -> None:
+        """Z03: KILL cannot be caught; an hour-old directory is removed, a fresh one is another check's."""
+
+        with tempfile.TemporaryDirectory() as raw, tempfile.TemporaryDirectory() as temporary:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            old = Path(temporary) / "haprion-check-objects-old"
+            fresh = Path(temporary) / "haprion-check-objects-fresh"
+            for left in (old, fresh):
+                left.mkdir()
+            long_ago = old.stat().st_mtime - 2 * 3600
+            os.utime(old, (long_ago, long_ago))
+
+            with mock.patch.object(tempfile, "tempdir", temporary):
+                code, _document, _err = self.publish_objects(policy, self.request(check=True))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(self.check_objects(Path(temporary)), ["haprion-check-objects-fresh"])
 
     def test_a_check_does_not_repair_what_a_stopped_publish_left(self) -> None:
         """W06: it says why it stops; the publish itself writes the files out first."""

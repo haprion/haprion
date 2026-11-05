@@ -1578,7 +1578,7 @@ def _balance_key(data: Mapping[str, Any], balance: str, location: str) -> str | 
     if not isinstance(key, str):
         raise ModelError(f"{location}.balance_key is required for balance: {balance}")
     pattern = HEADER_NAME if balance == "hdr" else PARAMETER
-    if not pattern.match(key):
+    if not pattern.fullmatch(key):
         what = "an HTTP header name" if balance == "hdr" else "a query parameter name"
         raise ModelError(f"{location}.balance_key must be {what}")
     return key

@@ -422,6 +422,18 @@ class TheBalancingAlgorithms(unittest.TestCase):
 
         self.assertIn("header name", str(raised.exception))
 
+    def test_a_balance_key_with_a_trailing_line_break_is_refused(self) -> None:
+        # B450, X04: `$` matches before a final line break, so `X-Tenant\n` loaded and
+        # wrote `balance hdr(X-Tenant` and a line holding `)`.
+        for balance in ("hdr", "url_param"):
+            with self.subTest(balance), self.assertRaises(ModelError):
+                load_proxy(
+                    "shop",
+                    with_lines(
+                        ("balance: roundrobin", f'balance: {balance}\n    balance_key: "userid\\n"')
+                    ),
+                )
+
     def test_a_key_next_to_an_algorithm_that_ignores_it_is_refused(self) -> None:
         """Silently ignoring it would leave somebody believing the pool is sticky."""
 

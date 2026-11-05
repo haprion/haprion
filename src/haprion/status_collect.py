@@ -791,15 +791,21 @@ def collect(
         for key, value in (("waf_published", waf_published), ("dns_published", dns_published))
         if value is not None
     }
-    for entry in results:
-        for finding in node_findings(entry, published):
-            warnings.append(
-                Message(
-                    code=finding.code,
-                    message=ENGINE_WARNING[finding.code].format(node=entry["name"]),
-                    node=str(entry["name"]),
+    #
+    # All the WAF engines, then all the dnsdists, as the envelope has always
+    # listed them: a reader that takes the first warning sees the same one.
+    #
+    found = [(entry, finding) for entry in results for finding in node_findings(entry, published)]
+    for code in ENGINE_WARNING:
+        for entry, finding in found:
+            if finding.code == code:
+                warnings.append(
+                    Message(
+                        code=finding.code,
+                        message=ENGINE_WARNING[code].format(node=entry["name"]),
+                        node=str(entry["name"]),
+                    )
                 )
-            )
 
     if lookups is not None:
         thread, moved = lookups

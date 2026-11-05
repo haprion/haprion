@@ -523,6 +523,33 @@ class HelperReadingTests(HelperFixture):
             [("waf_engine_stopped", "node-b")],
         )
 
+    def test_the_engine_warnings_come_all_of_one_kind_before_the_other(self) -> None:
+        # V11: the envelope listed every WAF engine and then every dnsdist.
+        both = self.reader(
+            **{
+                name: node_status(
+                    name,
+                    owner=name == "node-a",
+                    release_hash=TARGET_HASH,
+                    waf_engine={"version": "0.9.0-4", "active": False},
+                    dns_listener={"version": "2.1.2-1pdns", "active": False},
+                )
+                for name in ("node-a", "node-b")
+            }
+        )
+        code, out, _ = self.run_helper(request(), waf=True, dns=True, node_reader=both)
+        self.assertEqual(code, 0)
+        envelope = assert_contract("haprion-status", out)
+        self.assertEqual(
+            [(w["code"], w["node"]) for w in envelope["warnings"]],
+            [
+                ("waf_engine_stopped", "node-a"),
+                ("waf_engine_stopped", "node-b"),
+                ("dns_listener_stopped", "node-a"),
+                ("dns_listener_stopped", "node-b"),
+            ],
+        )
+
     def test_a_stopped_engine_without_rules_is_how_it_should_be(self) -> None:
         code, out, _ = self.run_helper(request(), node_reader=self.engines(b_active=False))
         self.assertEqual(code, 0)

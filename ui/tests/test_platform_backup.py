@@ -518,6 +518,67 @@ class ADumpBeforeAMigration(unittest.TestCase):
         self.assertIn("takes two schema revisions", done.stderr)
 
 
+class OnlyTheDailyDumpsCount(unittest.TestCase):
+    """Review 2026-11-05 R07: a dump copied in from another host sorted first and was the 'newest'."""
+
+    def test_the_newest_and_the_retention_are_asked_of_the_daily_name_only(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            dumps = Path(raw)
+            for name in (
+                "haprion-20261101.dump",
+                "haprion-20261103.dump",
+                "haprion-from-old-host.dump",
+                "haprion-20261102.dump.partial",
+                "haprion-2026110.dump",
+            ):
+                (dumps / name).write_text("dump")
+            source = SCRIPT.read_text()
+            program = (
+                "set -Eeuo pipefail\n"
+                f"DUMP_DIR={dumps}\nDB_NAME=haprion\n"
+                + function("daily_dumps", source)
+                + "daily_dumps\n"
+            )
+            done = subprocess.run(  # noqa: S603 - fixed program
+                ["/bin/bash", "-c", program],
+                capture_output=True,
+                text=True,
+                check=False,
+                env={"PATH": "/usr/bin:/bin"},
+            )
+        self.assertEqual(done.stdout.split(), ["haprion-20261103.dump", "haprion-20261101.dump"])
+        source = SCRIPT.read_text()
+        for name in ("do_dump", "do_verify_restore"):
+            self.assertIn("daily_dumps", function(name, source), name)
+
+    def test_the_list_shows_the_others_apart(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            dumps = Path(raw)
+            (dumps / "haprion-20261101.dump").write_text("dump")
+            (dumps / "haprion-from-old-host.dump").write_text("dump")
+            source = SCRIPT.read_text()
+            program = (
+                "set -Eeuo pipefail\n"
+                'die() { echo "ERROR: $*" >&2; exit 1; }\n'
+                f"DUMP_DIR={dumps}\nDB_NAME=haprion\n"
+                + function("list_group", source)
+                + function("do_list", source)
+                + "do_list\n"
+            )
+            done = subprocess.run(  # noqa: S603 - fixed program
+                ["/bin/bash", "-c", program],
+                capture_output=True,
+                text=True,
+                check=False,
+                env={"PATH": "/usr/bin:/bin"},
+            )
+        lines = done.stdout.splitlines()
+        self.assertIn("Other dumps (never removed, never the newest)", lines)
+        other = lines.index("Other dumps (never removed, never the newest)")
+        self.assertTrue(lines[other + 1].endswith("haprion-from-old-host.dump"))
+        self.assertFalse(any(line.endswith("haprion-from-old-host.dump") for line in lines[:other]))
+
+
 class TheListShowsEveryDumpWithItsPath(unittest.TestCase):
     """Review 2026-11-05 R08: the ones a restore or a migration leaves were not shown."""
 

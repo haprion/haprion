@@ -244,6 +244,14 @@ write_dump() {
     log "  written  ${target}  ($(du -h "$target" | cut -f1))"
 }
 
+# The daily dumps, newest first: the name `do_dump` writes and no other. A dump
+# copied in from another host sorts anywhere among them, and was kept for ever
+# and checked in place of the night's (review 2026-11-05, R07).
+daily_dumps() {
+    find "$DUMP_DIR" -maxdepth 1 -type f \
+        -name "${DB_NAME}-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].dump" -printf '%f\n' | sort -r
+}
+
 do_dump() {
     install -d -o root -g root -m 700 "$DUMP_DIR"
     write_dump "${DUMP_DIR}/${DB_NAME}-$(date +%Y%m%d).dump"
@@ -255,9 +263,7 @@ do_dump() {
     #
     step_log "Retention"
     local -a dumps=()
-    while IFS= read -r file; do dumps+=("$file"); done < <(
-        find "$DUMP_DIR" -maxdepth 1 -name "${DB_NAME}-*.dump" -printf '%f\n' | sort -r
-    )
+    while IFS= read -r file; do dumps+=("$file"); done < <(daily_dumps)
     log "  ok       $(counted "${#dumps[@]}" dump) held, keeping ${KEEP_DAYS}"
     local index
     for index in "${!dumps[@]}"; do
@@ -423,8 +429,7 @@ restore_takes() {
 
 do_verify_restore() {
     local newest
-    newest="$(find "$DUMP_DIR" -maxdepth 1 -name "${DB_NAME}-*.dump" -printf '%f\n' \
-              | sort -r | head -1)"
+    newest="$(daily_dumps | head -1)"
     [[ -n "$newest" ]] || die "no dump to restore from in ${DUMP_DIR}"
     local archive="${DUMP_DIR}/${newest}"
     local scratch="${DB_NAME}_restorecheck"
@@ -1117,9 +1122,15 @@ run_recorded() {
 # restore and a migration leave are root's alone, in directories of their own.
 #
 list_group() {
-    local title="$1" directory="$2" lines
+    local title="$1" directory="$2" daily="$3" lines
+    local -a match=(-name "${DB_NAME}-*.dump")
+    local pattern="${DB_NAME}-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].dump"
     [[ -d "$directory" ]] || return 0
-    lines="$(find "$directory" -maxdepth 1 -type f -name "${DB_NAME}-*.dump" \
+    case "$daily" in
+        daily)  match=(-name "$pattern") ;;
+        others) match=(-name "*.dump" ! -name "$pattern") ;;
+    esac
+    lines="$(find "$directory" -maxdepth 1 -type f "${match[@]}" \
         -printf '%TY-%Tm-%Td %TH:%TM  %10s  %p\n' | sort -r)"
     [[ -n "$lines" ]] || return 0
     echo "$title"
@@ -1128,9 +1139,10 @@ list_group() {
 
 do_list() {
     [[ -d "$DUMP_DIR" ]] || die "no dump directory: ${DUMP_DIR}"
-    list_group "Daily dumps" "$DUMP_DIR"
-    list_group "Before a restore" "${DUMP_DIR}/before-restore"
-    list_group "Before a migration" "${DUMP_DIR}/before-migration"
+    list_group "Daily dumps" "$DUMP_DIR" daily
+    list_group "Other dumps (never removed, never the newest)" "$DUMP_DIR" others
+    list_group "Before a restore" "${DUMP_DIR}/before-restore" all
+    list_group "Before a migration" "${DUMP_DIR}/before-migration" all
 }
 
 case "$command" in

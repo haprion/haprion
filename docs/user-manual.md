@@ -3246,7 +3246,7 @@ were waiting run. The clock is behind as well. Restart the manager straight afte
 worker then holds what was waiting, and the clock is set. Take snapshots for restoring without memory.
 
 **Restoring only the database** from one of its dumps is one command. `haprion-backup list` shows the
-dumps in three groups - daily, before a restore and before a migration - each with the path to give:
+dumps in groups - daily, any other, before a restore and before a migration - each with the path to give (only a dump named by the day counts as a daily one; one copied in from another host is listed apart and never removed):
 
 ```bash
 sudo haprion-backup restore /var/lib/haprion-ui/dumps/<dump>

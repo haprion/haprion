@@ -1340,23 +1340,29 @@ providers:
   verification: loaded
   fields:
   - id: customer_id
-    label: Customer ID
+    label: Customer ID (legacy API)
     kind: text
-    required: true
+    required: false
     secret: false
     key: dns_netcup_customer_id
   - id: api_key
-    label: API key
+    label: API key (legacy API)
     kind: text
-    required: true
+    required: false
     secret: true
     key: dns_netcup_api_key
   - id: api_password
-    label: API password
+    label: API password (legacy API)
     kind: text
-    required: true
+    required: false
     secret: true
     key: dns_netcup_api_password
+  - id: api_v1_key
+    label: CloudDNS API key
+    kind: text
+    required: false
+    secret: true
+    key: dns_netcup_api_v1_key
 - id: nicru
   name: nic.ru
   tier: community

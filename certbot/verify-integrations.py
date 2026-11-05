@@ -19,7 +19,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 LEVELS = ("packaged", "loaded", "integration-tested", "live-verified")
 NETWORK_AT_SETUP = {"firstdomains"}
@@ -166,6 +166,42 @@ def verify_loaded(source_root: Path, provider_id: str) -> None:
                 raise RuntimeError("Spaceship did not read the rendered section")
 
 
+def verify_netcup_paths(source_root: Path) -> None:
+    """Each netcup way in builds its own client: the legacy trio, or the CloudDNS key."""
+    sys.path.insert(0, str(source_root))
+    from haprion.dns_provider_catalog import provider_by_id, render_credentials
+
+    provider = provider_by_id("netcup")
+    authenticator_class = entrypoint_for(provider).load()
+    cases = {
+        "legacy": ({"customer_id": "123456", "api_key": "k", "api_password": "p"}, True, False),
+        "clouddns": ({"api_v1_key": "key-example"}, False, True),
+    }
+    for name, (values, expect_v0, expect_v1) in cases.items():
+        with tempfile.TemporaryDirectory(prefix="haproxy-provider-netcup-") as raw:
+            path = Path(raw) / "credentials"
+            path.write_text(render_credentials(provider, values), encoding="utf-8")
+            path.chmod(0o600)
+            namespace = {
+                "dns_netcup_credentials": str(path),
+                "dns_netcup_propagation_seconds": provider.propagation_seconds,
+                "dns_netcup_login_retries": 3,
+                "dns_netcup_zone_name": None,
+            }
+            authenticator = authenticator_class(
+                _Config(provider.plugin, namespace), provider.plugin
+            )
+            authenticator._setup_credentials()
+            module = sys.modules[authenticator_class.__module__]
+            with (
+                patch.object(module, "APIClientV0") as client_v0,
+                patch.object(module, "APIClientV1") as client_v1,
+            ):  # the v1 client asks the provider for its domains on construction
+                authenticator._create_clients()
+            if client_v0.called != expect_v0 or client_v1.called != expect_v1:
+                raise RuntimeError(f"netcup {name} credentials built the wrong client")
+
+
 def _verify_aws(path: Path) -> None:
     import botocore.session
 
@@ -298,7 +334,8 @@ def main() -> int:
     from haprion.dns_provider_catalog import load_catalog
 
     checks: dict[str, Callable[[], None]] = {
-        "azure-renderer-plugin-sdk": lambda: verify_azure(source_root)
+        "azure-renderer-plugin-sdk": lambda: verify_azure(source_root),
+        "netcup-both-paths": lambda: verify_netcup_paths(source_root),
     }
     for provider in load_catalog():
         if provider.adapter == "azure-service-principal":

@@ -172,15 +172,20 @@ class WhatChanged(unittest.TestCase):
                 )
                 self.assertEqual(changes, [])
                 self.assertEqual(node_events.joining(after), frozenset(joining))
-        # Once silent it stays silent, and answering is the node coming back.
+        # Once silent it stays silent; it never answered, so answering is no event, and a
+        # node that answered and then stops is silent as any other.
         _, expired, _ = node_events.compare(
             state, node_events.observe(silent), kept_for={key: limit + 1}, joining_seconds=limit
         )
+        later, expired, _ = node_events.compare(expired, node_events.observe(silent))
+        self.assertEqual(later, [])
         up = reading(
             node("node-a", owner=True, servers=[]), node("node-b", owner=False, servers=[])
         )
-        back, _, _ = node_events.compare(expired, node_events.observe(up))
-        self.assertEqual([change.event for change in back], ["node_back"])
+        back, answering, _ = node_events.compare(expired, node_events.observe(up))
+        self.assertEqual(back, [])
+        stopped, _, _ = node_events.compare(answering, node_events.observe(silent))
+        self.assertEqual([change.event for change in stopped], ["node_silent"])
 
     def test_a_node_taken_out_and_added_again_is_joining_not_silent(self) -> None:
         """Review 2026-10-30, E7: the state of a node that left must not be inherited."""

@@ -46,6 +46,12 @@ VIP_SUBJECT = ""
 # as answering again. It is joining until it answers, and that answer is no event.
 #
 JOINING = "joining"
+#
+# A node that was joining past the limit and never answered (D11-01): silent,
+# but it did not stop, so its first answer is no more an event than a joining
+# node's is (V09).
+#
+NEVER_ANSWERED = "never answered"
 
 #
 # How long a node may stay joining (D11-01, B455): the join's own timeout,
@@ -200,21 +206,21 @@ def compare(
     names: those have left the configuration. A node that has been joining
     for longer than `joining_seconds` (`kept_for` is how long each key's state
     has stood) is silent, without an event: it never answered, so it did not
-    stop (D11-01).
+    stop (D11-01), and its first answer is no event either (V09).
     """
 
     changes: list[Change] = []
     state = dict(observed.state)
     for key, value in sorted(observed.state.items()):
         before = previous.get(key)
-        if key[0] == NODE and before in (None, JOINING):
+        if key[0] == NODE and before in (None, JOINING, NEVER_ANSWERED):
             if value != "answering":
                 expired = (
                     before == JOINING
                     and joining_seconds is not None
                     and (kept_for or {}).get(key, 0.0) > joining_seconds
                 )
-                state[key] = value if expired else JOINING
+                state[key] = NEVER_ANSWERED if expired or before == NEVER_ANSWERED else JOINING
             continue
         if before is None or before == value:
             continue

@@ -9139,6 +9139,39 @@ class WhatTheNodesDidIsWrittenByThePollerAndReadByTheWeb(unittest.TestCase):
         self.assertEqual(written.events, 0)
         self.assertEqual(written.joining, frozenset({"node-b"}))
 
+    def test_a_node_joining_for_longer_than_the_limit_is_silent(self) -> None:
+        """D11-01: `since` is kept with the state, and the limit is read from it."""
+
+        cluster = "never-answered"
+
+        def record(limit: float | None) -> Any:
+            with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+                written = db.record_node_events(
+                    connection,
+                    cluster=cluster,
+                    result=self.reading("node-a", "UP", other_ok=False),
+                    joining_seconds=limit,
+                )
+                connection.commit()
+            return written
+
+        self.assertEqual(record(900).joining, frozenset({"node-b"}))
+        self.assertEqual(record(900).joining, frozenset({"node-b"}))
+        with (
+            self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection,
+            connection.cursor() as cursor,
+        ):
+            cursor.execute(
+                "update node_event_state set since = since - interval '1 hour'  where cluster = %s",
+                (cluster,),
+            )
+            connection.commit()
+        self.assertEqual(record(900).joining, frozenset())
+        # Silent now, not joining again, and no event was written for it.
+        self.assertEqual(record(900).joining, frozenset())
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            self.assertEqual(db.node_event_count(connection, cluster=cluster), 0)
+
     def test_the_web_cannot_write_and_the_poller_cannot_read_the_events(self) -> None:
         for role, statement in (
             (

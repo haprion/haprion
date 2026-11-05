@@ -24,6 +24,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from haprion import node_join
+
 from haprion_ui import health, moments
 
 type Event = Literal["server_down", "server_up", "vip_moved", "node_silent", "node_back"]
@@ -44,6 +46,19 @@ VIP_SUBJECT = ""
 # as answering again. It is joining until it answers, and that answer is no event.
 #
 JOINING = "joining"
+
+#
+# How long a node may stay joining (D11-01, B455): the join's own timeout,
+# which is how long the node can still be being added, and two poller rounds
+# for the first reading after it. A node that has not answered by then is read
+# as any other node that does not, with a row and an alarm.
+#
+JOIN_TIMEOUT_SECONDS = node_join.JOIN_TIMEOUT_SECONDS
+
+
+def joining_limit(interval_seconds: int) -> int:
+    return JOIN_TIMEOUT_SECONDS + 2 * interval_seconds
+
 
 #
 # HAProxy's `last_change_sec` is how long ago the server changed. Beyond a day
@@ -172,13 +187,20 @@ def observe(result: Mapping[str, Any]) -> Observed:
 
 
 def compare(
-    previous: Mapping[tuple[str, str], str], observed: Observed
+    previous: Mapping[tuple[str, str], str],
+    observed: Observed,
+    *,
+    kept_for: Mapping[tuple[str, str], float] | None = None,
+    joining_seconds: float | None = None,
 ) -> tuple[list[Change], dict[tuple[str, str], str], list[tuple[str, str]]]:
     """What changed, the state to keep, and the keys to forget.
 
     A key absent from the reading keeps its state, except a server the VIP
     holder no longer lists and a node a reading with a node list no longer
-    names: those have left the configuration.
+    names: those have left the configuration. A node that has been joining
+    for longer than `joining_seconds` (`kept_for` is how long each key's state
+    has stood) is silent, without an event: it never answered, so it did not
+    stop (D11-01).
     """
 
     changes: list[Change] = []
@@ -187,7 +209,12 @@ def compare(
         before = previous.get(key)
         if key[0] == NODE and before in (None, JOINING):
             if value != "answering":
-                state[key] = JOINING
+                expired = (
+                    before == JOINING
+                    and joining_seconds is not None
+                    and (kept_for or {}).get(key, 0.0) > joining_seconds
+                )
+                state[key] = value if expired else JOINING
             continue
         if before is None or before == value:
             continue

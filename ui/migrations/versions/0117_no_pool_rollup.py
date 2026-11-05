@@ -17,6 +17,12 @@ that was behind delivers it hours later; a client that follows the traffic API
 by `time` never sees such a row. The API gives the insert time and reads from
 it (`inserted_after`).
 
+`node_event_state` gains `since`, the time its row was last written (B455). A node
+that has not answered is `joining` only for the join timeout and two poller
+rounds; the poller needs to know how long a row has said so. Rows already there
+get the time of this migration, so a node still joining has a full limit from
+it. Written with the value by the poller, which is granted the column.
+
 Haprion 0.99.13's web, poller and worker never touch these tables. The only
 code of its that did is `haprion-retention` and `03-verify`, which the
 haprion-ui package installs outside the release directory, and a rollback moves
@@ -41,7 +47,8 @@ ROLLBACK_SAFE_BECAUSE = (
     "it takes away tables nothing in 0.99.13's web, poller or worker reads or writes; its "
     "retention and 03-verify, the only code that did, are installed with the package and "
     "stay as the package wrote them over a rollback; the view gets one column at its end, "
-    "which 0.99.13 does not select"
+    "which 0.99.13 does not select; node_event_state gets a column with a default, which "
+    "0.99.13's insert does not name and its conflict update leaves alone"
 )
 
 VIEW = """
@@ -59,3 +66,5 @@ def upgrade() -> None:
     op.execute("drop table metric_rollup_state")
     op.execute("drop function metric_month_partition(text, date)")
     op.execute(VIEW)
+    op.execute("alter table node_event_state add column since timestamptz not null default now()")
+    op.execute("grant select (since), insert (since), update (since) on node_event_state to app_poller")

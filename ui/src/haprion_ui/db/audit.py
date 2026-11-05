@@ -165,23 +165,36 @@ class NodeEventsWritten:
 
 
 def record_node_events(
-    connection: Connection[Any], *, cluster: str, result: Mapping[str, Any]
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    result: Mapping[str, Any],
+    joining_seconds: float | None = None,
 ) -> NodeEventsWritten:
     """Compare one status reading with the state kept, and write what changed (*Events → Nodes*).
 
     One transaction with the state it replaces, so two passes can never both
     see the old state and both write the change. Returns how many events, and
-    which nodes have not answered yet (B329).
+    which nodes have not answered yet (B329), not counting one that has been
+    joining for longer than `joining_seconds` (D11-01).
     """
 
     with connection.cursor() as cursor:
         cursor.execute(
-            "select kind, subject, value from node_event_state where cluster = %(cluster)s "
+            "select kind, subject, value, "
+            "       extract(epoch from transaction_timestamp() - since)::float8 "
+            "  from node_event_state where cluster = %(cluster)s "
             "   for update",
             {"cluster": cluster},
         )
-        previous = {(row[0], row[1]): row[2] for row in cursor.fetchall()}
-        changes, state, gone = node_events.compare(previous, node_events.observe(result))
+        rows = cursor.fetchall()
+        previous = {(row[0], row[1]): row[2] for row in rows}
+        changes, state, gone = node_events.compare(
+            previous,
+            node_events.observe(result),
+            kept_for={(row[0], row[1]): row[3] for row in rows},
+            joining_seconds=joining_seconds,
+        )
         if changes:
             cursor.executemany(
                 "insert into node_event (at, cluster, node, event, subject, detail) "
@@ -202,9 +215,10 @@ def record_node_events(
         changed = [(key, value) for key, value in state.items() if previous.get(key) != value]
         if changed:
             cursor.executemany(
-                "insert into node_event_state (cluster, kind, subject, value) "
-                "values (%(cluster)s, %(kind)s, %(subject)s, %(value)s) "
-                "on conflict (cluster, kind, subject) do update set value = excluded.value",
+                "insert into node_event_state (cluster, kind, subject, value, since) "
+                "values (%(cluster)s, %(kind)s, %(subject)s, %(value)s, transaction_timestamp()) "
+                "on conflict (cluster, kind, subject) do update "
+                "   set value = excluded.value, since = excluded.since",
                 [
                     {"cluster": cluster, "kind": key[0], "subject": key[1], "value": value}
                     for key, value in changed

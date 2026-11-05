@@ -4382,7 +4382,9 @@ record. Each job that failed has its diagnostics under it.
 - the VIP moving from one node to the other;
 - a node that stopped reporting its status, or reports it again.
 
-A node just added is *Joining* until it answers the first time, and that first answer is not an event. A
+A node just added is *Joining* until it answers the first time, and that first answer is not an event.
+A node that has not answered by the time its join could have taken and two poller rounds more is read as
+any other node that does not answer. A
 server's row names its object and links to its servers. Both roles can read this view. It pages and
 filters by cluster, a word and time, as *Audit* does. The nightly retention removes rows older than 90
 days.

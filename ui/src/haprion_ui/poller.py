@@ -50,13 +50,14 @@ from haprion_ui import (
     db,
     diagnostics,
     labels,
+    node_events,
     objects,
     pending,
     search_index,
     service,
     update_check,
 )
-from haprion_ui.config import DEFAULT_CONFIG_PATH
+from haprion_ui.config import DEFAULT_CONFIG_PATH, DEFAULT_POLL_INTERVAL_SECONDS
 from haprion_ui.config import load as load_config
 from haprion_ui.service import StopRequest
 
@@ -561,7 +562,12 @@ def _sample(pool: Any, source: Source, *, cluster: str, result: Mapping[str, Any
 
 
 def _events(
-    pool: Any, source: Source, *, cluster: str, reading: Mapping[str, Any]
+    pool: Any,
+    source: Source,
+    *,
+    cluster: str,
+    reading: Mapping[str, Any],
+    joining_seconds: float,
 ) -> frozenset[str]:
     """Write what changed since the last reading, and never let that failure reach the poll.
 
@@ -581,7 +587,9 @@ def _events(
         return frozenset()
     try:
         with pool.connection() as connection:
-            written = source.events(connection, cluster=cluster, result=result)
+            written = source.events(
+                connection, cluster=cluster, result=result, joining_seconds=joining_seconds
+            )
             connection.commit()
     except Exception as exc:  # noqa: BLE001 - an event is never worth a failed pass
         logger.warning("cluster %s node events not written: %s", cluster, exc)
@@ -852,6 +860,7 @@ class ClusterReaders:
                     name,
                     self._sources,
                     discard=lambda: self._stopped or self._stop_requested(),
+                    interval_seconds=self._interval,
                 )
                 #
                 # Read is read, whatever it found: a node down is the node's
@@ -1057,6 +1066,7 @@ def _poll_cluster_sources(
     sources: tuple[Source, ...],
     *,
     discard: Callable[[], bool] = lambda: False,
+    interval_seconds: int = DEFAULT_POLL_INTERVAL_SECONDS,
 ) -> str | None:
     """One cluster's sources in order; the status reading's outcome, None without one.
 
@@ -1070,6 +1080,7 @@ def _poll_cluster_sources(
     """
 
     status: str | None = None
+    joining_seconds = node_events.joining_limit(interval_seconds)
 
     def dropped() -> bool:
         if discard():
@@ -1119,7 +1130,9 @@ def _poll_cluster_sources(
         # as old, and the log says why.
         #
         try:
-            joining = _events(pool, source, cluster=cluster, reading=reading)
+            joining = _events(
+                pool, source, cluster=cluster, reading=reading, joining_seconds=joining_seconds
+            )
             with pool.connection() as connection:
                 source.record(
                     connection,

@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from haprion import node_join
+
 from haprion_ui import node_events, views
 from haprion_ui.db import NodeEvent
 from tests.test_login import LoginTestCase
@@ -148,6 +150,37 @@ class WhatChanged(unittest.TestCase):
         self.assertEqual((answered, node_events.joining(state)), ([], frozenset()))
         quiet, _, _ = node_events.compare(state, node_events.observe(silent))
         self.assertEqual([c.event for c in quiet], ["node_silent"])
+
+    def test_a_node_joining_for_longer_than_the_limit_is_silent_without_an_event(self) -> None:
+        """D11-01: it never answered, so it did not stop; it is read as any silent node."""
+
+        silent = reading(
+            node("node-a", owner=True, servers=[]),
+            node("node-b", owner=None, servers=[], ok=False),
+        )
+        _, state, _ = node_events.compare({}, node_events.observe(silent))
+        key = ("node", "node-b")
+        limit = node_events.joining_limit(20)
+        self.assertEqual(limit, node_join.JOIN_TIMEOUT_SECONDS + 40)
+        for kept, joining in ((limit - 1, {"node-b"}), (limit + 1, set())):
+            with self.subTest(kept=kept):
+                changes, after, _ = node_events.compare(
+                    state,
+                    node_events.observe(silent),
+                    kept_for={key: kept},
+                    joining_seconds=limit,
+                )
+                self.assertEqual(changes, [])
+                self.assertEqual(node_events.joining(after), frozenset(joining))
+        # Once silent it stays silent, and answering is the node coming back.
+        _, expired, _ = node_events.compare(
+            state, node_events.observe(silent), kept_for={key: limit + 1}, joining_seconds=limit
+        )
+        up = reading(
+            node("node-a", owner=True, servers=[]), node("node-b", owner=False, servers=[])
+        )
+        back, _, _ = node_events.compare(expired, node_events.observe(up))
+        self.assertEqual([change.event for change in back], ["node_back"])
 
     def test_a_node_taken_out_and_added_again_is_joining_not_silent(self) -> None:
         """Review 2026-10-30, E7: the state of a node that left must not be inherited."""

@@ -468,6 +468,17 @@ class HealthDerivation(unittest.TestCase):
         self.assertEqual((joining.online_nodes, joining.total_nodes), (1, 1))
         self.assertEqual(joining.node_tone, "healthy")
 
+    def test_a_cluster_with_a_node_not_read_is_not_behind(self) -> None:
+        # D11-01: nothing is unpublished; one node has not been read.
+        status = reading("partial-unreachable.json")
+        nodes = [dict(entry) for entry in status.result["nodes"]]
+        nodes[1]["joining"] = True
+        cluster = self.dashboard(
+            replace(status, result={**status.result, "nodes": nodes})
+        ).clusters[0]
+        self.assertEqual((cluster.label, cluster.tone), ("Joining", "unknown"))
+        self.assertFalse(cluster.behind)
+
     def engine(self, *, published: bool | None, active: bool) -> Any:
         status = reading("done-single-owner.json")
         result = dict(status.result)

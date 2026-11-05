@@ -123,9 +123,9 @@ app_poller	metric_backend_member	SELECT	backend, bin, bout, check_code, check_st
 app_poller	metric_frontend	INSERT	bin, bout, cluster, counters_kept, dreq, dresp, econ, ereq, eresp, frontend, hrsp_2xx, hrsp_3xx, hrsp_4xx, hrsp_5xx, node, owns_vip, qcur, req_tot, scur, status, stot, uptime_sec, wredis, wretr
 app_poller	metric_frontend	SELECT	bin, bout, cluster, dreq, dresp, econ, ereq, eresp, frontend, hrsp_2xx, hrsp_3xx, hrsp_4xx, hrsp_5xx, node, observed_at, owns_vip, qcur, req_tot, scur, status, stot, uptime_sec, wredis, wretr
 app_poller	node_event	INSERT	at, cluster, detail, event, node, subject
-app_poller	node_event_state	INSERT	cluster, kind, subject, value
-app_poller	node_event_state	SELECT	cluster, kind, subject, value
-app_poller	node_event_state	UPDATE	value
+app_poller	node_event_state	INSERT	cluster, kind, since, subject, value
+app_poller	node_event_state	SELECT	cluster, kind, since, subject, value
+app_poller	node_event_state	UPDATE	since, value
 app_poller	package_waiting	INSERT	available, installed, name, read_at
 app_poller	package_waiting	SELECT	available, installed, name, read_at
 app_poller	search_entry	INSERT	admin_only, cluster, href, kind, label, source, title, value

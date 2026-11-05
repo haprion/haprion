@@ -59,6 +59,7 @@ ALLOWED_SESSION_KEYS = frozenset(
     {"inactivity_minutes", "absolute_hours", "cookie_secure", "oidc_absolute_hours"}
 )
 ALLOWED_THROTTLE_KEYS = frozenset({"max_failures", "window_minutes"})
+DEFAULT_POLL_INTERVAL_SECONDS = 20
 ALLOWED_POLLER_KEYS = frozenset({"interval_seconds"})
 ALLOWED_TRAFFIC_LOG_KEYS = frozenset({"enabled", "directory", "max_lines", "retention_days"})
 ALLOWED_DNS_PROFILE_KEYS = frozenset({"public_key"})
@@ -446,7 +447,7 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
                 "poller",
                 low=10,
                 high=3600,
-                default=20,
+                default=DEFAULT_POLL_INTERVAL_SECONDS,
             )
         ),
         traffic_logs=TrafficLogs(

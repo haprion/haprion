@@ -1460,6 +1460,37 @@ class EachClusterIsReadAtItsOwnPace(unittest.TestCase):
 
         self.assertEqual(len(recorded), 1)
 
+    def test_the_events_are_told_how_long_a_node_may_stay_joining(self) -> None:
+        """D11-01: the join timeout and two rounds of the poller's own interval."""
+
+        from haprion import node_join
+
+        told: list[float] = []
+
+        def events(_connection: Any, *, cluster: str, result: Any, joining_seconds: float) -> Any:
+            told.append(joining_seconds)
+            return db.NodeEventsWritten(0, frozenset())
+
+        class Connection:
+            def __enter__(self) -> Any:
+                return self
+
+            def __exit__(self, *_: Any) -> None:
+                return None
+
+            def commit(self) -> None:
+                return None
+
+        class Pool:
+            def connection(self) -> Any:
+                return Connection()
+
+        source = poller.Source(
+            "status", _answering("done"), lambda *a, **k: None, partial_ok=True, events=events
+        )
+        poller._poll_cluster_sources(Pool(), "alpha", (source,), interval_seconds=45)
+        self.assertEqual(told, [node_join.JOIN_TIMEOUT_SECONDS + 90])
+
     def test_a_status_that_is_partial_or_failed_was_read(self) -> None:
         for outcome, expected in (("partial", "partial"), ("failed", "failed")):
             with self.subTest(outcome):

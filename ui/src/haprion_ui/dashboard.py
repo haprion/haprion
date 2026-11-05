@@ -863,6 +863,16 @@ def _cluster_view(
                 "warning",
                 f"{labels.counted(len(warned), 'node')} {'reports' if len(warned) == 1 else 'report'} a warning",
             )
+    elif release_state == "incomplete":
+        #
+        # A node was not read, which is not the same as a node on an older
+        # version (D11-01). One that has not answered yet is joining; any other
+        # unread node is already critical above.
+        #
+        if any(node.label == JOINING for node in nodes):
+            label, tone, detail = JOINING, "unknown", "A node has not answered yet"
+        else:
+            label, tone, detail = "Incomplete", "warning", "A node could not be read"
     elif release_state != "converged":
         label, tone, detail = BEHIND, "warning", "Nodes are not on the published version"
     else:

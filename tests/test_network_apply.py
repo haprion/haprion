@@ -108,6 +108,30 @@ class TheNetworkFromAFile(NetworkPublishFixture):
             self.assertEqual((self.repo / "managed/network.yaml").read_text(), CHANGED)
             self.assertEqual(int(git(self.repo, "rev-list", "--count", "HEAD")), int(before) + 1)
 
+    def test_the_same_network_written_another_way_is_no_change(self) -> None:
+        """K10: the page stores what it sends as JSON; a playbook's YAML is not a new version."""
+
+        as_json = json.dumps(
+            {
+                "vips": {"main": {"address": "192.0.2.20", "source": "192.0.2.25"}},
+                "default_vip": "main",
+                "sources": {"outbound": "192.0.2.35"},
+                "networks": {"office": ["198.51.100.0/24"]},
+            }
+        )
+        with tempfile.TemporaryDirectory() as raw, tempfile.TemporaryDirectory() as files:
+            policy = self.runtime(Path(raw))
+            self.published(policy)
+            path = Path(files, "network.yaml")
+            path.write_text(as_json)
+            before = git(self.repo, "rev-list", "--count", "HEAD")
+
+            code, out, _ = self.run_apply(policy, path, "--json")
+
+            answer = assert_contract("haprion-network-apply", out)
+            self.assertEqual((code, answer["result"]["changed"]), (0, False))
+            self.assertEqual(git(self.repo, "rev-list", "--count", "HEAD"), before)
+
     def test_check_shows_the_difference_and_publishes_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as raw, tempfile.TemporaryDirectory() as files:
             policy = self.runtime(Path(raw))

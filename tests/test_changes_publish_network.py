@@ -109,6 +109,26 @@ class NetworkPublicationTests(NetworkPublishFixture):
         )
         git(self.repo, "commit", "-qam", "Human edit to core")
 
+    def test_the_network_is_stored_in_one_form_whoever_wrote_it(self) -> None:
+        """K10: the page writes JSON, a playbook YAML; the same network is one version."""
+
+        as_json = json.dumps(
+            {
+                "vips": {"main": {"address": "192.0.2.20", "source": "192.0.2.25"}},
+                "default_vip": "main",
+                "sources": {"outbound": "192.0.2.35"},
+                "networks": {"office": ["198.51.100.0/24"]},
+            },
+            indent=2,
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            code, _, err = self.publish_network(policy, self.request(network=as_json))
+            self.assertEqual((code, err), (0, ""))
+            stored = (self.repo / "managed/network.yaml").read_text()
+
+        self.assertEqual(stored, NETWORK)
+
     def test_a_stale_core_is_refused_before_a_version_is_recorded(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))

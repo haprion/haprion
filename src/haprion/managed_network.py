@@ -56,9 +56,9 @@ def dump_document(network: Network) -> bytes:
     """Return the canonical YAML representation the application publishes.
 
     Stable field and row order makes a version diff describe the semantic
-    change rather than a YAML emitter's dictionary order.  It also means the
-    browser, helper and a future API all write byte-identical documents for
-    the same network.
+    change rather than a YAML emitter's dictionary order.  The publish stores
+    every network through it, so the page's JSON and a playbook's YAML for the
+    same network are the same bytes.
     """
 
     document: dict[str, object] = {

@@ -35,7 +35,7 @@ from haprion.cli.cluster_settings import run_publish_helper
 from haprion.config import ConfigError
 from haprion.envelope import new_request_id
 from haprion.helper_protocol import write_document
-from haprion.managed_network import MAX_NETWORK_BYTES, load_document, location
+from haprion.managed_network import MAX_NETWORK_BYTES, dump_document, load_document, location
 from haprion.release_install import DEPLOYMENT_REQUIRED_AFTER_INSTALL
 
 OPERATION = "network_apply"
@@ -109,21 +109,31 @@ def main(
         # Read as the publish will read it, so a mistake is named by the file
         # before anything is asked of the manager.
         #
-        # The write rules apply to a document that changes; a file equal to what
-        # is stored is read as the stored one is (a network saved before a write
-        # rule must still accept its own export).
+        # Compared as networks and not as text: the page stores what it sends as
+        # JSON and the publish stores the canonical YAML, so the same network
+        # written another way is no change (K10). A file that is not the stored
+        # text is held to the rules for what is written whichever it turns out;
+        # one equal to it is read as the stored one is.
         #
-        changed = wanted != current
         try:
-            if changed:
+            if wanted != current:
                 with address_ranges.writing():
-                    load_document(
+                    read = load_document(
                         wanted.encode("utf-8"), ownership_vip=ownership, location=str(path)
                     )
             else:
-                load_document(wanted.encode("utf-8"), ownership_vip=ownership, location=str(path))
+                read = load_document(
+                    wanted.encode("utf-8"), ownership_vip=ownership, location=str(path)
+                )
         except ConfigError as exc:
             raise Refused("network_invalid", str(exc)) from exc
+        try:
+            stored = dump_document(
+                load_document(current.encode("utf-8"), ownership_vip=ownership, location=location())
+            )
+        except ConfigError:
+            stored = None
+        changed = stored != dump_document(read)
         versions: list[Mapping[str, Any]] = []
         if changed:
             #

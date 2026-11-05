@@ -51,7 +51,7 @@ from haprion.cluster_lock import DEFAULT_LOCK_ROOT
 from haprion.config import DEFAULT_POLICY_PATH, Cluster, ConfigError, PathPolicy
 from haprion.held_ports import HeldPorts
 from haprion.helper_protocol import HelperProtocolError, JsonValue
-from haprion.managed_network import MAX_NETWORK_BYTES, load_document
+from haprion.managed_network import MAX_NETWORK_BYTES, dump_document, load_document
 from haprion.managed_network import location as network_location
 from haprion.managed_publish import PROXY_PREFIX, managed_files
 from haprion.proxy_model import (
@@ -293,12 +293,17 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
             else:
                 try:
                     with address_ranges.writing():
-                        load_document(
+                        parsed = load_document(
                             network, ownership_vip=cluster.vip, location=network_location()
                         )
                 except ConfigError as exc:
                     raise Refusal("network_invalid", str(exc), exit_codes.REFUSED) from exc
-                network_document = network
+                #
+                # Stored in its canonical form, as the settings are, so the page's
+                # JSON and a playbook's YAML for the same network are one version
+                # and a diff shows only what changed (K10).
+                #
+                network_document = dump_document(parsed)
             canonical: bytes | None = None
             if settings is not None:
                 try:

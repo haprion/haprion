@@ -230,6 +230,7 @@ the object `shop`.
 
 - `apply` publishes whatever differs from what is stored, as one version, and says what it did. It works
   against the version it read. Applying the same files again changes nothing.
+- Objects are stored as written: the same object in two spellings is two versions.
 - An object that no file names is left alone, unless `--prune` is given.
 - A directory with no object files changes nothing. With `--prune` it is refused, since it would remove
   every object.
@@ -6347,6 +6348,8 @@ way the *Network* page saves it:
   as `document`.)
 - Where they differ, it publishes one version, against the version it read. Where they do not, it
   publishes nothing.
+- The network is compared as a network and stored in one form, so the same network written as the page
+  writes it or as YAML is no change.
 - `--check` shows the difference without publishing, and refuses what the publish would refuse.
 - A cluster still answering from `clusters.yaml` has no description to change, and is refused.
 

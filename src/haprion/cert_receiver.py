@@ -1337,8 +1337,16 @@ def _set_secret(
             "bad_input", f"{receiver_id} fetches over {receiver.transport}, with its own key"
         )
     target = secret_file(receiver_id, locations)
-    before = target.read_text(encoding="ascii") if target.exists() else None
-    layers = [write_secret(receiver_id, hashed_secret, locations)]
+    try:
+        before = target.read_text(encoding="ascii") if target.exists() else None
+        layers = [write_secret(receiver_id, hashed_secret, locations)]
+    except (OSError, UnicodeDecodeError) as exc:
+        # A full disk or an unreadable old file: an answer, as `_set_key` gives it (E07).
+        raise ReceiverError(
+            "write_failed",
+            f"the secret of {receiver_id} could not be written: {exc}",
+            exit_code=exit_codes.IO_ERROR,
+        ) from exc
     try:
         layers.append(
             _write_checked(
@@ -1351,10 +1359,18 @@ def _set_secret(
             )
         )
     except ReceiverError:
-        if before is None:
-            target.unlink(missing_ok=True)
-        else:
-            _restore_secret(target, before)
+        try:
+            if before is None:
+                target.unlink(missing_ok=True)
+            else:
+                _restore_secret(target, before)
+        except OSError as exc:
+            raise ReceiverError(
+                "write_failed",
+                f"nginx refused the change and the previous secret of {receiver_id} could not "
+                f"be put back: {exc}",
+                exit_code=exit_codes.IO_ERROR,
+            ) from exc
         raise
     return Result(receiver_id, "secret", tuple(layers), instructions(receiver, locations))
 

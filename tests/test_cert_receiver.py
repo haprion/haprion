@@ -28,7 +28,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import cert_receiver, cert_registry, exit_codes
+from haprion import atomic_file, cert_receiver, cert_registry, exit_codes
 from haprion.cert_receiver import Locations, ReceiverError, Result, Tools
 from haprion.cli import cert_receiver as command
 from haprion.config import PathPolicy, RuntimeConfig, load_policy, load_runtime_config
@@ -738,6 +738,32 @@ class AnHttpsReceiversSecret(ReceiverFixture):
             )
         self.assertIn(newer, self.secret().read_text())
         self.assertNotEqual(old, self.secret().read_text())
+
+    def test_a_new_secret_that_cannot_be_written_is_an_answer_not_a_traceback(self) -> None:
+        """E07: the helper catches `ReceiverError` only, and died without an envelope on ENOSPC."""
+
+        with mock.patch.object(cert_receiver, "_own"):
+            self.add(**self.HTTPS)
+        old = self.secret().read_text()
+        policy, _ = self.loaded()
+
+        with (
+            mock.patch.object(atomic_file, "write", side_effect=OSError(28, "No space left")),
+            self.assertRaises(ReceiverError) as raised,
+        ):
+            cert_receiver.set_secret(
+                policy,
+                receiver_id="lb-02.example.net",
+                hashed_secret=cert_receiver.secret_hash("another password"),
+                tools=self.tools,
+                locations=self.locations,
+                require_secure=False,
+                lock_path=self.root / "cert-publish.lock",
+            )
+
+        self.assertEqual(raised.exception.code, "write_failed")
+        self.assertIn("No space left", str(raised.exception))
+        self.assertEqual(self.secret().read_text(), old)
 
     def test_removing_the_receiver_removes_its_secret(self) -> None:
         with mock.patch.object(cert_receiver, "_own"):

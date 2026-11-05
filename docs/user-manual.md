@@ -2710,9 +2710,11 @@ certificates it fetches and the `from=` it was registered with stay. The old key
 the job is done.
 
 **Where the directory goes** is `receiver_root` in the runtime policy. A new receiver's directory is
-`<receiver_root>/<id>` unless `--path` names another. The registry, not the root, says where each
-receiver actually is. So the root is optional until the first `add`, which is refused with
-`dependency_unavailable` until it is set.
+`<receiver_root>/<id>` unless `--path` names another place under the root. `--path` may hold only letters,
+digits and `. _ - /`: sshd and nginx read it unquoted. A path outside the root is refused, because the
+interface's worker could not write the pair there and *Publish now* would fail where the certbot hook
+succeeds. The registry, not the root, says where each receiver actually is. So the root is optional until
+the first `add`, which is refused with `dependency_unavailable` until it is set.
 
 **The private key is never given to the manager.** The key pair is made on the receiver
 (`ssh-keygen -t ed25519`), and `--public-key` takes the `.pub` file. A private key that passed through

@@ -67,6 +67,13 @@ from haprion.config import (
 from haprion.envelope import Message, Outcome, envelope
 from haprion.helper_protocol import config_error_code
 
+#
+# The directory goes unquoted into `command="rrsync -ro <path>"`, `ChrootDirectory`
+# and nginx's `alias`: a blank or a quote splits or ends what sshd and sh read
+# (E05). Narrow on purpose; the loader keeps accepting what an older registry holds.
+#
+RECEIVER_PATH = re.compile(r"^/[A-Za-z0-9._/-]+$")
+
 USERADD = "/usr/sbin/useradd"
 USERDEL = "/usr/sbin/userdel"
 PASSWD_BIN = "/usr/bin/passwd"  # noqa: S105 - the binary that locks an account
@@ -1015,6 +1022,25 @@ def _add(
         directory = policy.receiver_root / receiver_id
     if not directory.is_absolute():
         raise ReceiverError("bad_input", "--path must be absolute")
+    if not RECEIVER_PATH.fullmatch(str(directory)) or ".." in directory.parts:
+        raise ReceiverError(
+            "bad_input",
+            f"--path {str(directory)!r} may hold only letters, digits and . _ - / (no blanks, "
+            "quotes or '..'): sshd and nginx read it unquoted",
+        )
+    root = policy.receiver_root
+    if (
+        root is None
+        or directory.resolve(strict=False) == root
+        or not (directory.resolve(strict=False).is_relative_to(root))
+    ):
+        raise ReceiverError(
+            "bad_input",
+            f"--path {str(directory)!r} is not under receiver_root"
+            + (f" ({root})" if root is not None else "")
+            + ": the interface's worker may write only there, so a pair published from the web "
+            "would fail where the certbot hook succeeds",
+        )
 
     if public_key is None:
         key_line = ""

@@ -286,6 +286,42 @@ class AddingAReceiver(ReceiverFixture):
         self.assertNotIn("allow", entry)
         self.assertFalse(self.runner.ran("sshd"))
 
+    def test_a_directory_the_forced_command_cannot_carry_is_refused_before_anything_is_made(
+        self,
+    ) -> None:
+        """E05: `rrsync -ro /srv/cert dist/lb` is read by sh as two arguments."""
+
+        for bad in ("cert dist", 'cert"dist', "cert'dist", "cert$dist", "cert;dist", "a/../b"):
+            with self.subTest(bad), self.assertRaises(cert_receiver.ReceiverError) as raised:
+                self.add(path=self.root / "receivers" / bad)
+            self.assertEqual(raised.exception.code, "bad_input")
+            self.assertIn("--path", str(raised.exception))
+        self.assertEqual(self.registered(), {})
+        self.assertFalse(self.runner.calls)
+
+    def test_a_directory_outside_receiver_root_is_refused_as_the_web_could_not_write_it(
+        self,
+    ) -> None:
+        """E06: the worker's sandbox opens `receiver_root`'s parent and nothing else."""
+
+        for outside in (self.root / "elsewhere" / "lb-02", self.root / "receivers"):
+            with (
+                self.subTest(outside=str(outside)),
+                self.assertRaises(cert_receiver.ReceiverError) as raised,
+            ):
+                self.add(path=outside)
+            self.assertEqual(raised.exception.code, "bad_input")
+            self.assertIn("receiver_root", str(raised.exception))
+        self.assertFalse(self.runner.calls)
+
+    def test_a_directory_under_receiver_root_is_registered_where_it_was_named(self) -> None:
+        directory = self.root / "receivers" / "custom" / "lb-02"
+        directory.parent.mkdir()
+
+        self.add(path=directory)
+
+        self.assertEqual(self.registered()["lb-02.example.net"]["path"], str(directory))
+
     def test_a_new_rsync_account_gets_a_shell_for_its_forced_command(self) -> None:
         with (
             mock.patch.object(cert_receiver, "account_exists", return_value=False),

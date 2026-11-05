@@ -520,6 +520,30 @@ class ARemovedNodeRejoinsOnTheNewReleaseOnly(Node):
         self.assertEqual(self.haproxy.joinpath("current").resolve(), self.old.resolve())
         self.assertFalse(self.pending.exists())
 
+    def test_a_rejoin_put_back_whole_leaves_no_marker(self) -> None:
+        # P3-1 (area 4): the node is out of service on the release it had; nothing is half done.
+        code, output = self.deploy(fail_start=True)
+
+        self.assertEqual(code, 1, output)
+        self.assertFalse(self.incomplete.exists())
+
+    def test_a_rejoin_whose_haproxy_cannot_be_stopped_again_keeps_the_marker(self) -> None:
+        wrapper = self.bin / "systemctl"
+        real = self.bin / "systemctl-real"
+        wrapper.rename(real)
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = disable ] && [ "$4" = haproxy ]; then exit 1; fi\n'
+            f'exec "{real}" "$@"\n'
+        )
+        wrapper.chmod(0o755)
+
+        code, output = self.deploy(fail_start=True)
+
+        self.assertEqual(code, 1, output)
+        self.assertIn("HAProxy could not be stopped again", output)
+        self.assertTrue(self.incomplete.exists())
+
     def test_a_haproxy_an_earlier_attempt_started_is_reloaded_onto_the_new_release(self) -> None:
         """Code review 26-10-22, 1A-2: an attempt that started HAProxy and then
         failed on keepalived kept the marker, and the next one's `enable --now`

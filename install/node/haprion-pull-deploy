@@ -1246,10 +1246,12 @@ elif (( REJOINING )); then
     rm -f "$NEW_LINK"
     ln -s "$OLD_RELEASE" "$NEW_LINK"
     mv -Tf "$NEW_LINK" "$CURRENT"
-    systemctl disable --quiet --now haproxy || log "ERROR: HAProxy could not be stopped again."
+    restored=1
+    systemctl disable --quiet --now haproxy || { restored=0; log "ERROR: HAProxy could not be stopped again."; }
     settle_pending
-    sync_waf_engine 1 || true
-    sync_dns_listener "$RELEASE" || true
+    sync_waf_engine 1 || restored=0
+    sync_dns_listener "$RELEASE" || restored=0
+    (( ! restored )) || settle_incomplete
 
     exit 1
 else

@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, TextIO
 
 from haprion import exit_codes
-from haprion.cli.caller import helper_refusal, usage, without_answer
+from haprion.cli.caller import helper_refusal, timed_out, usage, without_answer
 from haprion.envelope import new_request_id
 from haprion.helper_protocol import run_bounded_helper, write_document
 
@@ -90,7 +90,10 @@ def main(
     writer: TextIO = stream_out or sys.stdout
     errors: TextIO = stream_err or sys.stderr
     cluster_id, json_mode = _parse(argv)
-    completed = run_helper(cluster_id, new_request_id())
+    try:
+        completed = run_helper(cluster_id, new_request_id())
+    except subprocess.TimeoutExpired:
+        completed = timed_out("inventory helper", HELPER_TIMEOUT_SECONDS)
 
     try:
         document = json.loads(completed.stdout)

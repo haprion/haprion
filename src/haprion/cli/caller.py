@@ -103,6 +103,19 @@ def helper_refusal(document: Mapping[str, Any]) -> str | None:
     return None
 
 
+def timed_out(
+    helper: str, seconds: float, *, argv: list[str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """What a helper that did not answer within `seconds` leaves for `without_answer` to say (V08)."""
+
+    return subprocess.CompletedProcess(
+        argv or [helper],
+        exit_codes.TIMED_OUT,
+        "",
+        f"the {helper} gave no answer within {seconds:g} seconds",
+    )
+
+
 def without_answer(
     completed: subprocess.CompletedProcess[str],
     *,

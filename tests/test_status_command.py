@@ -635,6 +635,28 @@ class CallerTests(HelperFixture):
         code = status.main(argv, stream_out=out, stream_err=err, run_helper=run_helper)
         return code, out.getvalue(), err.getvalue()
 
+    def test_a_helper_that_runs_out_of_time_is_the_unavailable_document_not_a_traceback(
+        self,
+    ) -> None:
+        def run_helper(_cluster: str, _request: str) -> subprocess.CompletedProcess[str]:
+            raise subprocess.TimeoutExpired(["helper"], 120)
+
+        for flags in ([], ["--json"]):
+            out, err = io.StringIO(), io.StringIO()
+            code = status.main(
+                ["-c", "alpha", *flags], stream_out=out, stream_err=err, run_helper=run_helper
+            )
+            self.assertEqual(code, exit_codes.UNAVAILABLE)
+            self.assertIn(
+                "ERROR: the status helper gave no answer within 120 seconds", err.getvalue()
+            )
+            if flags:
+                document = assert_contract("haprion-status", out.getvalue())
+                self.assertEqual(document["error"]["code"], "dependency_unavailable")
+                self.assertEqual(document["operation"], "status")
+            else:
+                self.assertEqual(out.getvalue(), "")
+
     def test_the_caller_sends_only_the_cluster_name(self) -> None:
         code, out, _ = self.run_caller(["-c", "alpha"], completed(self.envelope()))
         self.assertEqual(code, 0)

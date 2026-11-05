@@ -25,7 +25,7 @@ from collections.abc import Callable
 from typing import Any, TextIO
 
 from haprion import haproxy_versions, log_forwarding, node_package, node_resources
-from haprion.cli.caller import usage, without_answer
+from haprion.cli.caller import timed_out, usage, without_answer
 from haprion.cluster_status import (
     DNS_LISTENER_STOPPED,
     WAF_ENGINE_STOPPED,
@@ -398,7 +398,10 @@ def main(
     errors: TextIO = stream_err or sys.stderr
     cluster_id, json_mode = _parse(argv)
 
-    completed = run_helper(cluster_id, new_request_id())
+    try:
+        completed = run_helper(cluster_id, new_request_id())
+    except subprocess.TimeoutExpired:
+        completed = timed_out("status helper", HELPER_TIMEOUT_SECONDS)
 
     try:
         envelope = json.loads(completed.stdout)

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import yaml
 
+from haprion import exit_codes
 from haprion.cli import inventory, inventory_helper
 from tests.contract_schema import assert_contract
 
@@ -194,6 +195,24 @@ class InventoryCallerTests(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         code = inventory.main(argv, stream_out=out, stream_err=err, run_helper=helper)
         return code, out.getvalue(), err.getvalue(), sent
+
+    def test_a_helper_that_runs_out_of_time_is_the_unavailable_document_not_a_traceback(
+        self,
+    ) -> None:
+        def helper(_cluster: str, _request: str) -> subprocess.CompletedProcess[str]:
+            raise subprocess.TimeoutExpired(["helper"], 120)
+
+        out, err = io.StringIO(), io.StringIO()
+        code = inventory.main(
+            ["-c", "alpha", "--json"], stream_out=out, stream_err=err, run_helper=helper
+        )
+        self.assertEqual(code, exit_codes.UNAVAILABLE)
+        document = assert_contract("haprion-inventory", out.getvalue())
+        self.assertEqual(document["error"]["code"], "dependency_unavailable")
+        self.assertIn("no answer within 120 seconds", document["error"]["message"])
+        self.assertIn(
+            "ERROR: the inventory helper gave no answer within 120 seconds", err.getvalue()
+        )
 
     def test_json_mode_forwards_the_helper_document(self) -> None:
         payload = subprocess.CompletedProcess(["helper"], 0, self.document(), "")

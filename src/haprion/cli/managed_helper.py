@@ -416,7 +416,7 @@ def _publish(
             return refuse(
                 "dirty_worktree",
                 "an earlier publish stopped before it wrote its files out. A publish writes them "
-                f"out and goes on; a check leaves them as they are. Publish before {words.doing}.",
+                "out and goes on; a check leaves them as they are. Run the same request without the check first.",
                 exit_codes.BLOCKED,
             )
         restore_worktree(repo, head)

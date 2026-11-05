@@ -276,6 +276,8 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             )
 
             self.assertEqual((code, document["error"]["code"]), (75, "dirty_worktree"))
+            self.assertNotIn("publishing", document["error"]["message"])
+            self.assertIn("without the check", document["error"]["message"])
             self.assertEqual(git(self.repo, "status", "--porcelain"), left)
 
     def test_a_check_refuses_what_the_publish_refuses(self) -> None:

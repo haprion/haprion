@@ -672,12 +672,17 @@ def _remove(
         if not dropped_clusters and not dropped_receivers and not left_behind:
             outcomes.append(CertificateOutcome(certificate_id, "unchanged"))
             continue
+        #
+        # The guards look at every cluster the copy is taken from, also one the
+        # registry no longer names: a committed object or a default certificate
+        # there still names the certificate (26-11-05, Q01).
+        #
+        reason = removal_refusal(certificate_id, dropped_clusters + left_behind, runtime, guards)
+        if reason is not None:
+            outcomes.append(CertificateOutcome(certificate_id, "refused", reason[1], reason[0]))
+            continue
         abandoned: tuple[str, ...] = ()
         if dropped_clusters or dropped_receivers:
-            reason = removal_refusal(certificate_id, dropped_clusters, runtime, guards)
-            if reason is not None:
-                outcomes.append(CertificateOutcome(certificate_id, "refused", reason[1], reason[0]))
-                continue
             try:
                 written = cert_registry.set_targets(
                     registry_path,

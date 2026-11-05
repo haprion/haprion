@@ -435,6 +435,29 @@ class WhatRemovalRefuses(RetargetFixture):
         )
         self.assert_untouched(report, "cluster_default")
 
+    def test_a_cluster_the_registry_does_not_name_is_guarded_as_well(self) -> None:
+        """26-11-05, Q01: an object or default in beta still names the certificate."""
+
+        self.policy_path = self.prepared(
+            {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        self.before = (self.root / "certificates.yaml").read_bytes()
+        guards = Guards(
+            referenced={"example.com": ("beta/shop",)}, defaults={"example.com": ("beta",)}
+        )
+        report = self.retarget(
+            self.policy_path, "remove", "example.com", clusters=("beta",), guards=guards
+        )
+        self.assert_untouched(report, "referenced_by_object")
+        self.assertTrue(self.copy("example.com", "beta").exists())
+
+        guards = Guards(defaults={"example.com": ("beta",)})
+        report = self.retarget(
+            self.policy_path, "remove", "example.com", clusters=("beta",), guards=guards
+        )
+        self.assert_untouched(report, "cluster_default")
+        self.assertTrue(self.copy("example.com", "beta").exists())
+
     def test_the_dropped_cluster_s_last_certificate_seen_after_the_first_went(self) -> None:
         """The registry is re-read per certificate: the second sees the first gone."""
 

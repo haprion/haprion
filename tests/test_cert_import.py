@@ -500,9 +500,10 @@ class TheCommand(ImportFixture):
         return code, out.getvalue(), err.getvalue()
 
     def test_usage_and_root(self) -> None:
-        code, out, _ = self.run_cli("--id", "x")
+        code, out, err = self.run_cli("--id", "x")
         self.assertEqual(code, 64)
-        self.assertIn("Usage", out)
+        self.assertIn("Usage", err)
+        self.assertEqual(out, "")
         code, _, err = self.run_cli(
             "--id",
             "x",

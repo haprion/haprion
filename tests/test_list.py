@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -170,15 +170,19 @@ class FailureTests(ListFixture):
 
     def test_the_argument_contract_is_the_shell_command_s(self) -> None:
         #
-        # Usage on stdout and exit 64, both measured against the shell command
-        # before it was replaced.
+        # Usage on stderr and exit 64: stdout stays for a document.
         #
         for argv in ([], ["alpha"], ["-c"], ["-c", "alpha", "3"], ["--all", "alpha"]):
-            shown = io.StringIO()
-            with self.assertRaises(SystemExit) as raised, redirect_stdout(shown):
+            shown, said = io.StringIO(), io.StringIO()
+            with (
+                self.assertRaises(SystemExit) as raised,
+                redirect_stdout(shown),
+                redirect_stderr(said),
+            ):
                 list_command.main(argv, stream_out=io.StringIO())
             self.assertEqual(raised.exception.code, 64)
-            self.assertEqual(shown.getvalue(), list_command.USAGE)
+            self.assertEqual(shown.getvalue(), "")
+            self.assertEqual(said.getvalue(), list_command.USAGE)
 
 
 class DiffTests(ListFixture):

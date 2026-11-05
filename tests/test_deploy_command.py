@@ -723,7 +723,7 @@ class CallerTests(unittest.TestCase):
         self.assertEqual(payload["parameters"], {"allow_vip_unknown": True, "json": False})
 
     def test_the_argument_contract(self) -> None:
-        from contextlib import redirect_stdout
+        from contextlib import redirect_stderr, redirect_stdout
 
         for argv in (
             [],
@@ -732,11 +732,16 @@ class CallerTests(unittest.TestCase):
             ["-c", "alpha", "--force"],
             ["-c", "alpha", "--json", "--json"],
         ):
-            shown = io.StringIO()
-            with self.assertRaises(SystemExit) as raised, redirect_stdout(shown):
+            shown, said = io.StringIO(), io.StringIO()
+            with (
+                self.assertRaises(SystemExit) as raised,
+                redirect_stdout(shown),
+                redirect_stderr(said),
+            ):
                 deploy.main(argv)
             self.assertEqual(raised.exception.code, 64, argv)
-            self.assertEqual(shown.getvalue(), deploy.USAGE)
+            self.assertEqual(shown.getvalue(), "")
+            self.assertEqual(said.getvalue(), deploy.USAGE)
 
 
 class RefusalContractTests(HelperFixture):

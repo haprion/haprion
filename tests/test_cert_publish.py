@@ -892,9 +892,10 @@ class TheCommand(Fixture):
         self.assertEqual(code, 64)
         self.assertEqual(json.loads(out)["error"]["code"], "bad_input")
 
-        code, out, _ = self.run_command(policy, "--bogus")
+        code, out, err = self.run_command(policy, "--bogus")
         self.assertEqual(code, 64)
-        self.assertIn("Usage:", out)
+        self.assertIn("Usage:", err)
+        self.assertEqual(out, "")
 
         stdout, stderr = io.StringIO(), io.StringIO()
         with mock.patch.object(os, "geteuid", return_value=1000):

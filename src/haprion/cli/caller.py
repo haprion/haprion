@@ -77,14 +77,16 @@ def help_asked(argv: list[str]) -> bool:
 def usage(text: str) -> NoReturn:
     """Print how the command is called, and exit the way the shell one did.
 
-    On stdout, not stderr: that is where the shell commands' `usage` wrote it,
-    and an operator who pipes the output into a pager expects to see it there.
-    Asked for with `-h` or `--help` it is not a mistake and exits 0; a
-    mistyped call keeps exiting 64 (26-11-02).
+    Asked for with `-h` or `--help` it is not a mistake: it goes to stdout, where
+    an operator who pipes the output into a pager expects it, and exits 0. A
+    mistyped call says it on stderr and exits 64, as the commands that parse
+    their arguments with argparse do, so that stdout holds a document or nothing
+    when `--json` was given (K08, 26-11-05).
     """
 
-    sys.stdout.write(text if text.endswith("\n") else f"{text}\n")
-    raise SystemExit(0 if help_asked(sys.argv[1:]) else exit_codes.USAGE)
+    asked = help_asked(sys.argv[1:])
+    (sys.stdout if asked else sys.stderr).write(text if text.endswith("\n") else f"{text}\n")
+    raise SystemExit(0 if asked else exit_codes.USAGE)
 
 
 def helper_refusal(document: Mapping[str, Any]) -> str | None:

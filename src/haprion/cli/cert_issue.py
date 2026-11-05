@@ -241,7 +241,7 @@ def main(
             json_mode,
             interface,
             exportable,
-        ) = _parse(argv, writer)
+        ) = _parse(argv, errors)
     except SystemExit as exc:
         return int(exc.code or 0)
 

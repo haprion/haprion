@@ -261,11 +261,16 @@ class RefusalTests(CallerFixture):
 
     def test_the_usage_contract_is_unchanged(self) -> None:
         for argv in ([], ["-c", "alpha"], ["alpha", "comment"], ["-c", "alpha", "   "]):
-            shown = io.StringIO()
-            with self.assertRaises(SystemExit) as caught, redirect_stdout(shown):
+            shown, said = io.StringIO(), io.StringIO()
+            with (
+                self.assertRaises(SystemExit) as caught,
+                redirect_stdout(shown),
+                redirect_stderr(said),
+            ):
                 publish.main(argv, stream_out=io.StringIO())
             self.assertEqual(caught.exception.code, 64)
-            self.assertIn("haprion-publish -c <cluster>", shown.getvalue())
+            self.assertIn("haprion-publish -c <cluster>", said.getvalue())
+            self.assertEqual(shown.getvalue(), "")
 
     def test_a_flag_is_not_a_comment(self) -> None:
         """`--check` on a plain publish used to publish the draft with the comment "--check"."""
@@ -292,7 +297,8 @@ class RefusalTests(CallerFixture):
                         self.run_caller(policy_path, "-c", "alpha", *tail)
                     self.assertEqual(caught.exception.code, 64)
                     self.assertEqual(self.requests, [])
-                    self.assertIn("haprion-publish -c <cluster>", shown.getvalue())
+                    self.assertEqual(shown.getvalue(), "")
+                    self.assertIn("haprion-publish -c <cluster>", complaint.getvalue())
                     self.assertIn("goes after --", complaint.getvalue())
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
 

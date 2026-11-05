@@ -62,13 +62,19 @@ class ConfigPathTests(unittest.TestCase):
 
 
 class UsageTests(unittest.TestCase):
-    def test_usage_goes_to_stdout_and_exits_sixty_four(self) -> None:
-        shown = io.StringIO()
-        with self.assertRaises(SystemExit) as raised, redirect_stdout(shown):
+    def test_a_mistyped_call_says_usage_on_stderr_and_exits_sixty_four(self) -> None:
+        shown, said = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.object(sys, "argv", ["haprion-list", "-c"]),
+            self.assertRaises(SystemExit) as raised,
+            redirect_stdout(shown),
+            redirect_stderr(said),
+        ):
             caller.usage("Usage:\n  haprion-list -c <cluster>\n")
 
         self.assertEqual(raised.exception.code, exit_codes.USAGE)
-        self.assertEqual(shown.getvalue(), "Usage:\n  haprion-list -c <cluster>\n")
+        self.assertEqual(shown.getvalue(), "")
+        self.assertEqual(said.getvalue(), "Usage:\n  haprion-list -c <cluster>\n")
 
     def test_help_asked_for_is_not_an_error(self) -> None:
         for flag in ("-h", "--help"):
@@ -94,11 +100,11 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, exit_codes.USAGE)
 
     def test_a_usage_string_without_a_final_newline_gets_one(self) -> None:
-        shown = io.StringIO()
-        with self.assertRaises(SystemExit), redirect_stdout(shown):
+        said = io.StringIO()
+        with self.assertRaises(SystemExit), redirect_stderr(said):
             caller.usage("Usage:\n  haprion-history-reset -c <cluster>")
 
-        self.assertTrue(shown.getvalue().endswith("<cluster>\n"))
+        self.assertTrue(said.getvalue().endswith("<cluster>\n"))
 
 
 if __name__ == "__main__":

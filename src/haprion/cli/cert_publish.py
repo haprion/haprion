@@ -221,7 +221,7 @@ def main(
         return 0
 
     try:
-        only, deploy, json_mode = _parse(argv, writer)
+        only, deploy, json_mode = _parse(argv, errors)
     except SystemExit as exc:
         return int(exc.code or 0)
 

@@ -1176,10 +1176,11 @@ class TheCommand(ReceiverFixture):
         self.assertIn("lb-02.example.net", self.registered())
 
     def test_there_is_no_migrate_verb(self) -> None:
-        code, out, _ = self.run_cli("migrate", "lb-02.example.net", "--finish")
+        code, out, err = self.run_cli("migrate", "lb-02.example.net", "--finish")
 
         self.assertEqual(code, 64)
-        self.assertIn("Usage:", out)
+        self.assertIn("Usage:", err)
+        self.assertEqual(out, "")
 
     def test_the_json_envelope_carries_the_layers(self) -> None:
         code, out, _ = self.run_cli(
@@ -1219,7 +1220,8 @@ class TheCommand(ReceiverFixture):
         self.assertEqual(json.loads(out)["error"]["code"], "bad_input")
 
     def test_usage_is_printed_for_an_action_that_is_not_one(self) -> None:
-        code, out, _ = self.run_cli("rename", "lb-02.example.net")
+        code, out, err = self.run_cli("rename", "lb-02.example.net")
 
         self.assertEqual(code, 64)
-        self.assertIn("Usage:", out)
+        self.assertIn("Usage:", err)
+        self.assertEqual(out, "")

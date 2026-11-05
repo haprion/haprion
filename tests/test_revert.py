@@ -15,7 +15,7 @@ import os
 import shutil
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from haprion import exit_codes
@@ -538,15 +538,21 @@ class RefusalTests(RevertFixture):
 
     def test_the_usage_contract_is_unchanged(self) -> None:
         #
-        # Exit 64 and usage on stdout, both as the shell command did. The code
-        # is what a wrapper reads to tell a mistyped call from a failed one.
+        # Exit 64 and usage on stderr, where a mistake is said and stdout stays
+        # for a document. The code is what a wrapper reads to tell a mistyped
+        # call from a failed one.
         #
         for argv in ([], ["-c"], ["alpha"], ["-c", "alpha", "2", "3"]):
-            shown = io.StringIO()
-            with self.assertRaises(SystemExit) as caught, redirect_stdout(shown):
+            shown, said = io.StringIO(), io.StringIO()
+            with (
+                self.assertRaises(SystemExit) as caught,
+                redirect_stdout(shown),
+                redirect_stderr(said),
+            ):
                 revert.main(argv, stream_out=io.StringIO())
             self.assertEqual(caught.exception.code, 64)
-            self.assertIn("haprion-revert -c <cluster>", shown.getvalue())
+            self.assertIn("haprion-revert -c <cluster>", said.getvalue())
+            self.assertEqual(shown.getvalue(), "")
 
     def test_the_helper_refuses_argv_and_a_non_root_caller(self) -> None:
         stderr = io.StringIO()

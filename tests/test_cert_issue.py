@@ -475,9 +475,10 @@ class WhatReachesCertbot(IssueFixture):
             self.assertEqual(deployed, [])
         self.assertEqual(certbot.calls, [], "nothing may reach certbot for a refused request")
 
-        code, out, _, _ = self.run_issue(policy_path, "--domain", "x.example.com")
+        code, out, err, _ = self.run_issue(policy_path, "--domain", "x.example.com")
         self.assertEqual(code, 64)
-        self.assertIn("Usage:", out)
+        self.assertIn("Usage:", err)
+        self.assertEqual(out, "")
 
 
 class WhenCertbotFails(IssueFixture):

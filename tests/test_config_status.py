@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -368,11 +368,16 @@ class FailureTests(StatusFixture):
 
     def test_the_argument_contract_is_the_shell_command_s(self) -> None:
         for argv in ([], ["alpha"], ["-c"], ["-c", "alpha", "extra"], ["-x", "alpha"]):
-            shown = io.StringIO()
-            with self.assertRaises(SystemExit) as raised, redirect_stdout(shown):
+            shown, said = io.StringIO(), io.StringIO()
+            with (
+                self.assertRaises(SystemExit) as raised,
+                redirect_stdout(shown),
+                redirect_stderr(said),
+            ):
                 config_status.main(argv, stream_out=io.StringIO())
             self.assertEqual(raised.exception.code, 64)
-            self.assertEqual(shown.getvalue(), config_status.USAGE)
+            self.assertEqual(shown.getvalue(), "")
+            self.assertEqual(said.getvalue(), config_status.USAGE)
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ import tomllib
 import unittest
 from dataclasses import dataclass, replace
 from pathlib import Path
+from subprocess import CompletedProcess
 from typing import Any
 from unittest import mock
 
@@ -48,6 +49,18 @@ READS = frozenset(
         "haprion-readings",
         "haprion-cluster-list",
     }
+)
+
+
+#
+# The reading commands answer in a contract too; their usage is held to the same rule.
+#
+READ_PROGRAMS = (
+    "haprion-cert-list",
+    "haprion-inventory",
+    "haprion-list",
+    "haprion-list-backups",
+    "haprion-status",
 )
 
 
@@ -355,6 +368,42 @@ def _help(line: str) -> str:
     return shown.getvalue()
 
 
+def _invoke(program: str, argv: list[str]) -> tuple[int, str, str]:
+    """The command's `main` in this process: its exit code, stdout and stderr.
+
+    As an ordinary user, with no helper to reach: a program that would run one
+    gets a helper that fails without a word, so what is measured is what the
+    command itself writes.
+    """
+
+    module, _, _ = _entry_points()[program].partition(":")
+    out, err = io.StringIO(), io.StringIO()
+    code: int
+    with (
+        contextlib.redirect_stdout(out),
+        contextlib.redirect_stderr(err),
+        mock.patch("subprocess.run", return_value=CompletedProcess([], 1, "", "")),
+        mock.patch("sys.stdin", io.StringIO()),
+        mock.patch("os.geteuid", return_value=1000),
+    ):
+        try:
+            returned = importlib.import_module(module).main(argv)
+            code = returned if isinstance(returned, int) else 0
+        except SystemExit as stopped:
+            code = stopped.code if isinstance(stopped.code, int) else 0
+    return code, out.getvalue(), err.getvalue()
+
+
+def _commands() -> list[Command]:
+    """Every command the tables name, once per line."""
+
+    seen: dict[str, Command] = {}
+    for entry in (*PARITY.values(), *OPERATIONS.values(), *API_PARITY.values()):
+        if isinstance(entry, Command):
+            seen.setdefault(entry.line, entry)
+    return [seen[line] for line in sorted(seen)]
+
+
 def _programs() -> set[str]:
     programs: set[str] = set()
     for pyproject in (ROOT / "pyproject.toml", ROOT / "ui" / "pyproject.toml"):
@@ -420,6 +469,29 @@ class EveryWriteHasItsCommand(unittest.TestCase):
         self.assertEqual(sorted({entry.line for entry in entries if entry.schema in READS}), [])
         silent = sorted({entry.line for entry in entries if "--json" not in _help(entry.line)})
         self.assertEqual(silent, [])
+
+    def test_a_mistyped_call_leaves_stdout_empty(self) -> None:
+        """K08: with `--json`, stdout holds a document or nothing - never the usage text.
+
+        Asked for with `--help` the text goes to stdout; a mistake is said on
+        stderr, as the parser-based commands always said it.
+        """
+
+        programs = sorted(
+            {command.line.split()[0] for command in _commands()} | (set(READ_PROGRAMS))
+        )
+        said = {
+            program: _invoke(program, ["--no-such-flag", "--json"])
+            for program in programs
+            if program in _entry_points()
+        }
+
+        self.assertEqual(
+            sorted(program for program, (code, out, _) in said.items() if out.strip()), []
+        )
+        self.assertEqual(
+            sorted(program for program, (code, _, _) in said.items() if code != 64), []
+        )
 
     def test_the_check_would_notice_a_new_route(self) -> None:
         """A check that cannot fail is not a check."""

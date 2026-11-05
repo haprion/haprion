@@ -271,7 +271,7 @@ def main(
         return 0
 
     try:
-        arguments = _parse(argv, writer)
+        arguments = _parse(argv, errors)
     except SystemExit as exc:
         return int(exc.code or 0)
 

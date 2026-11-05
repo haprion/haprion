@@ -49,8 +49,11 @@ KEEPALIVED_CONF = "/etc/keepalived/keepalived.conf"
 KEEPALIVED_ADDRESSES = "/etc/keepalived/addresses.conf"
 KEEPALIVED_IPVS = "/etc/keepalived/ipvs.conf"
 HOST_KEY_PREFIX = "/etc/ssh/ssh_host_"
-# root's own key pairs, `ssh-keygen`'s default names: the node's fetch keys are made there.
-ROOT_KEY_PREFIX = "/root/.ssh/id_"
+ROOT_SSH = "/root/.ssh"
+NODE_CONF = "/etc/haprion/node.conf"
+# What a test machine gets of an account's .ssh: public data only.
+PUBLIC_SSH_FILES = ("authorized_keys", "authorized_keys2", "known_hosts")
+_FETCH_KEY = re.compile(r'^(?:CONFIG|CERT)_PULL_KEY="?([^"\n]+?)"?[ \t]*$', re.MULTILINE)
 
 #
 # What a node needs from the distribution, independent of what the image it was
@@ -271,6 +274,24 @@ def _under(path: str, roots: Iterable[str]) -> bool:
     return any(path == root or path.startswith(f"{root}/") for root in roots)
 
 
+def _private_ssh(path: str, directories: Iterable[str]) -> bool:
+    """True for a file in an account's .ssh that a test restore does not carry."""
+
+    for directory in directories:
+        if path.startswith(f"{directory}/"):
+            return path.removeprefix(f"{directory}/") not in PUBLIC_SSH_FILES
+    return False
+
+
+def _fetch_key_paths(source: RestoreSource) -> frozenset[str]:
+    """The fetch keys the archived node.conf names, at the paths it names."""
+
+    entry = source.entry(NODE_CONF)
+    if entry is None or entry.kind != "file":
+        return frozenset()
+    return frozenset(_FETCH_KEY.findall(_text(source, entry)))
+
+
 def _targets_own(path: str, extra: tuple[str, ...]) -> bool:
     """True for an archived path the target keeps its own version of (B178)."""
 
@@ -486,6 +507,8 @@ def build(
     left_out: list[str] = []
     from_package: list[str] = []
     root_keys: PlannedFile | None = None
+    fetch_keys = _fetch_key_paths(source) if profile is not None else frozenset()
+    ssh_dirs = (ROOT_SSH, *(f"{account.home}/.ssh" for account in source.accounts))
     for entry in source.owned():
         if entry.path == NETPLAN_DIR or entry.path.startswith(f"{NETPLAN_DIR}/"):
             continue
@@ -509,10 +532,18 @@ def build(
             # the operator compared in the preview - so it is never mistaken
             # for the archived node by anything that trusts that node's key.
             continue
-        if profile is not None and entry.path.startswith(ROOT_KEY_PREFIX):
-            # Nor the archived node's own keys - its fetch keys among them
-            # (review 2026-10-22, 5-4): a test machine at an address someone
-            # chose would otherwise hold the node's way into the manager.
+        if profile is not None and entry.path in fetch_keys:
+            # The archived node's fetch keys, wherever its node.conf put them:
+            # a test machine at an address someone chose would otherwise hold
+            # the node's way into the manager.
+            left_out.append(entry.path)
+            continue
+        if profile is not None and _private_ssh(entry.path, ssh_dirs):
+            # Of an account's .ssh a test machine gets the public data only
+            # (review 2026-11-05, R03): it can be any machine. What looks like
+            # a private key is named, so the preview shows it.
+            if entry.kind == "file" and not entry.path.endswith(".pub"):
+                left_out.append(entry.path)
             continue
         data: bytes | None = None
         if profile is not None and entry.kind == "file":

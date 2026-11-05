@@ -30,7 +30,7 @@ MANAGER="mgr.example.com"
 
 # Where this node fetches its published configuration from.
 CONFIG_PULL_USER="_haprion-pull"
-CONFIG_PULL_KEY="/etc/haprion/keys/config-pull"
+CONFIG_PULL_KEY="/root/.ssh/id_ed25519_config_pull"
 CONFIG_REMOTE_PATH="alpha/current/node-a/"
 
 # Local accounts and groups a state backup captures. A rebuilt node with no way
@@ -47,7 +47,7 @@ EXTRA_BACKUP_PATHS="/etc/default/grub.d/99-local.cfg"
 # that may read configuration has no business reading certificates it was not
 # asked for.
 CERT_PULL_USER="_haprion-cert-pull"
-CERT_PULL_KEY="/etc/haprion/keys/cert-pull"
+CERT_PULL_KEY="/root/.ssh/id_ed25519_cert_pull"
 """
 
 NETPLAN = """network:
@@ -137,7 +137,7 @@ FILES: dict[str, tuple[str, int]] = {
     ),
     "/etc/haprion/node.conf": (NODE_CONF, 0o600),
     "/etc/haprion/node-installation.json": ('{"node_api": 1}\n', 0o644),
-    "/etc/haprion/keys/config-pull": ("private\n", 0o600),
+    "/root/.ssh/id_ed25519_config_pull": ("private\n", 0o600),
     "/etc/ssh/sshd_config": ("PermitRootLogin prohibit-password\n", 0o644),
     "/etc/ssh/ssh_host_ed25519_key": ("host private\n", 0o600),
     "/etc/ssh/ssh_host_ed25519_key.pub": ("ssh-ed25519 AAAA node-a\n", 0o644),

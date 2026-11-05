@@ -11,7 +11,7 @@ import yaml
 
 from haprion import restore_plan, restore_source
 from haprion.restore_plan import PlanError, Target, TestProfile
-from tests.restore_fixture import FILES, NETPLAN, build
+from tests.restore_fixture import FILES, NETPLAN, NODE_CONF, build
 
 BASE = Path(__file__).resolve().parents[1]
 NODE_PREPARE = BASE / "install/04-node-prepare"
@@ -138,7 +138,7 @@ class ANewVm(Planning):
         self.assertIn("/etc/haprion/node-installation.json", plan.from_package)
         # node.conf and the pull key are the node's own and do come back.
         self.assertIn("/etc/haprion/node.conf", paths)
-        self.assertIn("/etc/haprion/keys/config-pull", paths)
+        self.assertIn("/root/.ssh/id_ed25519_config_pull", paths)
         self.assertFalse(plan.traffic_log)
 
     def test_the_traffic_log_is_turned_on_again_rather_than_copied(self) -> None:
@@ -290,6 +290,55 @@ class TestMode(Planning):
         )
         self.assertTrue(self.untouched(new_vm, "/root/.ssh/id_ed25519_example_pull"))
 
+    def test_the_test_node_gets_only_public_files_from_the_accounts_ssh(self) -> None:
+        """Review 2026-11-05 R03: the VM can be any machine; no private key goes to it."""
+
+        files = {
+            **FILES,
+            "/home/operator/.ssh/id_ed25519": ("private\n", 0o600),
+            "/home/operator/.ssh/id_ed25519.pub": ("ssh-ed25519 AAAA operator\n", 0o644),
+            "/home/operator/.ssh/jump_key": ("private\n", 0o600),
+            "/home/operator/.ssh/known_hosts": ("host ssh-ed25519 AAAA\n", 0o644),
+            "/root/.ssh/deploy_key": ("private\n", 0o600),
+        }
+        test = restore_plan.build(self.source(files), "test", TARGET, PROFILE)
+        paths = {file.path for file in test.files}
+
+        self.assertIn("/home/operator/.ssh/authorized_keys", paths)
+        self.assertIn("/home/operator/.ssh/known_hosts", paths)
+        for private in (
+            "/home/operator/.ssh/id_ed25519",
+            "/home/operator/.ssh/id_ed25519.pub",
+            "/home/operator/.ssh/jump_key",
+            "/root/.ssh/deploy_key",
+        ):
+            self.assertNotIn(private, paths)
+        # What looks like a private key is named, so the preview shows it.
+        self.assertIn("/home/operator/.ssh/id_ed25519", test.left_out)
+        self.assertIn("/home/operator/.ssh/jump_key", test.left_out)
+        self.assertIn("/root/.ssh/deploy_key", test.left_out)
+        # A new VM gets all of it.
+        new_vm = restore_plan.build(self.source(files), "new_vm", TARGET)
+        self.assertTrue(self.untouched(new_vm, "/home/operator/.ssh/id_ed25519"))
+
+    def test_the_test_node_does_not_get_the_fetch_keys_wherever_they_are(self) -> None:
+        """The path is the archive's node.conf's, not a prefix: here /etc/haprion/keys/."""
+
+        key = "/etc/haprion/keys/config-pull"
+        files = {
+            **FILES,
+            "/etc/haprion/node.conf": (
+                NODE_CONF.replace("/root/.ssh/id_ed25519_config_pull", key),
+                0o600,
+            ),
+            key: ("private\n", 0o600),
+        }
+        test = restore_plan.build(self.source(files), "test", TARGET, PROFILE)
+        self.assertNotIn(key, {file.path for file in test.files})
+        self.assertIn(key, test.left_out)
+        new_vm = restore_plan.build(self.source(files), "new_vm", TARGET)
+        self.assertTrue(self.untouched(new_vm, key))
+
     def test_every_rewrite_is_listed(self) -> None:
         fields = {(r.path, r.field) for r in self.plan().rewrites}
         self.assertEqual(
@@ -365,8 +414,6 @@ class Overwrite(Planning):
             "listing": {
                 "/etc/netplan": ("/etc/netplan/50-cloud-init.yaml",),
                 "/etc/haprion": (
-                    "/etc/haprion/keys",
-                    "/etc/haprion/keys/config-pull",
                     "/etc/haprion/node.conf",
                     "/etc/haprion/node-installation.json",
                 ),

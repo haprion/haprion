@@ -45,7 +45,7 @@ import time
 import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, TextIO
 
 from haprion import (
@@ -849,6 +849,12 @@ def check(
         derived = restore_answers.derive(source, request.cluster, publish_root)
     except restore_answers.AnswersError as exc:
         problems.append(str(exc))
+    if derived and request.mode == "test":
+        # The way in a test VM is let in by is known now, not after it is built.
+        try:
+            _key_paths(derived)
+        except RestoreError as exc:
+            problems.append(str(exc))
     bound = {
         "request": request.as_dict(),
         "archive_sha256": _digest_file(archive),
@@ -1265,6 +1271,13 @@ def _key_paths(answers: str) -> dict[str, str]:
             found[kind] = match.group(1)
     if "config" not in found:
         raise RestoreError("the answers name no configuration fetch key to let in")
+    for kind, path in found.items():
+        pure = PurePosixPath(path)
+        if ".." in pure.parts or not str(pure).startswith("/root/.ssh/"):
+            raise RestoreError(
+                f"a test restore needs the {kind} fetch key under /root/.ssh; "
+                f"the archived node.conf puts it at {path}"
+            )
     return found
 
 

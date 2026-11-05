@@ -3573,7 +3573,9 @@ above, except that:
   by the test host name, and without the mark the VM's deploy would take it for a node removed from
   the cluster. With it, the deploy installs the release and HAProxy serves it, and keepalived's files
   stay as the restore rewrote them;
-- the VM keeps its own SSH host keys;
+- the VM keeps its own SSH host keys, and gets of each account's `.ssh` only `authorized_keys`,
+  `authorized_keys2` and `known_hosts` - no private key of the node or its operators goes to a machine
+  the preview only fingerprinted; what looks like one is listed as left out;
 - the VM fetches its configuration and certificates from this manager as a node does, with the fetch
   keys it made for itself. For the run alone, the manager lets those keys in from the test address
   only - the same read-only line a node's own has, ending by itself after two hours - and takes them

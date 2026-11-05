@@ -49,7 +49,7 @@ class ReadingAnArchive(unittest.TestCase):
         for path in (
             "/etc/netplan",
             "/etc/netplan/50-cloud-init.yaml",
-            "/etc/haprion/keys/config-pull",
+            "/root/.ssh/id_ed25519_config_pull",
             "/root/.ssh",
             "/home/operator/.ssh/authorized_keys",
             "/var/lib/_haprion-backup/.ssh/authorized_keys",

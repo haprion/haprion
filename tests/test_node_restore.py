@@ -32,7 +32,7 @@ from haprion.cli import node_restore as cli
 from haprion.config import Node
 from haprion.node_restore import Clock, Request, RestoreError
 from haprion.restore_plan import Target, TestProfile
-from tests.restore_fixture import FILES, build
+from tests.restore_fixture import FILES, NODE_CONF, build
 
 VERSION = "2026-01-01_04-00-00"
 PUBLISH_ROOT = Path("/srv/haprion/published")
@@ -325,6 +325,18 @@ class Preview(RestoreTest):
             problems = " ".join(self.preview(run)["problems"])
         self.assertIn("more than a restore carries", problems)
         self.assertIn("/etc/", problems, "names the largest files")
+
+    def test_a_fetch_key_outside_roots_ssh_is_a_problem_at_the_preview_of_a_test(self) -> None:
+        """Review 2026-11-05 R03: said before the VM is built, not after the files are written."""
+
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work)
+        conf = NODE_CONF.replace("/root/.ssh/id_ed25519_config_pull", "/etc/haprion/keys/pull")
+        files = {**FILES, "/etc/haprion/node.conf": (conf, 0o600)}
+        shutil.move(build(work, files=files), self.backups / "node-a" / f"{VERSION}.tar.gz")
+        problems = " ".join(self.preview(self.prepare())["problems"])
+        self.assertIn("fetch key under /root/.ssh", problems)
+        self.assertEqual(self.preview(self.prepare(test=False))["problems"], [])
 
     def test_a_release_without_a_node_package_stops_the_restore(self) -> None:
         """B180: a CLI release installed without --node-package cannot prepare a node."""

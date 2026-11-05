@@ -3746,7 +3746,9 @@ mark goes (the next hourly run finds them under the limit, or midnight passes), 
 logs of the nodes whose own copy of the day is more than their share of the limit (the limit divided by
 the number of nodes) in its own copy and does not import them into the database, and the attention list
 names each of them. The other nodes are imported as usual. If no node stands out, every node's log of
-today is kept back. They are imported when there is room.
+today is kept back. A node's day is imported as soon as the mark goes or the day ends at midnight UTC,
+whichever comes first, all at once; the mark goes when the partitions of the database's own day, which
+starts at its local midnight, fit the limit again.
 
 The collector keeps its copy of the nodes' days within the same share of its own filesystem. It removes
 the oldest finished days first. While today alone is over the limit, it stops fetching from the nodes

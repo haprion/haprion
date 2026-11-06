@@ -215,6 +215,23 @@ class BackupJobHelperTests(unittest.TestCase):
         message = cast(dict[str, str], document["error"])["message"]
         self.assertEqual(len(message), backup_job_helper.MESSAGE_CHARACTERS)
 
+    def test_nodes_without_a_reason_are_still_named(self) -> None:
+        report = BackupResult(
+            "alpha",
+            "2026-09-21_05-00-00",
+            (
+                NodeResult("node-a", "failed", None, None, "backup_archive_invalid"),
+                NodeResult("node-b", "failed", None, None, "backup_node_mismatch"),
+            ),
+        )
+        document, _ = backup_job_helper.run_document(
+            report, cluster="alpha", request_id=str(uuid4())
+        )
+
+        message = cast(dict[str, str], document["error"])["message"]
+        self.assertIn("node-a: ", message)
+        self.assertIn("node-b: ", message)
+
     def test_a_node_without_a_reason_is_said_as_before(self) -> None:
         report = BackupResult(
             "alpha",
@@ -226,7 +243,7 @@ class BackupJobHelperTests(unittest.TestCase):
         )
 
         message = cast(dict[str, str], document["error"])["message"]
-        self.assertEqual(message, "No node produced a valid state archive")
+        self.assertTrue(message.startswith("No node produced a valid state archive (node-a: "))
 
     def test_schedule_change_uses_only_the_bounded_schedule_and_switch(self) -> None:
         request_id = str(uuid4())

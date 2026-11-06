@@ -106,7 +106,7 @@ def _none_produced(flagged: tuple[state_backup.NodeResult, ...]) -> str:
     Bounded by the envelope's error message, which takes 2048 characters.
     """
 
-    if not any(node.detail for node in flagged):
+    if not flagged:
         return "No node produced a valid state archive"
     said = "; ".join(f"{node.name}: {_short(node)}" for node in flagged)
     message = f"No node produced a valid state archive ({said})"

@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
+from haprion import crs
 from haprion.cluster_status import StatusError, parse_status
 from haprion.config import Vip
 from haprion.generate import GeneratorError, generate
@@ -322,6 +323,12 @@ class ThePublishSaysWhatItCouldNotCheck(ObjectsPublishFixture):
             )
             return code, answer
 
+    #
+    # A WAF object is checked against the rule set the engine package installs;
+    # CI has none (26-11-06: the publish refused it, 65), as the other tests
+    # that need it say.
+    #
+    @unittest.skipUnless(crs.ROOT.is_dir(), "the rule set is not installed here")
     def test_a_node_not_asked_is_named_when_an_object_starts_to_need_the_engine(self) -> None:
         waf = proxy("agent", "agent.example.com").replace("routes:", "waf: {}\nroutes:")
 
@@ -332,6 +339,12 @@ class ThePublishSaysWhatItCouldNotCheck(ObjectsPublishFixture):
         self.assertEqual(answer["result"]["unchecked_features"], ["waf"])
         self.assertNotIn("unchecked_reason", answer["result"])
 
+    #
+    # A WAF object is checked against the rule set the engine package installs;
+    # CI has none (26-11-06: the publish refused it, 65), as the other tests
+    # that need it say.
+    #
+    @unittest.skipUnless(crs.ROOT.is_dir(), "the rule set is not installed here")
     def test_the_reason_is_in_the_result(self) -> None:
         waf = proxy("agent", "agent.example.com").replace("routes:", "waf: {}\nroutes:")
 
@@ -452,6 +465,12 @@ backends:
         code, answer, _, head = self.publish_lacking(proxy("agent", "agent.example.com"))
         self.assertEqual((code, head), (0, "moved"))
 
+    #
+    # A WAF object is checked against the rule set the engine package installs;
+    # CI has none (26-11-06: the publish refused it, 65), as the other tests
+    # that need it say.
+    #
+    @unittest.skipUnless(crs.ROOT.is_dir(), "the rule set is not installed here")
     def test_an_object_that_already_used_the_engine_is_not_refused_for_it(self) -> None:
         waf = proxy("agent", "agent.example.com").replace("routes:", "waf: {}\nroutes:")
 

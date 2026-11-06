@@ -1670,7 +1670,12 @@ def run_one(
                     " values ('install-test', 'after_the_dump', '{}')"
                 ),
             )
-            _, restored = run.on("mgr", f"haprion-backup restore /var/lib/haprion-ui/dumps/{dump}")
+            #
+            # The list names a dump by its whole path (since 26-11-05, its groups);
+            # a bare name is in the dump directory.
+            #
+            path = dump if dump.startswith("/") else f"/var/lib/haprion-ui/dumps/{dump}"
+            _, restored = run.on("mgr", f"haprion-backup restore {shlex.quote(path)}")
             if "restored from" not in restored:
                 raise Failed(f"haprion-backup restore did not say it restored:\n{restored}")
             _, after = run.on(

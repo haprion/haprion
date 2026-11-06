@@ -2,3 +2,4 @@
 # Add a line when a release carrying the migration goes out:  sha256sum versions/NNNN_name.py
 1a1203dad5a04e2f8f5c422b3a6b04e91c9a917b9284d69598a6af1ba7a59313  versions/0115_baseline.py
 ea61f3dab1cb87f71efae9d13a9ee653809f6bf5a15b691da34bc5b8528bfaeb  versions/0116_worker_holds_through_the_function.py
+07f87ecf3a609fbaeb1c7c0cd78e2054d395999c6ab787314c69e15f8279d8cb  versions/0117_no_pool_rollup.py

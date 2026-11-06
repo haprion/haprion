@@ -331,6 +331,16 @@ fi
 # each describes a way the separation could be lost without anything looking
 # wrong: a role that can edit the audit trail, or write a table it only reads.
 #
+#
+# The cluster the probes below write for, inside transactions that are rolled
+# back: a name no cluster has. A fixed one ('alpha') met a restored database
+# whose queued job was on a cluster of that name, and one active job per
+# cluster refused the probe - the allowed writes failed, and a refusal could
+# have passed for the wrong reason (measured 26-11-06, `haprion-backup restore`
+# in the install test). The shape is job_cluster_shape's.
+#
+PROBE_CLUSTER="verify-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+
 step "What the roles must not be able to do"
 #
 # Each probe runs inside a transaction that is rolled back, so a check that
@@ -438,29 +448,29 @@ refuse "$POLLER_USER" "cannot write the audit trail" \
 #
 refuse "$WEB_USER"    "cannot queue a job as already running" \
        "insert into job (operation, cluster, payload, state)
-        values ('deploy', 'alpha', '{}'::jsonb, 'running')"
+        values ('deploy', '${PROBE_CLUSTER}', '{}'::jsonb, 'running')"
 refuse "$WEB_USER"    "cannot choose a job's request id" \
        "insert into job (operation, cluster, payload, request_id)
-        values ('deploy', 'alpha', '{}'::jsonb, gen_random_uuid())"
+        values ('deploy', '${PROBE_CLUSTER}', '{}'::jsonb, gen_random_uuid())"
 refuse "$WEB_USER"    "cannot choose a job's payload hash" \
        "insert into job (operation, cluster, payload, payload_hash)
-        values ('deploy', 'alpha', '{}'::jsonb, decode('00', 'hex'))"
+        values ('deploy', '${PROBE_CLUSTER}', '{}'::jsonb, decode('00', 'hex'))"
 refuse "$WEB_USER"    "cannot write a job result" \
        "insert into job (operation, cluster, payload, result)
-        values ('deploy', 'alpha', '{}'::jsonb, '{}'::jsonb)"
+        values ('deploy', '${PROBE_CLUSTER}', '{}'::jsonb, '{}'::jsonb)"
 refuse "$WEB_USER"    "cannot grant itself a lease" \
        "insert into job (operation, cluster, payload, lease_until)
-        values ('deploy', 'alpha', '{}'::jsonb, now())"
+        values ('deploy', '${PROBE_CLUSTER}', '{}'::jsonb, now())"
 refuse "$WEB_USER"    "cannot update a job row" \
        "update job set state = 'done'"
 refuse "$WEB_USER"    "cannot hold or release a job itself" \
        "update job set held_since = null"
 refuse "$WEB_USER"    "cannot queue an operation outside the allowlist" \
        "insert into job (operation, cluster, payload)
-        values ('rm-rf', 'alpha', '{}'::jsonb)"
+        values ('rm-rf', '${PROBE_CLUSTER}', '{}'::jsonb)"
 refuse "$POLLER_USER" "cannot write a job row" \
        "insert into job (operation, cluster, payload)
-        values ('deploy', 'alpha', '{}'::jsonb)"
+        values ('deploy', '${PROBE_CLUSTER}', '{}'::jsonb)"
 refuse "$POLLER_USER" "cannot read jobs" \
        "select id from job"
 #
@@ -502,25 +512,25 @@ allow() {
 #
 allow "$WEB_USER" "can queue a keyed job, which the database marks pending" \
       "insert into job (operation, cluster, payload, idempotency_key)
-       values ('deploy', 'alpha', '{\"probe\": true}'::jsonb, gen_random_uuid())
+       values ('deploy', '${PROBE_CLUSTER}', '{\"probe\": true}'::jsonb, gen_random_uuid())
        returning state" \
       "pending"
 
 allow "$WEB_USER" "receives a request id it did not choose" \
       "insert into job (operation, cluster, payload, idempotency_key)
-       values ('deploy', 'alpha', '{}'::jsonb, gen_random_uuid())
+       values ('deploy', '${PROBE_CLUSTER}', '{}'::jsonb, gen_random_uuid())
        returning request_id is not null" \
       "t"
 
 allow "$WEB_USER" "receives the database-derived payload hash" \
       "insert into job (operation, cluster, payload, idempotency_key)
-       values ('deploy', 'alpha', '{}'::jsonb, gen_random_uuid())
+       values ('deploy', '${PROBE_CLUSTER}', '{}'::jsonb, gen_random_uuid())
        returning payload_hash is not null" \
       "t"
 
 allow "$WEB_USER" "can store the digest of the request that queued a job" \
       "insert into job (operation, cluster, payload, idempotency_key, request_digest)
-       values ('deploy', 'alpha', '{}'::jsonb, gen_random_uuid(), decode(repeat('ab', 32), 'hex'))
+       values ('deploy', '${PROBE_CLUSTER}', '{}'::jsonb, gen_random_uuid(), decode(repeat('ab', 32), 'hex'))
        returning octet_length(request_digest)" \
       "32"
 
@@ -599,9 +609,9 @@ allow "$WORKER_USER" "may run the claim as written" \
       ""
 
 allow "$POLLER_USER" "can replace its rows in the search index" \
-      "delete from search_entry where cluster = 'alpha' and source = 'objects';
+      "delete from search_entry where cluster = '${PROBE_CLUSTER}' and source = 'objects';
        insert into search_entry (cluster, source, kind, title, value, href)
-       values ('alpha', 'objects', 'proxy', 'probe', 'probe', '/') returning kind" \
+       values ('${PROBE_CLUSTER}', 'objects', 'proxy', 'probe', 'probe', '/') returning kind" \
       "proxy"
 
 #
@@ -611,9 +621,9 @@ allow "$POLLER_USER" "can replace its rows in the search index" \
 #
 refuse "$WEB_USER" "cannot queue a second active job for one cluster" \
        "insert into job (operation, cluster, payload)
-        values ('deploy', 'alpha', '{}'::jsonb);
+        values ('deploy', '${PROBE_CLUSTER}', '{}'::jsonb);
         insert into job (operation, cluster, payload)
-        values ('deploy', 'alpha', '{}'::jsonb)"
+        values ('deploy', '${PROBE_CLUSTER}', '{}'::jsonb)"
 
 echo
 if (( failures )); then

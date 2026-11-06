@@ -9136,13 +9136,10 @@ Do the last two on a cluster that carries no traffic, if you have one.
 
 ### What is still missing
 
-One gap remains:
-
-- **A rebuild from this repository alone** has not been verified end to end. That is the last step
-  before 1.0.
-
-It is closed when a new management host and a new set of nodes, with names of your own choosing,
-are built from this repository alone by someone who has never seen the maintainer's environment.
+Nothing that a release waits for. A rebuild from this repository alone is what every release's
+installation test does: on empty machines it installs a manager and two nodes with names of its own,
+from the release's packages and nothing else, on both distributions and as an upgrade from the release
+before, and then checks what an operator would check. The maintainer's environment plays no part in it.
 
 Certificate renewal is not a gap: the product schedules it. Platform step 14 installs
 `haprion-certbot-renew.timer`, which runs `haprion-cert-renew` twice a day. That renews certbot's

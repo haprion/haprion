@@ -16,10 +16,13 @@ It is useful to me, and I hope it may be useful to others too, but expectations 
 accordingly. This is not a commercial product: there is no SLA, no support agreement and no
 guaranteed response time, and maintenance is best-effort. There will be bugs.
 
-The project has not reached 1.0 and is **not yet declared ready for production deployment**.
+Haprion 1.0 is the first release I consider ready for use. Every release is installed from its
+packages on empty machines, on Ubuntu 26.04 and Debian 13, both new and as an upgrade from the
+release before. The tests behind it include failover, a node changing its address, a deploy cut
+off half-way, restores, and 10 000 proxies in one cluster. It is still a hobby project, so the
+paragraph above holds: no SLA, best-effort maintenance.
+
 Everything listed below is built and tested.
-What remains before 1.0 is a full re-verification of an installation built from this repository,
-and documentation.
 
 **Built with AI.** The code is written by [Claude](https://claude.ai) and
 [Codex](https://openai.com/codex/). The design, the product decisions and the direction are mine -

@@ -450,6 +450,23 @@ class ObjectsFromFiles(unittest.TestCase):
         with mock.patch.object(changes_publish, "MAX_REQUEST_BYTES", 100_000):
             self.assertEqual(changes_publish.room(), 100_000 - changes_publish.REQUEST_RESERVE)
 
+    def test_each_version_s_comment_names_only_its_own_objects(self) -> None:
+        fakes = Fakes({})
+        for number in range(16):
+            self.write(f"site{number:03d}", document(f"site{number:03d}"))
+
+        with mock.patch.object(changes_publish, "MAX_REQUEST_BYTES", room_for(10)):
+            code, _, _ = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root))
+
+        self.assertEqual(code, 0)
+        first, second = (sent["parameters"]["comment"] for sent in fakes.published)
+        self.assertIn("site009", first)
+        self.assertNotIn("site010", first)
+        self.assertTrue(first.endswith("(1 of 2)"))
+        self.assertIn("site015", second)
+        self.assertNotIn("site009", second)
+        self.assertTrue(second.endswith("(2 of 2)"))
+
     def test_the_comment_counts_what_it_cannot_name(self) -> None:
         """The scale scenario, 26-11-05: the names of a few hundred new objects went over 4096 bytes."""
 

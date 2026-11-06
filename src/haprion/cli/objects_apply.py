@@ -232,8 +232,8 @@ def plan_remove(names: Sequence[str], current: Mapping[str, str]) -> Plan:
 BATCH_SUFFIX_BYTES = 32
 
 
-def _comment(plan: Plan) -> str:
-    """Every name the plan touches, or how many when the names do not fit a comment.
+def _comment(plan: Plan, only: Collection[str] | None = None) -> str:
+    """Every name the plan touches (in `only`, when given: one batch), or how many when they do not fit.
 
     Made from the names, the comment of an apply of a few hundred new objects
     went over the helper's 4096 bytes and the publish was refused (the scale
@@ -242,12 +242,12 @@ def _comment(plan: Plan) -> str:
 
     groups = [
         (verb, names)
-        for verb, names in (
+        for verb, all_names in (
             ("added", plan.added),
             ("changed", plan.changed),
             ("removed", plan.removed),
         )
-        if names
+        if (names := [n for n in all_names if only is None or n in only])
     ]
     named = "From the terminal: " + "; ".join(
         f"{verb} {', '.join(names)}" for verb, names in groups
@@ -333,7 +333,7 @@ def publish(
             cluster,
             new_request_id(),
             expected_head=head,
-            comment=(comment or _comment(plan)) + suffix,
+            comment=(comment or _comment(plan, batch)) + suffix,
             objects={name: plan.documents[name] for name in batch},
             allow_certificate_mismatch=allow_certificate_mismatch,
             check=check,

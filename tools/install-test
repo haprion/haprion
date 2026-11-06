@@ -2020,6 +2020,39 @@ def scale_steps(scenario: Scenario) -> None:
 
     step(f"{count} object files written on the manager", generated)
 
+    shipped: dict[str, str] = {}
+
+    def lifted() -> None:
+        """The services' own limits read, then lifted, so that a peak is what a service needs.
+
+        At 10 000 heavy objects the poller was killed at its 512M (26-11-06):
+        its peak then said only the limit. The limits shipped are compared at
+        the end, against what was used.
+        """
+
+        for unit in LIMITED_UNITS:
+            _, said = run.on("mgr", f"systemctl show -p MemoryMax --value {unit}")
+            shipped[unit] = said.strip()
+            run.on(
+                "mgr",
+                f"install -d /etc/systemd/system/{unit}.d && printf '[Service]\\nMemoryMax=infinity\\n' "
+                f"> /etc/systemd/system/{unit}.d/zz-install-test-measure.conf",
+            )
+        run.on("mgr", "systemctl daemon-reload")
+        run.on(
+            "mgr",
+            "systemctl restart haprion-web haprion-worker haprion-poller "
+            "&& systemctl reset-failed haprion-traffic-collector.service || true",
+        )
+        print(
+            "(shipped: "
+            + ", ".join(f"{u.split('.')[0]} {limit_mib(v)}" for u, v in shipped.items())
+            + ")",
+            end=" ",
+        )
+
+    step("the manager's service limits read and lifted for the measure", lifted)
+
     def counters_file() -> None:
         """The core's counters file (shm-stats-file) holds 2000 objects unless told otherwise.
 
@@ -2145,8 +2178,8 @@ def scale_steps(scenario: Scenario) -> None:
         publish_job,
     )
     step(
-        "the manager's services stayed within their limits through the publishing",
-        functools.partial(within_limits, run),
+        "what the manager's services used through the publishing",
+        functools.partial(within_limits, run, shipped, enforce=False),
     )
 
     def deployed() -> None:
@@ -2223,8 +2256,8 @@ def scale_steps(scenario: Scenario) -> None:
 
     step("a second deploy changes nothing", converged)
     step(
-        "the manager's services stayed within their limits to the end",
-        functools.partial(within_limits, run),
+        "the manager's services used less than the limits they ship with",
+        functools.partial(within_limits, run, shipped, enforce=True),
     )
 
 
@@ -2241,32 +2274,34 @@ LIMITED_UNITS = (
 )
 
 
-def within_limits(run: Run) -> None:
-    """Each service's peak against its limit; one killed at its limit (restarted, or its result) fails."""
+def limit_mib(value: str) -> str:
+    """systemd's byte count as MiB, or what it said (infinity)."""
 
-    restarted = []
+    return f"{int(value) // 2**20} MiB" if value.isdigit() else (value or "?")
+
+
+def within_limits(run: Run, shipped: dict[str, str], *, enforce: bool) -> None:
+    """Each service's peak against the limit it ships with; past it, or killed, fails when enforced."""
+
+    over = []
     for unit in LIMITED_UNITS:
         _, said = run.on(
-            "mgr",
-            f"systemctl show -p MemoryPeak -p MemoryMax -p NRestarts -p Result {unit}",
-            check=False,
+            "mgr", f"systemctl show -p MemoryPeak -p NRestarts -p Result {unit}", check=False
         )
         values = dict(line.partition("=")[::2] for line in said.split())
-        peak, limit = values.get("MemoryPeak", ""), values.get("MemoryMax", "")
-        shown = [
-            f"{int(value) // 2**20} MiB" if value.isdigit() else (value or "?")
-            for value in (peak, limit)
-        ]
+        peak, limit = values.get("MemoryPeak", ""), shipped.get(unit, "")
         print(
-            f"\n      {unit}: peak {shown[0]} of {shown[1]}, "
+            f"\n      {unit}: peak {limit_mib(peak)}, ships with {limit_mib(limit)}, "
             f"restarted {values.get('NRestarts', '?')} times, result {values.get('Result', '?')}",
             end="",
         )
-        if values.get("NRestarts", "0") not in ("", "0") or values.get("Result") == "oom-kill":
-            restarted.append(unit)
+        killed = values.get("NRestarts", "0") not in ("", "0") or values.get("Result") == "oom-kill"
+        past = peak.isdigit() and limit.isdigit() and int(peak) > int(limit)
+        if killed or past:
+            over.append(unit)
     print(" ... ", end="")
-    if restarted:
-        raise Failed(f"killed at their limits: {', '.join(restarted)}")
+    if enforce and over:
+        raise Failed(f"past the limits they ship with, or killed: {', '.join(over)}")
 
 
 def keepalived_view(run: Run, role: str) -> dict[str, str]:

@@ -64,6 +64,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -2387,6 +2388,24 @@ ExecReload=/bin/sleep {seconds}
 """
 SLOW_SECONDS = 50
 #
+# Faults, the second part (R2 moment 7): a reload that fails outright. The empty
+# `ExecReload=` clears HAProxy's own command list, so nothing is reloaded and the
+# node keeps running what it ran; `/bin/false` then fails. The name sorts before
+# install-test-slow.conf, so the sleep that file adds never runs after it.
+#
+FAULT_RELOAD = Path("/etc/systemd/system/haproxy.service.d/install-test-a-fault.conf")
+FAULT_RELOAD_UNIT = """[Service]
+ExecReload=
+ExecReload=/bin/false
+"""
+#
+# The worker wakes at least every 30 s to settle abandoned jobs and to look for
+# one to claim (worker.py IDLE_SECONDS); a window that holds longer than that
+# has seen the worker try. The lease is 60 s (worker.py LEASE_SECONDS).
+#
+WORKER_IDLE_SECONDS = 30
+WORKER_LEASE_SECONDS = 60
+#
 # An identity provider as far as Verify goes (docs/user-manual.md, "Checking the
 # sign-in"): discovery, a key set, and a token endpoint that answers a code it
 # never issued with `invalid_grant`. Over TLS, from a certificate for `mgr`.
@@ -2620,6 +2639,9 @@ def faults_steps(scenario: Scenario) -> None:
         upgrade_during_a_job(scenario, header, change_shop)
     cut_after_the_first_node(scenario, header, change_shop)
     lost_identity_provider(scenario, web)
+    older_manager_backup(scenario, header, change_shop, web)
+    pause_while_a_lease_runs_out(scenario, header, change_shop)
+    failed_activation_then_failed_restore(scenario, header, change_shop)
 
 
 def upgrade_during_a_job(
@@ -2910,6 +2932,466 @@ def lost_identity_provider(scenario: Scenario, web: Web) -> None:
             )
 
     step("the break-glass admin turns it off; local sign-in is back for all", turned_off)
+
+
+# --- Faults, the second part (R2 moment 7, the combined faults) ----------------
+
+
+def database(run: Run, sql: str) -> str:
+    """One query to the interface's database as its superuser, the rows as `psql -tA` prints them."""
+
+    _, answer = run.on(
+        "mgr",
+        "cd /tmp && name=$(sed -n 's/^DB_NAME=//p' /etc/haprion/ui-admin.conf | tail -1) "
+        f'&& runuser -u postgres -- psql -qtAX -d "$name" -c {shlex.quote(sql)} 2>/dev/null',
+    )
+    return answer.strip()
+
+
+def job_row(run: Run, job: int) -> tuple[str, int]:
+    """The job's state and how many times a worker has taken it (`job.attempts`, db/jobs.py)."""
+
+    state, _, attempts = database(
+        run,
+        f"select state, attempts from job where id = {int(job)}",  # noqa: S608 - an integer
+    ).partition("|")
+    if not attempts.isdigit():
+        raise Failed(f"job {job} is not in the database: {state!r}")
+    return state, int(attempts)
+
+
+def releases_on_nodes(run: Run) -> dict[str, int | None]:
+    """The version in each node's own RELEASE file, the reading `picture` calls `nodes`."""
+
+    own: dict[str, int | None] = {}
+    for role in NODES:
+        _, version = run.on(
+            role, "sed -n 's/^version=//p' /etc/haproxy/current/RELEASE", check=False
+        )
+        own[role] = int(version) if version.strip().isdigit() else None
+    return own
+
+
+def older_manager_backup(
+    scenario: Scenario, header: list[str], change_shop: Callable[[], None], web: Web
+) -> None:
+    """7a: the manager put back to an older backup. Its jobs are held; nothing reaches a node until Run.
+
+    The backup is what Veeam would give back: the interface's database (the product's own
+    `haprion-backup dump`) and the files of the manager the database does not hold,
+    `/srv/haprion` (the published releases the CLI reads as "published"). Put back with
+    `haprion-backup restore`, which holds every waiting job (`after-restore`,
+    haprion-backup:do_after_restore) and ends every session.
+
+    Two rounds, because a cluster has at most one active job (`job_one_active_per_cluster`,
+    db/jobs.py:queue_job) and a held job is one:
+    - a node backup, which keeps a receipt of its helper's answer (recovery.KEEPS_ANSWER):
+      the job was queued in the backup, ran after it, and is queued again by the restore.
+      Run must end it on the kept answer and not take a second archive (worker.py:run_one_job);
+    - a deploy, which keeps none: Discard ends it `blocked` / `held_discarded`, and the nodes keep
+      the version deployed after the backup.
+    """
+
+    run = scenario.run
+    step = scenario.step
+    password = f"itest-{hashlib.sha256(str(time.time()).encode()).hexdigest()[:24]}"
+
+    def account() -> None:
+        run.on(
+            "mgr",
+            "haprion-user add itest-held --role admin --password-stdin",
+            stdin=password + "\n",
+        )
+
+    step(
+        "an administrator for the Jobs page (Run and Discard are the web's, not the API's)", account
+    )
+
+    def round_(kind: str, decision: str) -> None:
+        seen: dict[str, Any] = {}
+        label = f"{kind}, {decision}"
+
+        def backed_up() -> None:
+            run.on("mgr", "systemctl stop haprion-worker")
+            if kind == "deploy":
+                change_shop()
+            status, redirect = web.sign_in("held-old", "itest-held", password)
+            if status != "303":
+                raise Failed(f"the administrator cannot sign in ({status} {redirect})")
+            if kind == "backup":
+                status, redirect = web.post(
+                    "held-old",
+                    "/operations",
+                    "/backups",
+                    {"operation": "backup_run", "cluster": CLUSTER,
+                     "idempotency_key": str(uuid.uuid4())},
+                )  # fmt: skip
+                if status != "303":
+                    raise Failed(f"Back up now answered {status} {redirect}, not a redirect")
+                seen["job"] = int(
+                    database(
+                        run,
+                        "select id from job where operation = 'backup_run' and state = 'pending' "
+                        "order by id desc limit 1",
+                    )
+                )
+                _, seen["archives_queued"] = run.on(
+                    "mgr", f"haprion-list-backups -c {CLUSTER}", check=False
+                )
+            else:
+                seen["job"] = run.api_write(header[0], "POST", f"/clusters/{CLUSTER}/deploy")
+            run.on("mgr", "haprion-backup dump")
+            run.on(
+                "mgr",
+                "dir=$(sed -n 's/^DUMP_DIR=//p' /etc/haprion/ui-admin.conf | tail -1) "
+                '&& newest=$(ls -t "$dir"/*.dump | head -1) && test -n "$newest" '
+                f'&& install -m 600 "$newest" /root/older-manager-{kind}.dump '
+                f"&& tar --numeric-owner -C /srv -cpf /root/older-srv-haprion-{kind}.tar haprion",
+            )
+            seen["published_then"] = picture(run, header[0])["cli"]["target"]
+
+        step(f"({label}) the worker stopped, a job queued, and the manager backed up", backed_up)
+
+        def done_after_the_backup() -> None:
+            run.on("mgr", "systemctl start haprion-worker")
+            result = watch_job(run, header[0], seen["job"])
+            if result["state"] != "done":
+                raise Failed(f"the job queued before the backup did not run: {job_line(result)}")
+            if kind == "backup":
+                _, seen["archives_ran"] = run.on(
+                    "mgr", f"haprion-list-backups -c {CLUSTER}", check=False
+                )
+                if seen["archives_ran"] == seen["archives_queued"]:
+                    raise Failed(
+                        "the node backup left no new archive in `haprion-list-backups`; "
+                        f"there is nothing to tell a second run from:\n{seen['archives_ran']}"
+                    )
+            change_shop()
+            output = run.deploy()
+            if "RESULT: OK" not in output:
+                raise Failed(f"the work after the backup did not deploy:\n{output[-3000:]}")
+            now, _ = agree_soon(run, header[0])
+            seen["ahead"] = now["nodes"]
+            seen["published_now"] = now["cli"]["target"]
+            if seen["published_now"] == seen["published_then"]:
+                raise Failed(f"the work after the backup published nothing new:\n{now}")
+
+        step(
+            f"({label}) the job runs, then more work: published and deployed", done_after_the_backup
+        )
+
+        def put_back() -> None:
+            units = "haprion-worker haprion-poller haprion-web.socket haprion-web"
+            run.on("mgr", f"systemctl stop {units}")
+            run.on(
+                "mgr",
+                "rm -rf /srv/haprion.newer && mv /srv/haprion /srv/haprion.newer "
+                f"&& tar --numeric-owner -C /srv -xpf /root/older-srv-haprion-{kind}.tar",
+            )
+            _, output = run.on("mgr", f"haprion-backup restore /root/older-manager-{kind}.dump")
+            held = re.search(r"held for an admin on Jobs: \[([^\]]*)\]", output)
+            if held is None or str(seen["job"]) not in held.group(1).replace(" ", "").split(","):
+                raise Failed(f"the restore did not hold job {seen['job']}:\n{output[-3000:]}")
+            run.on("mgr", "systemctl start haprion-poller haprion-web.socket")
+            run.on("mgr", "systemctl start haprion-worker")
+
+        step(f"({label}) the older backup put back with haprion-backup restore", put_back)
+
+        def held() -> None:
+            until = time.monotonic() + 120
+            while True:
+                status, document, _ = run.api(header[0], "GET", f"/jobs/{seen['job']}")
+                result = document.get("result")
+                if status == 200 and isinstance(result, dict):
+                    break
+                if time.monotonic() > until:
+                    raise Failed(
+                        f"the API does not answer after the restore ({status}):\n{document}"
+                    )
+                time.sleep(3)
+            if result["state"] != "pending" or result["held"] is not True:
+                raise Failed(f"the restored job is not held: {job_line(result)}\n{result}")
+            status, _ = web.get("held-old", "/jobs")
+            if status == "200":
+                raise Failed("a session from before the restore still opens the Jobs page")
+            #
+            # Longer than the worker's idle wake-up: it has had the chance to claim the job and
+            # a deploy would have moved a node. `held_since` keeps the claim query away
+            # (db/jobs.py:claim_job).
+            #
+            time.sleep(WORKER_IDLE_SECONDS + 10)
+            state, attempts = job_row(run, seen["job"])
+            if state != "pending" or attempts != 0:
+                raise Failed(f"the held job moved: {state}, taken {attempts} times")
+            moved = releases_on_nodes(run)
+            if moved != seen["ahead"]:
+                raise Failed(f"a node changed with the job held: was {seen['ahead']}, is {moved}")
+            if kind == "backup":
+                _, archives = run.on("mgr", f"haprion-list-backups -c {CLUSTER}", check=False)
+                if archives != seen["archives_ran"]:
+                    raise Failed(f"a node backup was taken with the job held:\n{archives}")
+            #
+            # The nodes run a version this manager has no record of; the CLI says so
+            # (cluster_status.ahead_words, cli/status.py:_release_line) and all readings agree
+            # that the cluster is not converged (status_collect._release_state: "behind").
+            #
+            _, said = run.on("mgr", f"haprion-status -c {CLUSTER}", check=False)
+            if "which this manager has no record of" not in said or "AHEAD" not in said:
+                raise Failed(f"haprion-status does not say the nodes are ahead:\n{said}")
+            now, _ = agree_soon(run, header[0])
+            if now["cli"]["state"] != "behind" or now["nodes"] != seen["ahead"]:
+                raise Failed(f"the readings after the restore:\n{now}")
+            print(f"(held; nodes {now['nodes']}, published {now['cli']['target']})", end=" ")
+
+        step(
+            f"({label}) the job is held, no node moves, and the readings say the nodes are ahead",
+            held,
+        )
+
+        def decided() -> None:
+            status, _ = web.sign_in("held-new", "itest-held", password)
+            if status != "303":
+                raise Failed(f"the administrator cannot sign in again ({status})")
+            status, redirect = web.post(
+                "held-new", f"/jobs/{seen['job']}/held", "/jobs", {"decision": decision}
+            )
+            if status != "303" or redirect.rstrip("/").endswith("not_held=" + str(seen["job"])):
+                raise Failed(f"{decision} answered {status} {redirect}")
+            result = watch_job(run, header[0], seen["job"])
+            print(job_line(result), end=" ")
+            if decision == "run":
+                #
+                # Its helper had answered this request before the restore: the job ends on that
+                # answer and is not asked again (worker.py:run_one_job, `answer_kept`).
+                #
+                if result["state"] != "done" or "answer_kept" not in result["warning_codes"]:
+                    raise Failed(f"Run did not end the job on its kept answer:\n{result}")
+                _, archives = run.on("mgr", f"haprion-list-backups -c {CLUSTER}", check=False)
+                if archives != seen["archives_ran"]:
+                    raise Failed(f"Run took a second archive:\n{archives}")
+            else:
+                if result["state"] != "blocked" or result["error_code"] != "held_discarded":
+                    raise Failed(f"Discard did not end the job as discarded:\n{result}")
+            moved = releases_on_nodes(run)
+            if moved != seen["ahead"]:
+                raise Failed(f"a node changed on {decision}: was {seen['ahead']}, is {moved}")
+
+        step(
+            f"({label}) {decision} on the Jobs page: the job ends, the nodes stay as they were",
+            decided,
+        )
+
+        def converged() -> None:
+            output = run.deploy()
+            if "RESULT: OK" not in output:
+                raise Failed(
+                    f"the deploy that brings the nodes to the manager failed:\n{output[-3000:]}"
+                )
+            now, _ = agree_soon(run, header[0])
+            if now["cli"]["state"] != "converged":
+                raise Failed(f"not converged after a deploy:\n{now}")
+
+        step(f"({label}) a deploy puts the nodes on what the manager publishes", converged)
+
+    round_("backup", "run")
+    round_("deploy", "discard")
+
+
+def pause_while_a_lease_runs_out(
+    scenario: Scenario, header: list[str], change_shop: Callable[[], None]
+) -> None:
+    """7b: the queue paused (as an upgrade does) while a running job's lease runs out.
+
+    `haprion-drain pause` is what update-platform-release (lines 372, 394), install-ui-release,
+    haprion-rollback and `haprion-backup restore` call before they touch the worker. It counts a job
+    as running only while its lease holds (haprion-drain `running()`), so a job whose worker was
+    killed is waited for until the lease runs out and then declared quiet. Recovery judges the same
+    job by the same lease (db.expired_leases): a deploy is put back in the queue, which a pause does
+    not stop (db.requeue_expired), but it is not taken again while the pause lasts
+    (db.claim_job reads `job_claim_gate`), and only an adoption of a kept answer is held off by it
+    (db.adopt_expired) - that follow-up work is what must not start after drain said quiet.
+    """
+
+    run = scenario.run
+    step = scenario.step
+    seen: dict[str, Any] = {}
+
+    def killed() -> None:
+        change_shop()
+        seen["job"] = run.api_write(header[0], "POST", f"/clusters/{CLUSTER}/deploy")
+        slow_reload_begins(run)
+        run.on("mgr", "systemctl kill -s KILL haprion-worker")
+        seen["killed"] = time.monotonic()
+
+    step(f"a deploy under way ({NODES[1]} in its reload), the worker killed hard", killed)
+
+    def drained() -> None:
+        code, output = run.on(
+            "mgr", f"haprion-drain pause --wait {4 * WORKER_LEASE_SECONDS}", check=False
+        )
+        waited = time.monotonic() - seen["killed"]
+        if code != 0 or "no job is running" not in output:
+            run.on("mgr", "haprion-drain resume", check=False)
+            raise Failed(f"haprion-drain pause exited {code}:\n{output}")
+        if waited > WORKER_LEASE_SECONDS + 15:
+            run.on("mgr", "haprion-drain resume", check=False)
+            raise Failed(f"drain waited {waited:.0f} s for a lease of {WORKER_LEASE_SECONDS} s")
+        seen["state"], seen["attempts"] = job_row(run, seen["job"])
+        print(f"(drain said quiet {waited:.0f} s after the kill; job {seen['state']}, "
+              f"taken {seen['attempts']} time)", end=" ")  # fmt: skip
+        if seen["attempts"] != 1:
+            run.on("mgr", "haprion-drain resume", check=False)
+            raise Failed(f"the job was taken again before drain answered ({seen['attempts']})")
+
+    step(
+        "drain pauses the queue: it waits for the lease to run out, then says no job is running",
+        drained,
+    )
+
+    def recovery_agrees() -> None:
+        try:
+            until = time.monotonic() + 2 * WORKER_IDLE_SECONDS + 30
+            while job_row(run, seen["job"])[0] != "pending":
+                if time.monotonic() > until:
+                    raise Failed(
+                        f"recovery did not put job {seen['job']} back in the queue: {job_row(run, seen['job'])}"
+                    )
+                time.sleep(3)
+            requeued = database(
+                run,
+                "select count(*) from audit_event where action = 'job_requeued' "  # noqa: S608
+                f"and detail->>'job' = '{int(seen['job'])}'",
+            )
+            if requeued != "1":
+                raise Failed(
+                    f"the audit record has {requeued} `job_requeued` for job {seen['job']}"
+                )
+            #
+            # Longer than the worker's idle wake-up, so that it has looked for work under the pause.
+            #
+            time.sleep(WORKER_IDLE_SECONDS + 10)
+            state, attempts = job_row(run, seen["job"])
+            if (state, attempts) != ("pending", 1):
+                raise Failed(
+                    f"work started under the pause: job {seen['job']} is {state}, taken {attempts} times"
+                )
+            _, journal = run.on(
+                "mgr",
+                "journalctl -u haprion-worker --no-pager -o cat --since '-4 min' | tail -8",
+                check=False,
+            )
+            print("\n      " + "\n      ".join(journal.strip().splitlines()[-6:]), end="\n      ")
+        except Failed:
+            run.on("mgr", "haprion-drain resume", check=False)
+            raise
+
+    step("under the pause recovery puts the job back and nothing takes it", recovery_agrees)
+
+    def resumed() -> None:
+        run.on("mgr", "haprion-drain resume")
+        result = watch_job(run, header[0], seen["job"])
+        state, attempts = job_row(run, seen["job"])
+        print(f"({job_line(result)}; taken {attempts} times)", end=" ")
+        if result["state"] != "done" or attempts != 2:
+            raise Failed(
+                f"after the pause the job did not run once more to its end: {result}, taken {attempts}"
+            )
+        now, lag = agree_soon(run, header[0])
+        if now["cli"]["state"] != "converged":
+            raise Failed(f"the job is done and the cluster is {now['cli']['state']}:\n{now}")
+        run.answers_on_the_vip()
+
+    step("the pause lifted: the job runs once more to its end and the readings agree", resumed)
+
+
+def failed_activation_then_failed_restore(
+    scenario: Scenario, header: list[str], change_shop: Callable[[], None]
+) -> None:
+    """7c: node-b cannot reload HAProxy on the new release, nor on the old one it falls back to.
+
+    haprion-pull-deploy: the reload after the switch fails (line ~1186), `current` is put back on the
+    old release, the reload of that fails too (`restored=0`), so the INCOMPLETE marker is kept
+    (settle_incomplete does nothing then) and the node exits 1. The old release was never touched.
+    """
+
+    run = scenario.run
+    step = scenario.step
+    seen: dict[str, Any] = {}
+
+    def node(command: str) -> str:
+        return run.on(NODES[1], command, check=False)[1].strip()
+
+    def broken() -> None:
+        seen["link"] = node("readlink -f /etc/haproxy/current")
+        seen["release_file"] = node("cat /etc/haproxy/current/RELEASE")
+        seen["versions"] = releases_on_nodes(run)
+        change_shop()
+        run.on(
+            NODES[1],
+            f"mkdir -p {FAULT_RELOAD.parent} && cat > {FAULT_RELOAD} && systemctl daemon-reload",
+            stdin=FAULT_RELOAD_UNIT,
+        )
+
+    step(f"a change published, and {NODES[1]}'s HAProxy reload made to fail", broken)
+
+    def deployed_into_it() -> None:
+        code, output = run.on("mgr", f"haprion-deploy -c {CLUSTER}", check=False)
+        if code == 0 or "RESULT: OK" in output:
+            raise Failed(
+                f"the deploy says it succeeded with a node that cannot reload:\n{output[-3000:]}"
+            )
+        failed = re.search(rf"the deploy trigger failed on {NODES[1]} with exit \d+", output)
+        if f"=== Deploy: {NODES[1]} ===" not in output or failed is None:
+            raise Failed(f"the deploy does not say which node failed:\n{output[-3000:]}")
+        print(f"(exit {code}; {failed.group(0)})", end=" ")
+        result = [line for line in output.splitlines() if line.startswith("RESULT")]
+        print("\n      " + "\n      ".join(result), end="\n      ")
+
+    step("a deploy: the activation fails on that node, and says which", deployed_into_it)
+
+    def node_is_whole() -> None:
+        if node("readlink -f /etc/haproxy/current") != seen["link"]:
+            raise Failed(
+                f"{NODES[1]}'s current release changed: {node('readlink -f /etc/haproxy/current')}"
+            )
+        if node("cat /etc/haproxy/current/RELEASE") != seen["release_file"]:
+            raise Failed(f"{NODES[1]}'s RELEASE file changed")
+        if node("systemctl is-active haproxy") != "active":
+            raise Failed(f"HAProxy on {NODES[1]} is {node('systemctl is-active haproxy')}")
+        if node("test -e /var/lib/haprion/pull-deploy.incomplete && echo yes") != "yes":
+            raise Failed(f"{NODES[1]} kept no incomplete marker after a restore that failed")
+        if node("test -e /run/haprion-pull-deploy.pending && echo yes") == "yes":
+            raise Failed(
+                f"{NODES[1]} says a release is waiting for a reload, but `current` is the old one"
+            )
+        _, said = run.on("mgr", f"haprion-status -c {CLUSTER}", check=False)
+        if "INCOMPLETE" not in said:
+            raise Failed(f"haprion-status does not say the node is incomplete:\n{said}")
+        now, lag = agree_soon(run, header[0])
+        if now["nodes"][NODES[1]] != seen["versions"][NODES[1]] or now["cli"]["state"] != "behind":
+            raise Failed(f"the readings after the failed activation:\n{now}")
+        print(f"(readings agree after {lag:.0f} s: {now['nodes']}, {now['cli']['state']})", end=" ")
+
+    step(
+        f"{NODES[1]} still has its previous release and manifest, and every reading says it is behind",
+        node_is_whole,
+    )
+
+    def retried() -> None:
+        run.on(NODES[1], f"rm -f {FAULT_RELOAD} && systemctl daemon-reload")
+        output = run.deploy()
+        if "RESULT: OK" not in output:
+            raise Failed(f"the deploy after removing the fault failed:\n{output[-3000:]}")
+        now, _ = agree_soon(run, header[0])
+        if now["cli"]["state"] != "converged" or set(now["nodes"].values()) != {
+            now["cli"]["target"]
+        }:
+            raise Failed(f"the cluster did not converge:\n{now}")
+        if node("test -e /var/lib/haprion/pull-deploy.incomplete && echo yes") == "yes":
+            raise Failed(f"{NODES[1]} is converged and still marked incomplete")
+        run.answers_on_the_vip()
+
+    step("the fault removed: a plain deploy converges both nodes", retried)
 
 
 SCENARIOS: dict[str, Callable[[Scenario], None]] = {

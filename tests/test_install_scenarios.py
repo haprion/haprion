@@ -138,11 +138,98 @@ class TheScenariosAreOptIn(unittest.TestCase):
                 target,  # type: ignore[arg-type]
             ),
         }
-        waited = set(re.findall(r'\["state"\] [!=]= "(\w+)"', text)) - {"done"}
+        waited = set(re.findall(r'\["(?:cli|ui)"\]\["state"\] [!=]= "(\w+)"', text))
 
         self.assertEqual(said, {"unknown", "converged", "behind", "incomplete"})
         self.assertTrue(waited)
         self.assertLessEqual(waited, said)
+
+    def test_the_combined_fault_steps_follow_the_existing_ones_in_order(self) -> None:
+        tool = self.install_test()
+        titles: list[str] = []
+        with tempfile.TemporaryDirectory() as raw:
+            scenario = tool.Scenario(
+                tool.Run(tool.DISTRIBUTIONS["debian13"], Path(raw)),
+                lambda title, _action: titles.append(title),
+            )
+            tool.faults_steps(scenario)
+
+        wanted = [
+            "a deploy cut",
+            "the break-glass admin turns it off",
+            "an administrator for the Jobs page",
+            "(backup, run) the older backup put back",
+            "(backup, run) run on the Jobs page",
+            "(deploy, discard) the older backup put back",
+            "(deploy, discard) discard on the Jobs page",
+            "drain pauses the queue",
+            "under the pause recovery puts the job back",
+            "the pause lifted",
+            "HAProxy reload made to fail",
+            "the activation fails on that node",
+            "still has its previous release",
+            "a plain deploy converges both nodes",
+        ]
+        places = [
+            next(index for index, title in enumerate(titles) if needle in title)
+            for needle in wanted
+        ]
+        self.assertEqual(places, sorted(places))
+        self.assertEqual(len(set(places)), len(places))
+
+    def test_the_fault_that_stops_a_reload_clears_haproxys_own_and_sorts_before_the_slow_one(
+        self,
+    ) -> None:
+        tool = self.install_test()
+        lines = tool.FAULT_RELOAD_UNIT.splitlines()
+
+        self.assertEqual(lines, ["[Service]", "ExecReload=", "ExecReload=/bin/false"])
+        self.assertEqual(tool.FAULT_RELOAD.parent, tool.SLOW_RELOAD.parent)
+        self.assertLess(tool.FAULT_RELOAD.name, tool.SLOW_RELOAD.name)
+
+    def test_the_waits_are_the_workers_own_numbers(self) -> None:
+        tool = self.install_test()
+        source = (BASE / "ui/src/haprion_ui/worker.py").read_text()
+
+        for name, constant in (
+            ("IDLE_SECONDS", tool.WORKER_IDLE_SECONDS),
+            ("LEASE_SECONDS", tool.WORKER_LEASE_SECONDS),
+        ):
+            match = re.search(rf"^{name} = (\d+)$", source, re.M)
+            self.assertIsNotNone(match, name)
+            assert match is not None
+            self.assertEqual(int(match.group(1)), constant, name)
+
+    def test_the_commands_and_words_the_combined_faults_rest_on_are_the_products(self) -> None:
+        backup = (BASE / "install/platform/bin/haprion-backup").read_text()
+        drain = (BASE / "install/platform/bin/haprion-drain").read_text()
+        pull = (BASE / "install/node/haprion-pull-deploy").read_text()
+        status = (BASE / "src/haprion/cli/status.py").read_text()
+        ahead = (BASE / "src/haprion/cluster_status.py").read_text()
+        dashboard = (BASE / "ui/src/haprion_ui/pages/dashboard.py").read_text()
+        worker = (BASE / "ui/src/haprion_ui/worker.py").read_text()
+        tool = (BASE / "tools/install-test").read_text()
+
+        # The restore holds the waiting jobs and says which, in the words the step reads.
+        self.assertIn('log "held for an admin on Jobs: ${jobs}"', backup)
+        self.assertIn("backup restore", tool)
+        # Drain says it is quiet in the words the step waits for.
+        self.assertIn('log "  no job is running"', drain)
+        self.assertIn("lease_until > statement_timestamp()", drain)
+        # Run and Discard are a web form post with a `decision` field.
+        self.assertIn('@router.post("/jobs/{job_id}/held")', dashboard)
+        self.assertIn('{"run", "discard"}', dashboard)
+        self.assertIn('"held_discarded"', worker)
+        self.assertIn('"answer_kept"', worker)
+        # A node that cannot go back keeps its marker; the CLI says so.
+        self.assertIn("could not be returned", pull)
+        self.assertIn("(( ! restored )) || settle_incomplete", pull)
+        self.assertIn("INCOMPLETE - a step after the reload failed", status)
+        self.assertIn("which this manager has no record of", ahead)
+        self.assertIn(
+            "the deploy trigger failed on", (BASE / "src/haprion/deploy_run.py").read_text()
+        )
+        self.assertIn("/var/lib/haprion/pull-deploy.incomplete", pull)
 
     def test_the_table_has_a_row_per_measurement_and_a_column_per_machine(self) -> None:
         tool = self.install_test()

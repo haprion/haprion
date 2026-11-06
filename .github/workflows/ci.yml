@@ -33,7 +33,9 @@ jobs:
       UV_PYTHON: ${{ matrix.python }}
     # The tests alone took 13 minutes on the private repository's two-core
     # runner on 2026-10-10, and 15 cancelled the run before it said anything.
-    timeout-minutes: 30
+    # By 2026-11-06 the job took 14 to 29 minutes, and 30 cancelled one in the
+    # database tests while it was still passing them.
+    timeout-minutes: 45
 
     steps:
       - name: Check out source

@@ -59,6 +59,7 @@ import hashlib
 import json
 import math
 import re
+import secrets
 import shlex
 import subprocess
 import sys
@@ -2958,8 +2959,8 @@ def lost_identity_provider(scenario: Scenario, web: Web) -> None:
 
     run = scenario.run
     step = scenario.step
-    password = f"itest-{hashlib.sha256(str(time.time()).encode()).hexdigest()[:24]}"
-    secret = hashlib.sha256(password.encode()).hexdigest()
+    password = f"itest-{secrets.token_hex(12)}"
+    secret = secrets.token_hex(32)
 
     def accounts() -> None:
         run.on(
@@ -3165,7 +3166,7 @@ def older_manager_backup(
 
     run = scenario.run
     step = scenario.step
-    password = f"itest-{hashlib.sha256(str(time.time()).encode()).hexdigest()[:24]}"
+    password = f"itest-{secrets.token_hex(12)}"
 
     def account() -> None:
         run.on(

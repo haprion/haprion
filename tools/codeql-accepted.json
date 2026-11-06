@@ -36,9 +36,9 @@
       "rule": "py/clear-text-storage-sensitive-data",
       "path": "certbot/verify-integrations.py",
       "message": "This expression stores [sensitive data (secret)](1) as clear text.\nThis expression stores [sensitive data (secret)](2) as clear text.",
-      "count": 2,
+      "count": 3,
       "decided": "2026-09-13",
-      "reason": "A certbot DNS plugin reads its credentials from a 0o600 INI file and nothing else; the rendered file is the interface, and this verifier proves the catalogue's rendering against the installed plugin by writing one into a private temporary directory and handing it to the plugin's own credential setup. The values are the verifier's fixed integration-test constants, named as such, never a real credential; the root helper that writes real ones (P5) writes them the same way because that is what certbot reads. Two such writes, one per integration check: every provider's rendering, and the Azure plugin's own file."
+      "reason": "A certbot DNS plugin reads its credentials from a 0o600 INI file and nothing else; the rendered file is the interface, and this verifier proves the catalogue's rendering against the installed plugin by writing one into a private temporary directory and handing it to the plugin's own credential setup. The values are the verifier's fixed integration-test constants, named as such, never a real credential; the root helper that writes real ones (P5) writes them the same way because that is what certbot reads. Three such writes, one per integration check: every provider's rendering, netcup's two ways in (the legacy API trio and the CloudDNS key, each through the plugin's own credential setup, 2026-11-06), and the Azure plugin's own file."
     },
     {
       "rule": "py/overly-permissive-file",

@@ -1969,6 +1969,12 @@ class Scenario:
         return "\n".join(lines)
 
 
+#
+# How long the scale scenario lets a reloaded node take to be `active` again.
+#
+RELOAD_READY_SECONDS = 120
+
+
 def scale_steps(scenario: Scenario) -> None:
     """The objects applied, published, deployed to both nodes and answering on the VIP (B481, B482)."""
 
@@ -2034,7 +2040,7 @@ def scale_steps(scenario: Scenario) -> None:
 
     def applied() -> None:
         scenario.measure(
-            "apply (batches of 64, each a version)",
+            "apply (batches as one request holds, each a version)",
             ("mgr",),
             lambda: run.on(
                 "mgr", f"haprion-objects apply -c {CLUSTER} {SCALE_DIR} -m 'scale test'"
@@ -2152,9 +2158,23 @@ def scale_steps(scenario: Scenario) -> None:
                 ),
             )
             print(f"({' '.join(said.split())})", end=" ")
-            _, state = run.on(role, "systemctl is-active haproxy keepalived")
-            if state.split() != ["active", "active"]:
-                raise Failed(f"{role} after the reload:\n{state}")
+            #
+            # `systemctl reload` returns before HAProxy is done: the unit stays
+            # `reloading` until the new worker says it is ready (measured
+            # 26-11-06: 10 000 light objects, still reloading as the reload
+            # returned). The time to `active` is the margin against the 15 s
+            # the node's server-state helper waits for a new worker
+            # (WAIT_FOR_WORKER_SECONDS, B482).
+            #
+            waited = time.monotonic()
+            while True:
+                _, state = run.on(role, "systemctl is-active haproxy keepalived", check=False)
+                if state.split() == ["active", "active"]:
+                    break
+                if time.monotonic() - waited > RELOAD_READY_SECONDS:
+                    raise Failed(f"{role} after the reload, {RELOAD_READY_SECONDS} s on:\n{state}")
+                time.sleep(0.5)
+            print(f"(active {time.monotonic() - waited:.1f} s after the reload returned)", end=" ")
 
     step("HAProxy reloads on each node with the whole configuration", reloaded)
 

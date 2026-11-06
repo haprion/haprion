@@ -244,7 +244,9 @@ def _one_node(
             destination.flush()
             os.fsync(destination.fileno())
         if fetched.exit_code != 0:
-            return NodeResult(node.name, "failed", None, None, "node_export_failed")
+            return NodeResult(
+                node.name, "failed", None, None, "node_export_failed", _reason(fetched.stderr)
+            )
         facts = validator(incoming)
         if facts.hostname != node.name:
             return NodeResult(node.name, "failed", None, None, "backup_node_mismatch")
@@ -273,6 +275,27 @@ def _one_node(
             exc.strerror or str(exc),
         )
     return NodeResult(node.name, "done", version, facts.size_bytes, None)
+
+
+#
+# What the node said, for the text beside `node_export_failed`. The export
+# says why it refused on its last line ("required DR state is missing:
+# /etc/netplan", measured 26-11-06 in the install test); without it the job
+# said only that no node produced an archive, and the reason was on the node.
+#
+REASON_CHARACTERS = 200
+
+
+def _reason(stderr: str) -> str | None:
+    """The last line the node wrote, printable and bounded, or None when it wrote none."""
+
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    if not lines:
+        return None
+    plain = "".join(character if character.isprintable() else "?" for character in lines[-1])
+    if len(plain) > REASON_CHARACTERS:
+        return plain[: REASON_CHARACTERS - 3] + "..."
+    return plain
 
 
 def _storage_failed(node: Node, exc: OSError) -> NodeResult:

@@ -154,6 +154,57 @@ class BackupJobHelperTests(unittest.TestCase):
         self.assertIn("manager", message)
         self.assertNotIn("valid state archive", message)
 
+    def test_no_archive_from_any_node_says_what_each_node_said(self) -> None:
+        reason = "ERROR: required DR state is missing: /etc/netplan"
+        report = BackupResult(
+            "alpha",
+            "2026-09-21_05-00-00",
+            tuple(
+                NodeResult(name, "failed", None, None, "node_export_failed", reason)
+                for name in ("node-a", "node-b")
+            ),
+        )
+        document, _ = backup_job_helper.run_document(
+            report, cluster="alpha", request_id=str(uuid4())
+        )
+
+        assert_contract("haprion-backup-run", json.dumps(document))
+        message = cast(dict[str, str], document["error"])["message"]
+        self.assertEqual(
+            message,
+            f"No node produced a valid state archive (node-a: {reason}; node-b: {reason})",
+        )
+
+    def test_the_error_stays_within_the_envelopes_message(self) -> None:
+        report = BackupResult(
+            "alpha",
+            "2026-09-21_05-00-00",
+            tuple(
+                NodeResult(f"node-{index}", "failed", None, None, "node_export_failed", "x" * 200)
+                for index in range(12)
+            ),
+        )
+        document, _ = backup_job_helper.run_document(
+            report, cluster="alpha", request_id=str(uuid4())
+        )
+
+        assert_contract("haprion-backup-run", json.dumps(document))
+        message = cast(dict[str, str], document["error"])["message"]
+        self.assertEqual(len(message), backup_job_helper.MESSAGE_CHARACTERS)
+
+    def test_a_node_without_a_reason_is_said_as_before(self) -> None:
+        report = BackupResult(
+            "alpha",
+            "2026-09-21_05-00-00",
+            (NodeResult("node-a", "failed", None, None, "node_export_failed"),),
+        )
+        document, _ = backup_job_helper.run_document(
+            report, cluster="alpha", request_id=str(uuid4())
+        )
+
+        message = cast(dict[str, str], document["error"])["message"]
+        self.assertEqual(message, "No node produced a valid state archive")
+
     def test_schedule_change_uses_only_the_bounded_schedule_and_switch(self) -> None:
         request_id = str(uuid4())
         requested = Schedule("04:30", "weekly", ("Tue", "Thu"), None, 30)

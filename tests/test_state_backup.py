@@ -306,6 +306,21 @@ class StateBackupTests(unittest.TestCase):
 
             self.assertEqual(result.error, "node_export_failed")
             self.assertEqual(list((root / self.node.name).iterdir()), [])
+            self.assertEqual(result.detail, "export failed")
+
+    def test_the_nodes_last_line_is_the_reason_printable_and_bounded(self) -> None:
+        # 26-11-06: the export refused on a node without Netplan, and the job
+        # said only that no node produced an archive.
+        said = "starting\nERROR: required DR state is missing: /etc/netplan\n\n"
+        self.assertEqual(
+            state_backup._reason(said), "ERROR: required DR state is missing: /etc/netplan"
+        )
+        self.assertIsNone(state_backup._reason(" \n"))
+        self.assertEqual(state_backup._reason("a\x1b[31mb"), "a?[31mb")
+        long = state_backup._reason("x" * 500)
+        assert long is not None
+        self.assertEqual(len(long), state_backup.REASON_CHARACTERS)
+        self.assertTrue(long.endswith("..."))
 
 
 class TheRunAnswersWithinItsBudget(unittest.TestCase):

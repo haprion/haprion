@@ -68,6 +68,7 @@ def build_schedule_request(
 
 
 STORAGE_CODES = frozenset({"backup_storage_failed"})
+MESSAGE_CHARACTERS = 1024
 
 
 def _node_message(node: state_backup.NodeResult) -> str:
@@ -76,7 +77,24 @@ def _node_message(node: state_backup.NodeResult) -> str:
         return f"The archive could not be written on the manager{detail}"
     if node.error == "backup_retention_failed":
         return f"The archive was saved, but the old ones could not be pruned{detail}"
-    return "The node did not produce a valid state archive"
+    return f"The node did not produce a valid state archive{detail}"
+
+
+def _none_produced(flagged: tuple[state_backup.NodeResult, ...]) -> str:
+    """The error when no node gave an archive, with what each node said (26-11-06).
+
+    Bounded by the envelope's message, which takes 1024 characters.
+    """
+
+    said = "; ".join(f"{node.name}: {node.detail}" for node in flagged if node.detail)
+    if not said:
+        return "No node produced a valid state archive"
+    message = f"No node produced a valid state archive ({said})"
+    return (
+        message
+        if len(message) <= MESSAGE_CHARACTERS
+        else message[: MESSAGE_CHARACTERS - 4] + "...)"
+    )
 
 
 def run_document(
@@ -93,7 +111,7 @@ def run_document(
     said = (
         _node_message(flagged[0])
         if report.outcome == "failed" and len(codes) == 1 and codes <= STORAGE_CODES
-        else "No node produced a valid state archive"
+        else _none_produced(flagged)
     )
     error = Message(code="backup_failed", message=said) if report.outcome == "failed" else None
     warnings = tuple(

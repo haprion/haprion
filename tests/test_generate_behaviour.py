@@ -4100,3 +4100,67 @@ class TheProbeAsksWhatTheCheckAsks(unittest.TestCase):
 
         self.assertEqual(probed, checked)
         self.assertIn(b"host: app.example.com", probed.lower())
+
+
+NEW_CLUSTER_CORE = """
+global
+    daemon
+    default-path config
+defaults
+    log     global
+    mode    http
+    option  httplog
+    timeout connect 5s
+    timeout client  50s
+    timeout server  50s
+"""
+
+
+@unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
+class AReleaseLoadsWithoutWarnings(unittest.TestCase):
+    """What a node's `haproxy -c` prints for a new cluster's core and several objects.
+
+    Two warnings were printed on every deploy: a log format on the metrics
+    frontend, which has no log address, and an `http-request` rule written
+    after another object's `use_backend`. Both are about how the file reads,
+    not what it does, and both are only visible in HAProxy's own output.
+    """
+
+    def test_the_check_prints_nothing(self) -> None:
+        web = 8080
+        objects = [
+            load_apart("guarded", GUARDED.format(web=web).encode()),
+            load_apart("office", OFFICE_ONLY.format(web=web).encode()),
+            *(
+                load_apart(name, GUARDED.format(web=web).replace("guarded", name).encode())
+                for name in ("second", "third")
+            ),
+        ]
+        layer = generate(
+            objects,
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+            networks={"office": ("198.51.100.0/24",)},
+            trusted_proxies=("127.0.0.1",),
+            settings=ClusterSettings(metrics=Metrics(9520, ("192.0.2.0/24",))),
+            node_addresses=(("node-a", "127.0.0.1"),),
+            countries=geo.Countries(
+                stamp="2026-10-01",
+                networks={"SE": ("198.51.100.0/25",), "XX": ("203.0.113.0/24",)},
+            ),
+            traffic_logging=True,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            arguments = write_release(root, layer)
+            (root / "haproxy.cfg").write_text(NEW_CLUSTER_CORE)
+            binary = shutil.which("haproxy")
+            assert binary is not None
+            done = subprocess.run(
+                [binary, "-c", *arguments], capture_output=True, text=True, timeout=30
+            )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(
+            [line for line in done.stderr.splitlines() if "WARNING" in line],
+            [],
+        )

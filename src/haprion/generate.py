@@ -1139,6 +1139,14 @@ def _metrics_frontend(metrics: Metrics, nodes: Sequence[tuple[str, str]]) -> lis
         f" guid-prefix {listener_guid_prefix(METRICS_IDENTITY)}",
         "    mode http",
         "    option dontlog-normal",
+        #
+        # The defaults carry `option httplog` and, on a new cluster, no log
+        # address, and HAProxy warns on every load about a format with nowhere
+        # to go. `no log` does not silence it (measured on 3.4.7); an address
+        # does. The process's own output is where a failed scrape is read, as
+        # `dontlog-normal` leaves nothing else to log.
+        #
+        "    log stdout format raw local0",
         f"    timeout client {TIMEOUT_CLIENT}",
         "    http-request deny deny_status 403 unless { src " + " ".join(metrics.sources) + " }",
         "    http-request use-service prometheus-exporter if { path /metrics }",
@@ -2031,8 +2039,15 @@ def _frontend_file(
         body += envelope
         tls_names = _tls_group_names(members, protocol)
         listening = [proxy for _, proxy, _ in members]
+        #
+        # HAProxy runs every `http-request` and `redirect` rule before any
+        # `use_backend`, wherever they are written, and warns when one is
+        # written after. So the members' decisions are held back and written
+        # together, in member order, after the last of their rules.
+        #
+        routed: list[str] = []
         for _, proxy, role in members:
-            rules = _frontend_rules(
+            rules, decisions = _frontend_rules(
                 proxy,
                 role,
                 networks,
@@ -2041,7 +2056,9 @@ def _frontend_file(
                 taken=_taken_names(proxy, listening),
             )
             body.extend(rules)
-            _record(shared, proxy.name, listener=[*envelope, *tail], routing=rules)
+            routed.extend(decisions)
+            _record(shared, proxy.name, listener=[*envelope, *tail], routing=[*rules, *decisions])
+        body += routed
         body += tail
     for vip, proxy in sorted(tcp, key=lambda member: member[1].name):
         #
@@ -3169,8 +3186,12 @@ def _frontend_rules(
     tls_names: Mapping[str, str] | None = None,
     trusted: bool = False,
     taken: Sequence[str] = (),
-) -> list[str]:
+) -> tuple[list[str], list[str]]:
     """One object's whole contribution to the shared frontend.
+
+    Returned as its rules and its `use_backend` lines apart: the caller writes
+    every object's rules first and the decisions after them, which is the order
+    HAProxy runs them in whatever order they are written.
 
     The routes are written in the order `order_routes` decides, and that order
     is the only thing consulted at runtime: HAProxy takes the first
@@ -3192,7 +3213,7 @@ def _frontend_rules(
         # arrives for one of its names is told to come back over TLS, and
         # nothing is served in cleartext, not even a path.
         #
-        return [*lines, f"    redirect scheme https code 301 if {host}"]
+        return [*lines, f"    redirect scheme https code 301 if {host}"], []
 
     lines.extend(_tls_sni_guard(proxy, host, tls_names or {}))
 
@@ -3218,7 +3239,7 @@ def _frontend_rules(
             condition = f"{host} {acl}"
         decisions.append(f"    use_backend {backend} if {condition}")
 
-    return lines + decisions
+    return lines, decisions
 
 
 def _tls_group_names(members: Sequence[tuple[Vip, Proxy, str]], protocol: str) -> dict[str, str]:

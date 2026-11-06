@@ -361,8 +361,7 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
         "at the newest version. Publishing opens again within a minute."
         if lagging
         else f"The saved changes take {_kib(spent, up=True)} KiB; at most {_kib(room)} KiB go in "
-        "one publish. Discard some, or apply them from the terminal with haprion-objects apply, "
-        "which publishes in parts."
+        "one publish. Discard some, publish the rest, then make the discarded changes again."
         if spent > room
         else ""
     )

@@ -372,7 +372,8 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
 
         self.assertEqual(answer.status_code, 400)
         self.assertIn("take 1 KiB; at most 0 KiB", answer.text)
-        self.assertIn("haprion-objects apply", answer.text)
+        self.assertIn("Discard some, publish the rest", answer.text)
+        self.assertNotIn("terminal", answer.text)
 
     def test_a_comment_is_needed(self) -> None:
         self.rows = [row()]

@@ -55,6 +55,7 @@ class TheScenariosAreOptIn(unittest.TestCase):
         )
         self.assertEqual(tool.MANAGER_SIZE, ("--cpus", "2", "--memory", "4g"))
         self.assertEqual(tool.Scale().manager(), tool.MANAGER_SIZE)
+        self.assertEqual(tool.Scale().node(), tool.NODE_SIZE)
         self.assertEqual(tool.Scale().objects, 10_000)
         self.assertIn("| HAProxy node |", install)
         self.assertEqual(tool.NODE_SIZE, ("--cpus", "1", "--memory", "1g"))
@@ -97,6 +98,8 @@ class TheScenariosAreOptIn(unittest.TestCase):
             ["--scenario", "faults", "--object-kind", "heavy"],
             ["--scenario", "scale", "--objects", "10"],
             ["--scenario", "scale", "--manager-memory", "8G"],
+            ["--node-memory", "2g"],
+            ["--scenario", "scale", "--node-cpus", "0"],
         ):
             with (
                 self.subTest(extra),

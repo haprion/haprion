@@ -1769,15 +1769,24 @@ COUNTERS_PER_OBJECT = {"light": 10, "heavy": 20}
 
 @dataclass(frozen=True)
 class Scale:
-    """What one scale run measures (B482): how many objects, of which kind, on what manager."""
+    """What one scale run measures (B482): how many objects, of which kind, on what machines.
+
+    The nodes have a size too since 26-11-06: 10 000 heavy objects did not get a
+    new HAProxy worker within the node's 15 s on 1 vCPU / 1 GiB.
+    """
 
     objects: int = SCALE_OBJECTS
     kind: str = "light"
     cpus: str = MANAGER_SIZE[1]
     memory: str = MANAGER_SIZE[3]
+    node_cpus: str = NODE_SIZE[1]
+    node_memory: str = NODE_SIZE[3]
 
     def manager(self) -> tuple[str, ...]:
         return ("--cpus", self.cpus, "--memory", self.memory)
+
+    def node(self) -> tuple[str, ...]:
+        return ("--cpus", self.node_cpus, "--memory", self.node_memory)
 
 
 SCALE_GENERATE = """\
@@ -1885,7 +1894,10 @@ class Scenario:
 
         run = self.run
         if sized:
-            run.limits = {"mgr": self.scale.manager(), **{node: NODE_SIZE for node in NODES}}
+            run.limits = {
+                "mgr": self.scale.manager(),
+                **{node: self.scale.node() for node in NODES},
+            }
         image = self.step("an empty server image", run.image)
         self.step("a manager and two nodes booted", lambda: run.start(image))
         self.step(
@@ -1986,7 +1998,10 @@ def scale_steps(scenario: Scenario) -> None:
     scale = scenario.scale
     count = scale.objects
     probe = f"s{count // 2}"
-    print(f"  {count} {scale.kind} objects, the manager {scale.cpus} vCPU / {scale.memory}")
+    print(
+        f"  {count} {scale.kind} objects, the manager {scale.cpus} vCPU / {scale.memory}, "
+        f"each node {scale.node_cpus} vCPU / {scale.node_memory}"
+    )
 
     def generated() -> None:
         run.on(
@@ -3905,6 +3920,8 @@ def main() -> int:
     sizing.add_argument("--object-kind", choices=("light", "heavy"), default="light")
     sizing.add_argument("--manager-cpus", default=MANAGER_SIZE[1])
     sizing.add_argument("--manager-memory", default=MANAGER_SIZE[3])
+    sizing.add_argument("--node-cpus", default=NODE_SIZE[1])
+    sizing.add_argument("--node-memory", default=NODE_SIZE[3])
     update = parser.add_mutually_exclusive_group()
     update.add_argument(
         "--upgrade-from", type=Path, help="the previous release's package files, updated from"
@@ -3917,15 +3934,21 @@ def main() -> int:
         parser.error("--upgrade-from updates to --packages")
     if args.scenario and not args.packages:
         parser.error("--scenario installs --packages")
-    scale = Scale(args.objects, args.object_kind, args.manager_cpus, args.manager_memory)
+    scale = Scale(
+        args.objects,
+        args.object_kind,
+        args.manager_cpus,
+        args.manager_memory,
+        args.node_cpus,
+        args.node_memory,
+    )
     if scale != Scale() and args.scenario != "scale":
-        parser.error("--objects, --object-kind and --manager-* are for --scenario scale")
+        parser.error("--objects, --object-kind, --manager-* and --node-* are for --scenario scale")
     if scale.objects < 100:
         parser.error("--objects is 100 or more")
-    if not re.fullmatch(r"[1-9][0-9]*", scale.cpus) or not re.fullmatch(
-        r"[1-9][0-9]*g", scale.memory
-    ):
-        parser.error("--manager-cpus is a whole number, --manager-memory one with g (8g)")
+    for cpus, memory in ((scale.cpus, scale.memory), (scale.node_cpus, scale.node_memory)):
+        if not re.fullmatch(r"[1-9][0-9]*", cpus) or not re.fullmatch(r"[1-9][0-9]*g", memory):
+            parser.error("--*-cpus is a whole number, --*-memory one with g (8g)")
     logs = args.logs or Path(tempfile.mkdtemp(prefix="haprion-install-test-"))
     chosen = list(DISTRIBUTIONS) if args.distribution == "all" else [args.distribution]
     if args.scenario:

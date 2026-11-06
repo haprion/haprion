@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from haprion import status_collect
+from haprion import generate, proxy_model, status_collect
 from haprion.cli import objects_apply
 
 BASE = Path(__file__).resolve().parents[1]
@@ -73,6 +73,14 @@ class TheScenariosAreOptIn(unittest.TestCase):
                 )
                 documents = objects_apply.read_files([raw])
                 plan = objects_apply.plan_apply(documents, {}, prune=False)
+                #
+                # And what the generator refuses of one object (26-11-06: the
+                # heavy one sent two rewrites to one pool, and `apply --check`
+                # refused it in the lab).
+                #
+                for name, document in sorted(documents.items())[:3]:
+                    proxy = proxy_model.load_proxy(name, document.encode())
+                    generate._rewrites_per_backend(proxy)
 
                 self.assertEqual(len(documents), 25)
                 self.assertEqual(len(plan.added), 25)

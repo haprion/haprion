@@ -1796,7 +1796,9 @@ light = (
     "    - host: " + backend + "\\n      port: 9080\\n"
 )
 #
-# B475's heavy object: four host names, six routes, ten servers. Only the two
+# B475's heavy object: four host names, six routes, ten servers in four pools
+# (/api rewrites the path and /v1 does not, so they are two pools: the
+# generator refuses one pool with two rewrites, found 26-11-06). Only the two
 # servers of web{i} listen (9080, 9081); the others are never asked, as the
 # sampled requests go to /, and their checks are off.
 #
@@ -1814,11 +1816,11 @@ heavy = (
     "api-s{i}.example.com, static-s{i}.example.com]\\n"
     "listen:\\n  protocol: http\\nrate_limit:\\n  window: 10s\\n  max_requests: 100\\n"
     "routes:\\n- path: /\\n  backend: web{i}\\n- path: /api\\n  backend: api{i}\\n"
-    "  strip_prefix: /api\\n  add_prefix: /v2\\n- path: /v1\\n  backend: api{i}\\n"
+    "  strip_prefix: /api\\n  add_prefix: /v2\\n- path: /v1\\n  backend: v1{i}\\n"
     "- path: /health\\n  match: exact\\n  backend: web{i}\\n"
     "- path: /static\\n  backend: static{i}\\n- path: /assets\\n  backend: static{i}\\n"
-    "backends:\\n" + pool("web", (9080, 9081)) + pool("api", range(9082, 9086))
-    + pool("static", range(9086, 9090))
+    "backends:\\n" + pool("web", (9080, 9081)) + pool("api", range(9082, 9084))
+    + pool("v1", range(9084, 9086)) + pool("static", range(9086, 9090))
 )
 template = {"light": light, "heavy": heavy}[kind]
 root = pathlib.Path(root)

@@ -4207,8 +4207,22 @@ class TheInstallCheckMatchesTheMigrations(unittest.TestCase):
         self.assertTrue(calls)
         self.assertNotIn("", calls, "an allow call without its expected answer")
         role = os.environ["HAPRION_UI_TEST_WEB_ROLE"]
+        #
+        # The cluster the probes write for, made by the script's own line, as
+        # the script makes it (26-11-06: a fixed `alpha` met a restored queued
+        # job). A statement still naming a shell variable is a probe this test
+        # would run unexpanded, refused for the wrong reason.
+        #
+        (line,) = [line for line in text.splitlines() if line.startswith("PROBE_CLUSTER=")]
+        cluster = subprocess.run(  # noqa: S603 - a fixed shell, the script's own line
+            ["/bin/bash", "-c", f'{line}; printf %s "$PROBE_CLUSTER"'],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
         for kind, description, statement in probes:
-            statement = statement.replace('\\"', '"')
+            statement = statement.replace('\\"', '"').replace("${PROBE_CLUSTER}", cluster)
+            self.assertNotIn("${", statement, description)
             with self.subTest(description=description):
                 with psycopg.connect(f"{DSN} user={role}") as connection:
                     try:

@@ -19,9 +19,11 @@ and the address is stored beside the name (B261), and an address is written.
 from __future__ import annotations
 
 import socket
-from collections.abc import Callable, Iterable
+import time
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 
-from haprion import address_ranges
+from haprion import address_ranges, labels
 from haprion.proxy_model import Proxy
 
 #
@@ -74,11 +76,63 @@ def names(proxies: Iterable[Proxy]) -> list[str]:
     return list(found)
 
 
+#
+# How long one publish spends looking names up, all of them together. It runs
+# under the cluster's lock, and a resolver that does not answer costs its own
+# timeout per name - seconds each - however large the publish (B483). The
+# system's cache (systemd-resolved on Ubuntu) keeps no failed answer, so it
+# does not help there. A name not reached in time is said, as a name that does
+# not resolve is: the node's own check before it switches stays the gate. One
+# lookup already under way is not cut, so the time can run over by one
+# resolver timeout.
+#
+LOOKUP_SECONDS = 10.0
+
+
+@dataclass(frozen=True)
+class Lookups:
+    """The names that did not resolve, and those the time ran out before."""
+
+    unresolved: list[str]
+    unasked: list[str]
+
+
+def lookups(
+    proxies: Iterable[Proxy],
+    resolve: Resolves | None = None,
+    *,
+    seconds: float | None = None,
+    clock: Callable[[], float] = time.monotonic,
+) -> Lookups:
+    """The servers' names by this host's resolver, in the order they appear, within `seconds`."""
+
+    ask = resolve or resolves
+    every = names(proxies)
+    until = clock() + (LOOKUP_SECONDS if seconds is None else seconds)
+    unresolved: list[str] = []
+    for index, name in enumerate(every):
+        if clock() > until:
+            return Lookups(unresolved, every[index:])
+        if not ask(name):
+            unresolved.append(name)
+    return Lookups(unresolved, [])
+
+
 def unresolved(proxies: Iterable[Proxy], resolve: Resolves | None = None) -> list[str]:
     """The servers' names that do not resolve, in the order they appear; by this host's resolver."""
 
-    ask = resolve or resolves
-    return [name for name in names(proxies) if not ask(name)]
+    return lookups(proxies, resolve, seconds=float("inf")).unresolved
+
+
+def unasked_warning(unasked: Sequence[str]) -> str:
+    """What is said about names not looked up in time: one sentence for all of them."""
+
+    shown = ", ".join(unasked[:5]) + (", ..." if len(unasked) > 5 else "")
+    return (
+        f"{labels.counted(len(unasked), 'server name was', 'server names were')} not looked up "
+        f"({shown}): the manager's resolver took more than {LOOKUP_SECONDS:.0f} s. "
+        "If the nodes cannot find one, the deploy stops"
+    )
 
 
 def warning(name: str) -> str:

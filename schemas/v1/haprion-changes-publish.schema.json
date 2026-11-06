@@ -70,6 +70,11 @@
           "description": "Finding 72: the published objects' server names the manager cannot resolve, each once. A warning; a node that cannot resolve one either stops the deploy. Bounded by the request's objects.",
           "type": "array",
           "items": { "type": "string", "minLength": 1, "maxLength": 253 }
+        },
+        "unasked_servers": {
+          "description": "B483: server names not looked up because the publish's time for lookups ran out; absent when none. A warning, as an unresolved name is.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 253 }
         }
       },
       "additionalProperties": true

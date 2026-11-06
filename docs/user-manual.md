@@ -518,7 +518,9 @@ The stored object spells both out under the server (`weight: 50`, `backup: true`
 deploy on that node. The editor and the publish therefore look each name up with the management host's
 resolver. When it gives no address they warn - *app.example.com is not in DNS as the manager sees it* - but
 never refuse, since the nodes may resolve names the manager cannot. After such a warning, *Save* stays in
-the editor so the warning is seen, and `haprion-objects apply` prints it as a `WARNING:` line.
+the editor so the warning is seen, and `haprion-objects apply` prints it as a `WARNING:` line. A publish
+spends at most 10 seconds on the lookups; when the resolver is slower than that, the names it did not reach
+are one warning of their own, and the publish goes on.
 
 ### A pool over HTTPS
 

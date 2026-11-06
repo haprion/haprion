@@ -371,6 +371,14 @@ def _summary(
             )
         ),
         #
+        # The names a publish's time for lookups ran out before (B483).
+        #
+        "unasked_servers": list(
+            dict.fromkeys(
+                str(name) for v in (*versions, *checked) for name in v.get("unasked_servers") or ()
+            )
+        ),
+        #
         # Read from the documents rather than the publish, so `--check` says it
         # too: the editor's warning (26-11-03), in the same words.
         #
@@ -431,6 +439,8 @@ def _render(cluster: str, plan: Plan, summary: Mapping[str, Any], writer: TextIO
         writer.write(f"Published version {version['version']} of {cluster}.\n")
     for name in summary["unresolved_servers"]:
         writer.write(f"WARNING: {server_names.warning(name)}\n")
+    if summary["unasked_servers"]:
+        writer.write(f"WARNING: {server_names.unasked_warning(summary['unasked_servers'])}\n")
     for sentence in summary["check_tls_mismatches"]:
         writer.write(f"WARNING: {sentence}\n")
     if summary["unchecked_nodes"]:

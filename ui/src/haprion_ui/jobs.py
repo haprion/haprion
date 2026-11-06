@@ -1018,6 +1018,14 @@ def unresolved_note(job: Job) -> str | None:
     if not isinstance(names, list):
         return None
     said = [server_names.warning(name) for name in names if isinstance(name, str) and name]
+    #
+    # And the names the publish's time for lookups ran out before (B483).
+    #
+    unasked = body.get("unasked_servers") if isinstance(body, dict) else None
+    if isinstance(unasked, list) and (
+        reached := [name for name in unasked if isinstance(name, str) and name]
+    ):
+        said.append(server_names.unasked_warning(reached))
     return ". ".join(said) + "." if said else None
 
 

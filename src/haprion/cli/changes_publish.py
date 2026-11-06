@@ -310,12 +310,20 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
             "regenerate": regenerate,
         }
 
-        def unresolved_servers() -> list[str]:
-            return server_names.unresolved(
+        def unresolved_servers() -> dict[str, list[str]]:
+            #
+            # Within the publish's own time for lookups (B483); the names it
+            # did not reach are said beside the ones that did not resolve.
+            #
+            found = server_names.lookups(
                 load_proxy(name, document)
                 for name, document in objects.items()
                 if document is not None
             )
+            return {
+                "unresolved_servers": found.unresolved,
+                **({"unasked_servers": found.unasked} if found.unasked else {}),
+            }
 
         def on_retry() -> Mapping[str, Any]:
             #
@@ -323,7 +331,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
             # checked against the nodes; the server names are the request's own
             # and can be read again (review 26-10-30).
             #
-            return {"unresolved_servers": unresolved_servers()} if objects else {}
+            return unresolved_servers() if objects else {}
 
         def apply(base_files: Mapping[str, bytes]) -> Mapping[str, bytes]:
             #
@@ -451,7 +459,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
             # Read once the objects have been accepted above.
             #
             if objects:
-                named["unresolved_servers"] = unresolved_servers()
+                named.update(unresolved_servers())
             return files
 
         return Change(

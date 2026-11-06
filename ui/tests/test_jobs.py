@@ -815,6 +815,10 @@ class ANodeChangeThatWasNotPublished(unittest.TestCase):
         self.assertIsNone(
             jobs.unresolved_note(replace(alone, result={"result": {"unresolved_servers": []}}))
         )
+        late = replace(
+            alone, result={"result": {"unresolved_servers": [], "unasked_servers": ["late.x"]}}
+        )
+        self.assertIn("1 server name was not looked up (late.x)", jobs.unresolved_note(late) or "")
 
     def test_a_node_the_publish_could_not_ask_is_the_note(self) -> None:
         """W05: said on the publish, also when it was deployed in the same job."""

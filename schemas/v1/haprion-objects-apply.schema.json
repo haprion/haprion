@@ -48,6 +48,11 @@
           "type": "array",
           "items": { "type": "string", "minLength": 1, "maxLength": 253 }
         },
+        "unasked_servers": {
+          "description": "B483: server names not looked up because a publish's time for lookups ran out; empty when none. A warning, as an unresolved name is.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 253 }
+        },
         "unchecked_nodes": {
           "description": "The nodes that were not asked, or did not answer, when an applied object started to need what only a node can have. A warning.",
           "type": "array",

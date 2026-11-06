@@ -15,7 +15,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import exit_codes, geo
+from haprion import exit_codes, geo, server_names
 from haprion.candidate_validation import ValidationResult
 from haprion.cli import changes_publish
 from haprion.cluster_settings import LOCATION as SETTINGS_LOCATION
@@ -129,6 +129,24 @@ class ChangesPublishTests(ObjectsPublishFixture):
             self.assertEqual((code, err), (0, ""))
             assert_contract("haprion-changes-publish", json.dumps(published))
             self.assertEqual(published["result"]["unresolved_servers"], ["typo.example.com"])
+            self.assertTrue((self.repo / "managed/proxies/shop.yaml").exists())
+
+    def test_names_the_lookups_had_no_time_for_are_said_not_refused(self) -> None:
+        """B483: the publish's time for lookups ran out; the names are a warning."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            document = proxy("shop", "shop.example.com", address="late.example.com")
+            with mock.patch.object(server_names, "LOOKUP_SECONDS", -1.0):
+                code, published, err = self.publish(
+                    policy, self.changes(objects={"shop": document})
+                )
+
+            self.assertEqual((code, err), (0, ""))
+            assert_contract("haprion-changes-publish", json.dumps(published))
+            self.assertEqual(published["result"]["unresolved_servers"], [])
+            self.assertEqual(published["result"]["unasked_servers"], ["late.example.com"])
             self.assertTrue((self.repo / "managed/proxies/shop.yaml").exists())
 
     def test_a_retry_names_the_unresolved_servers_as_the_first_run_did(self) -> None:

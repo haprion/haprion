@@ -41,6 +41,39 @@ class WhichNamesAreAsked(unittest.TestCase):
             server_names.unresolved(proxies, known("app-1.example.com")), ["typo.example.com"]
         )
 
+    def test_the_lookups_stop_when_their_time_is_spent(self) -> None:
+        """B483: a resolver that does not answer costs seconds a name, under the lock."""
+
+        now = [0.0]
+        asked: list[str] = []
+
+        def slow(host: str) -> bool:
+            asked.append(host)
+            now[0] += 4.0
+            return host != "typo.example.com"
+
+        proxies = [site("shop", *(f"app-{number}.example.com" for number in range(5)))]
+        proxies.append(site("blog", "typo.example.com"))
+
+        found = server_names.lookups(proxies, slow, seconds=10.0, clock=lambda: now[0])
+
+        self.assertEqual(asked, ["app-0.example.com", "app-1.example.com", "app-2.example.com"])
+        self.assertEqual(found.unresolved, [])
+        self.assertEqual(
+            found.unasked, ["app-3.example.com", "app-4.example.com", "typo.example.com"]
+        )
+        self.assertEqual(server_names.lookups(proxies, known("app-0.example.com")).unasked, [])
+
+    def test_the_names_not_looked_up_are_one_sentence(self) -> None:
+        said = server_names.unasked_warning([f"app-{number}.example.com" for number in range(7)])
+
+        self.assertIn("7 server names were not looked up (app-0.example.com,", said)
+        self.assertIn("app-4.example.com, ...)", said)
+        self.assertIn("the deploy stops", said)
+        self.assertIn(
+            "1 server name was not looked up", server_names.unasked_warning(["a.example"])
+        )
+
     def test_the_sentence_names_the_server_and_the_consequence(self) -> None:
         said = server_names.warning("typo.example.com")
 
@@ -69,3 +102,20 @@ class TheTerminalSaysIt(unittest.TestCase):
 
         self.assertEqual(summary["unresolved_servers"], ["typo.x"])
         self.assertEqual(out.getvalue().count("WARNING: typo.x is not in DNS"), 1)
+        self.assertNotIn("not looked up", out.getvalue())
+
+    def test_the_names_not_looked_up_are_a_warning_once(self) -> None:
+        plan = objects_apply.Plan(
+            documents={"shop": "x"}, added=("shop",), changed=(), removed=(), unchanged=()
+        )
+        versions = [
+            {"version": 4, "hash": "a" * 40, "changed": True, "unasked_servers": ["late.x"]},
+            {"version": 5, "hash": "b" * 40, "changed": True, "unasked_servers": ["late.x"]},
+        ]
+        summary = objects_apply._summary(plan, check=False, versions=versions)
+        out = io.StringIO()
+
+        objects_apply._render("alpha", plan, summary, out)
+
+        self.assertEqual(summary["unasked_servers"], ["late.x"])
+        self.assertEqual(out.getvalue().count("WARNING: 1 server name was not looked up"), 1)

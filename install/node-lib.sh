@@ -98,10 +98,12 @@ apply_sysusers() {
 # are the answers, and with one they fill in only what it leaves unset.
 #
 # The file is shell, so a typo is a syntax error rather than a silently empty
-# variable. It is sourced in a subshell first to check exactly that.
+# variable, and a name the installer holds read-only (an account name) is
+# refused. It is sourced in a subshell first to check exactly that, and the
+# shell's own first line is the reason given.
 #
 load_answers() {
-    local file="${1:-}" name
+    local file="${1:-}" said
     # "-" stands for no file, for the steps that take a second argument.
     if [[ -z "$file" || "$file" == - ]]; then
         default_answers
@@ -109,8 +111,9 @@ load_answers() {
     fi
     file="$(caller_path "$file")"
     [[ -r "$file" ]] || die "answers file not readable: $file"
-    ( set -e; # shellcheck disable=SC1090
-      source "$file" ) >/dev/null 2>&1 || die "answers file is not valid shell: $file"
+    # shellcheck disable=SC1090
+    said="$( ( set -e; source "$file" ) 2>&1 >/dev/null )" \
+        || die "answers file cannot be read: ${file}: ${said%%$'\n'*}"
     # shellcheck disable=SC1090
     source "$file"
     default_answers

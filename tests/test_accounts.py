@@ -175,6 +175,18 @@ class AnOldAnswersFile(unittest.TestCase):
         done = self.load('MANAGER_HOST="mgr.example.com"\n')
         self.assertEqual(done.returncode, 0, done.stderr)
 
+    def test_an_account_name_in_it_is_refused_with_the_shells_reason(self) -> None:
+        done = self.load('WEB_USER="svc-web"\n')
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("cannot be read", done.stderr)
+        self.assertIn("readonly variable", done.stderr)
+        self.assertNotIn("not valid shell", done.stderr)
+
+    def test_a_syntax_error_is_refused_with_the_shells_reason(self) -> None:
+        done = self.load("MANAGER_HOST=(\n")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("cannot be read", done.stderr)
+
 
 class TheAdminFileIsReadNotRun(unittest.TestCase):
     """`ui-admin.conf` names DB_NAME, which manager-accounts.sh holds read-only (B266).

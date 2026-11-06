@@ -20,6 +20,7 @@ import json
 import re
 import shutil
 import subprocess
+import tomllib
 import unittest
 from collections.abc import Mapping
 from pathlib import Path
@@ -32,6 +33,13 @@ ENGINE = BASE / "src/haprion/compatibility.json"
 REQUEST_NAME = re.compile(
     r"^(?:[A-Z]+_)*(?:OPERATIONS?|PARAMETERS|ACTIONS|KEYS|OPTIONAL|READINGS)$"
 )
+
+
+def _version(text: str) -> tuple[int, ...]:
+    """`0.99.10` as (0, 99, 10); () for what is not a plain release number."""
+
+    parts = text.split(".")
+    return tuple(int(part) for part in parts) if all(part.isdigit() for part in parts) else ()
 
 
 def schemas_digest() -> str:
@@ -125,29 +133,37 @@ class TheLevelFollowsTheContract(unittest.TestCase):
                 "engine_api and the interface's requirement with it",
             )
 
-    def test_installed_is_what_the_newest_release_went_out_with(self) -> None:
+    def test_installed_is_what_the_release_before_this_version_went_out_with(self) -> None:
         """26-11-06: 0.99.13 went out with level 41, `installed` still said 40.
 
         Then the contract changed twice under 41 and every check above passed,
-        since none of them knew that 41 was installed. The newest release tag
-        says what went out; where there are no tags (a CI clone) there is
-        nothing to compare against, and the release is made here.
+        since none of them knew that 41 was installed. The release before the
+        version being built (`pyproject.toml`) says what went out, as the
+        interface's previous-release fixture is held: the version commit of the
+        next release fails until `installed` is its predecessor's. Not the
+        newest tag: while a release is tagged, that is the release itself.
+        Where there are no tags (a CI clone) there is nothing to compare.
         """
 
         git = shutil.which("git")
         if git is None:
             self.skipTest("no git")
+        building = _version(
+            tomllib.loads((BASE / "pyproject.toml").read_text())["project"]["version"]
+        )
         tags = subprocess.run(
-            [git, "-C", str(BASE), "tag", "--list", "v*", "--sort=-v:refname"],
+            [git, "-C", str(BASE), "tag", "--list", "v*"],
             capture_output=True,
             text=True,
             check=False,
         ).stdout.split()
-        if not tags:
-            self.skipTest("no release tags in this clone")
+        older = [tag for tag in tags if (version := _version(tag[1:])) and version < building]
+        if not older:
+            self.skipTest("no release tag older than this version in this clone")
+        tag = max(older, key=lambda name: _version(name[1:]))
         shipped = json.loads(
             subprocess.run(
-                [git, "-C", str(BASE), "show", f"{tags[0]}:src/haprion/compatibility.json"],
+                [git, "-C", str(BASE), "show", f"{tag}:src/haprion/compatibility.json"],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -157,7 +173,7 @@ class TheLevelFollowsTheContract(unittest.TestCase):
         self.assertEqual(
             recorded,
             {key: shipped[key] for key in ("engine_api", "schemas_sha256", "requests_sha256")},
-            f"{tags[0]} went out with engine_api {shipped['engine_api']}: record its level and "
+            f"{tag} went out with engine_api {shipped['engine_api']}: record its level and "
             "digests as `installed` in src/haprion/compatibility.json",
         )
 

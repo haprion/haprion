@@ -40,6 +40,37 @@ class TheScenariosAreOptIn(unittest.TestCase):
             run = tool.Run(tool.DISTRIBUTIONS["debian13"], Path(raw))
         self.assertEqual(run.limits, {})
 
+    def test_a_reload_that_moves_the_address_or_misses_the_check_fails_the_step(self) -> None:
+        tool = self.install_test()
+        quiet = (
+            "Nov 06 12:00:01 node-a systemd[1]: Reloading keepalived.service\n"
+            "Nov 06 12:00:02 node-a Keepalived_vrrp[9]: Sending gratuitous ARP on eth0\n"
+        )
+        self.assertEqual(tool.keepalived_signs(quiet), [])
+        self.assertEqual(tool.keepalived_trouble("node-a", tool.keepalived_signs(quiet)), [])
+
+        moved = (
+            "Nov 06 12:00:03 node-a Keepalived_vrrp[9]: (alpha) Entering FAULT STATE\n"
+            "Nov 06 12:00:04 node-b Keepalived_vrrp[9]: (alpha) Entering MASTER STATE\n"
+        )
+        signs = tool.keepalived_signs(moved)
+        self.assertEqual(len(signs), 2)
+        self.assertEqual(len(tool.keepalived_trouble("node-a", signs)), 2)
+
+        missed = "Nov 06 12:00:03 node-a Keepalived_vrrp[9]: VRRP_Script(own_address) failed (exited with status 1)\n"
+        self.assertEqual(len(tool.keepalived_trouble("node-a", tool.keepalived_signs(missed))), 1)
+        passed = "Nov 06 12:00:05 node-a Keepalived_vrrp[9]: VRRP_Script(own_address) succeeded\n"
+        self.assertEqual(tool.keepalived_trouble("node-a", tool.keepalived_signs(passed)), [])
+
+    def test_the_scale_reload_step_reads_keepalived_on_both_nodes(self) -> None:
+        text = (BASE / "tools/install-test").read_text()
+        start = text.index("    def reloaded() -> None:")
+        body = text[start : text.index('    step("HAProxy reloads on each node', start)]
+
+        self.assertIn("journalctl -u keepalived --since", body)
+        self.assertIn("keepalived_trouble", body)
+        self.assertIn("for role in NODES", body)
+
     def test_a_scenario_installs_packages_and_nothing_else(self) -> None:
         text = (BASE / "tools/install-test").read_text()
         start = text.index("    if args.scenario and not args.packages:")

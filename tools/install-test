@@ -1987,6 +1987,30 @@ class Scenario:
 # How long the scale scenario lets a reloaded node take to be `active` again.
 #
 RELOAD_READY_SECONDS = 120
+#
+# What keepalived logs about its state and about the check of the node's own
+# address (`own_address`, B484). The check starts bash, ip and grep every second
+# with no time limit of its own; two misses in a row are FAULT and the virtual
+# address moves, which a reload of a large configuration on a small node must
+# not cause.
+#
+KEEPALIVED_SIGNS = re.compile(r"Entering (?:MASTER|BACKUP|FAULT) STATE|VRRP_Script\(own_address\)")
+
+
+def keepalived_signs(journal: str) -> list[str]:
+    """The lines of a keepalived journal that say it changed state or ran the check."""
+
+    return [line.strip() for line in journal.splitlines() if KEEPALIVED_SIGNS.search(line)]
+
+
+def keepalived_trouble(role: str, signs: list[str]) -> list[str]:
+    """What in those lines is a node that left its state or a check that did not pass.
+
+    Any state entered during the window is a move of the virtual address or the
+    loss of it; a check line that does not say it succeeded is a miss.
+    """
+
+    return [f"{role}: {line}" for line in signs if "Entering" in line or "succeeded" not in line]
 
 
 def scale_steps(scenario: Scenario) -> None:
@@ -2192,6 +2216,7 @@ def scale_steps(scenario: Scenario) -> None:
     step("haprion-deploy rolls the published version out to both nodes", deployed)
 
     def reloaded() -> None:
+        began = {role: run.on(role, "date '+%F %T'")[1].strip() for role in NODES}
         for role in NODES:
             _, count = run.on(
                 role, "grep -c '^frontend ' /etc/haproxy/conf.d/*frontends.cfg || true"
@@ -2228,6 +2253,21 @@ def scale_steps(scenario: Scenario) -> None:
                     raise Failed(f"{role} after the reload, {RELOAD_READY_SECONDS} s on:\n{state}")
                 time.sleep(0.5)
             print(f"(active {time.monotonic() - waited:.1f} s after the reload returned)", end=" ")
+        trouble: list[str] = []
+        for role in NODES:
+            _, journal = run.on(
+                role, f"journalctl -u keepalived --since '{began[role]}' --no-pager", check=False
+            )
+            signs = keepalived_signs(journal)
+            print(f"\n      {role}: keepalived {len(signs)} state or check line(s)", end="")
+            for line in signs:
+                print(f"\n        {line}", end="")
+            trouble += keepalived_trouble(role, signs)
+        if trouble:
+            raise Failed(
+                "keepalived changed state or missed its check during the reloads:\n"
+                + "\n".join(trouble)
+            )
 
     step("HAProxy reloads on each node with the whole configuration", reloaded)
 

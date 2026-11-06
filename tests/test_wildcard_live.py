@@ -21,8 +21,9 @@ from pathlib import Path
 from haprion.config import UnknownHost, Vip
 from haprion.generate import generate
 from haprion.proxy_model import load_proxy
-from tests.spawned import wait_for
-from tests.test_generate_behaviour import echo_server, free_port, start_haproxy, write_release
+from tests import spawned
+from tests.spawned import start_haproxy, wait_for
+from tests.test_generate_behaviour import echo_server, free_port, write_release
 
 SUBDOMAIN = """
 schema: 1
@@ -72,6 +73,7 @@ class ASubdomainStandsForOneLabelAndYieldsToExactNames(unittest.TestCase):
     port: int
 
     @classmethod
+    @spawned.retry_on_taken_port
     def setUpClass(cls) -> None:
         apps, grafana = free_port(), free_port()
         cls.servers = [echo_server("apps", apps), echo_server("grafana", grafana)]

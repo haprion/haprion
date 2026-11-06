@@ -60,7 +60,7 @@ from haprion.generate import (
 from haprion.proxy_model import Proxy, load_proxy
 from haprion.route_match import order_routes, rewrite, select
 from tests import spawned
-from tests.spawned import wait_for
+from tests.spawned import start_haproxy, wait_for
 
 
 def load_apart(name: str, document: bytes) -> Proxy:
@@ -291,6 +291,7 @@ CORE = """
 global
     daemon
     maxconn 100
+    noreuseport
     default-path config
 defaults
     mode http
@@ -378,43 +379,6 @@ def echo_server(pool: str, port: int) -> ThreadingHTTPServer:
     return server
 
 
-def start_haproxy(binary: str, arguments: list[str], port: int) -> subprocess.Popen[bytes]:
-    """One HAProxy, bound to this run's lifetime and proved to be listening.
-
-    A start that never comes up is terminated here rather than left to a
-    teardown that will not be called - `setUpClass` raising means the class
-    never gets one.
-    """
-
-    #
-    # `-db` is what makes the process this returns the actual HAProxy. The core
-    # fixture says `daemon`, as a real one does, so without this HAProxy forks
-    # into the background and the child Python is holding exits at once -
-    # `terminate()` then kills something that has already gone, `wait()` returns
-    # cleanly, and the server itself runs on with init as its parent.
-    #
-    # Every spawn leaked that way, in every run, until the machine ran out of
-    # memory. The flag is a harness concern and not a change to what is being
-    # tested: the configuration under test is still the one with `daemon` in it.
-    #
-    process = subprocess.Popen(
-        [binary, "-db", *arguments],
-        stderr=subprocess.DEVNULL,
-        #
-        # The other half of the B81 fix, and the half teardown cannot provide:
-        # a run that is interrupted, times out, or is killed never reaches one.
-        #
-        preexec_fn=spawned.die_with_the_test_run,
-    )
-    try:
-        wait_for(port)
-    except BaseException:
-        process.terminate()
-        process.wait(timeout=5)
-        raise
-    return process
-
-
 @unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
 class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
     servers: dict[str, ThreadingHTTPServer]
@@ -425,6 +389,7 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
     dead: tuple[socket.socket, socket.socket]
 
     @classmethod
+    @spawned.retry_on_taken_port
     def setUpClass(cls) -> None:
         ports = {pool: free_port() for pool in POOLS}
         cls.servers = {pool: echo_server(pool, port) for pool, port in ports.items()}
@@ -727,6 +692,7 @@ class TlsIsServedTheWayTheObjectAsksFor(unittest.TestCase):
     directory: tempfile.TemporaryDirectory[str]
 
     @classmethod
+    @spawned.retry_on_taken_port
     def setUpClass(cls) -> None:
         cls.directory = tempfile.TemporaryDirectory()
         root = Path(cls.directory.name)
@@ -895,6 +861,7 @@ class WhatTheBackendLearnsAboutTheVisitor(unittest.TestCase):
     port: int
 
     @classmethod
+    @spawned.retry_on_taken_port
     def setUpClass(cls) -> None:
         backend = free_port()
         cls.server = header_server(backend)
@@ -994,6 +961,7 @@ class TheBrakeOnTrafficThatIsNotAVisitor(unittest.TestCase):
     port: int
 
     @classmethod
+    @spawned.retry_on_taken_port
     def setUpClass(cls) -> None:
         backend = free_port()
         cls.server = echo_server("web", backend)
@@ -1065,6 +1033,7 @@ class AMonitorsAnsweredRequestsAreNotLogged(unittest.TestCase):
     port: int
 
     @classmethod
+    @spawned.retry_on_taken_port
     def setUpClass(cls) -> None:
         backend = free_port()
         cls.server = echo_server("web", backend)
@@ -1160,6 +1129,7 @@ class HeaderEditsReachTheTraffic(unittest.TestCase):
     port: int
 
     @classmethod
+    @spawned.retry_on_taken_port
     def setUpClass(cls) -> None:
         backend = free_port()
         cls.server = header_server(backend)
@@ -1259,6 +1229,7 @@ class ARawPortIsForwardedAsItArrives(unittest.TestCase):
     port: int
 
     @classmethod
+    @spawned.retry_on_taken_port
     def setUpClass(cls) -> None:
         backend = free_port()
         cls.server = echo_server("web", backend)
@@ -1494,6 +1465,7 @@ class ReachingAPoolOverTls(unittest.TestCase):
             server.server_close()
         cls.directory.cleanup()
 
+    @spawned.retry_on_taken_port
     def reach(self, *, verify: str, expired: bool) -> int:
         """One request through a proxy whose pool speaks TLS, as a status."""
 
@@ -1638,6 +1610,7 @@ class CheckingATlsPoolOnAnotherPort(unittest.TestCase):
             server.server_close()
         cls.directory.cleanup()
 
+    @spawned.retry_on_taken_port
     def test_the_pool_is_served_because_the_check_speaks_tls_too(self) -> None:
         certificate, key = self_signed(self.root, "checked", expired=False)
         web = free_port()
@@ -1687,6 +1660,7 @@ class CheckingATlsPoolOnAnotherPort(unittest.TestCase):
             time.sleep(0.5)
         self.assertEqual(status, 200)
 
+    @spawned.retry_on_taken_port
     def test_a_plaintext_check_port_on_a_tls_pool_brings_the_servers_up(self) -> None:
         """The combination that could not be written before `no-check-ssl`.
 
@@ -1876,6 +1850,7 @@ class AnUpgradedConnectionLivesOnTheTunnelTimeout(unittest.TestCase):
     port: int
 
     @classmethod
+    @spawned.retry_on_taken_port
     def setUpClass(cls) -> None:
         cls.backend = free_port()
         cls.listener = upgrade_server(cls.backend)
@@ -2139,6 +2114,7 @@ class HowOldAPoolMayBe(unittest.TestCase):
             process.wait(timeout=5)
         cls.directory.cleanup()
 
+    @spawned.retry_on_taken_port
     def reach(self, *, policy: str) -> int:
         """One request through a proxy, to a pool that speaks only TLS 1.1."""
 
@@ -2225,6 +2201,7 @@ class OneListenerTwoSetsOfTerms(unittest.TestCase):
     backend: ThreadingHTTPServer
 
     @classmethod
+    @spawned.retry_on_taken_port
     def setUpClass(cls) -> None:
         cls.directory = tempfile.TemporaryDirectory()
         cls.root = Path(cls.directory.name)
@@ -2454,6 +2431,7 @@ class AdvancedConfigDoesWhatItsPlacementSays(unittest.TestCase):
     raw: int
 
     @classmethod
+    @spawned.retry_on_taken_port
     def setUpClass(cls) -> None:
         web = free_port()
         cls.server = echo_server("web", web)
@@ -2649,6 +2627,7 @@ class AccessRulesAnswerAndNameThemselvesInTheRealHaproxy(unittest.TestCase):
     port: int
 
     @classmethod
+    @spawned.retry_on_taken_port
     def setUpClass(cls) -> None:
         web = free_port()
         cls.servers = [body_server(web)]
@@ -2936,6 +2915,7 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
     port: int
 
     @classmethod
+    @spawned.retry_on_taken_port
     def setUpClass(cls) -> None:
         web = free_port()
         cls.servers = [body_server(web)]
@@ -4053,6 +4033,7 @@ class TheProbeAsksWhatTheCheckAsks(unittest.TestCase):
     HAProxy puts on the wire for `http-check send` is the thing in question.
     """
 
+    @spawned.retry_on_taken_port
     def heard(self, host: str | None) -> tuple[bytes, bytes]:
         from tests.test_health_probe import ask
 

@@ -76,6 +76,10 @@ def traffic_input(socket_path: Path) -> str:
     return found.group(1).replace("@SOCKET@", str(socket_path))
 
 
+class PortTaken(Exception):
+    """HAProxy could not bind a port that was free a moment before."""
+
+
 def die_with_the_test_run() -> None:
     ctypes.CDLL("libc.so.6", use_errno=True).prctl(_PR_SET_PDEATHSIG, signal.SIGKILL)
 
@@ -193,6 +197,19 @@ class TheStreamThroughRealHAProxyAndRealRsyslog(unittest.TestCase):
 
     @classmethod
     def start_haproxy(cls) -> None:
+        """Start HAProxy on freshly picked ports; again when a port was taken meanwhile."""
+
+        for _ in range(4):
+            try:
+                cls.start_haproxy_once()
+                return
+            except PortTaken:
+                cls.backend.shutdown()
+                cls.backend.server_close()
+        cls.start_haproxy_once()
+
+    @classmethod
+    def start_haproxy_once(cls) -> None:
         backend_port = free_port()
         cls.backend = echo_server(backend_port)
         cls.port = free_port()
@@ -211,6 +228,7 @@ class TheStreamThroughRealHAProxyAndRealRsyslog(unittest.TestCase):
             "global\n"
             f"    log {cls.socket()} len 2048 local0\n"
             "    maxconn 100\n"
+            "    noreuseport\n"
             "    default-path config\n"
             "defaults\n"
             "    mode http\n"
@@ -232,20 +250,35 @@ class TheStreamThroughRealHAProxyAndRealRsyslog(unittest.TestCase):
         binary = shutil.which("haproxy")
         if binary is None:
             raise AssertionError("haproxy disappeared after the skip check")
-        cls.haproxy = subprocess.Popen(  # noqa: S603 - a fixed argv, no shell
-            [binary, "-db", "-f", str(release / "haproxy.cfg"), "-f", str(release / "conf.d")],
-            stderr=subprocess.DEVNULL,
-            preexec_fn=die_with_the_test_run,
-        )
+        with tempfile.TemporaryFile() as said:
+            cls.haproxy = subprocess.Popen(  # noqa: S603 - a fixed argv, no shell
+                [binary, "-db", "-f", str(release / "haproxy.cfg"), "-f", str(release / "conf.d")],
+                stderr=said,
+                preexec_fn=die_with_the_test_run,
+            )
 
-        def listening() -> bool:
-            try:
-                with socket.create_connection(("127.0.0.1", cls.port), timeout=0.2):
+            def listening() -> bool:
+                if cls.haproxy.poll() is not None:
                     return True
-            except OSError:
-                return False
+                try:
+                    with socket.create_connection(("127.0.0.1", cls.port), timeout=0.2):
+                        return True
+                except OSError:
+                    return False
 
-        wait_until(listening, "haproxy")
+            wait_until(listening, "haproxy")
+            #
+            # Something answered; ours only if it is still there. Without
+            # `noreuseport` another process's HAProxy on the same port would
+            # have shared it; with it, HAProxy exits and says why.
+            #
+            time.sleep(0.1)
+            if cls.haproxy.poll() is not None:
+                said.seek(0)
+                output = said.read().decode(errors="replace")
+                if "cannot bind" in output or "Address already in use" in output:
+                    raise PortTaken(output)
+                raise AssertionError(f"haproxy exited before it listened:\n{output}")
 
     @classmethod
     def socket(cls) -> Path:

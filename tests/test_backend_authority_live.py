@@ -25,9 +25,10 @@ from pathlib import Path
 from haprion.config import Vip
 from haprion.generate import generate
 from haprion.proxy_model import load_proxy
-from tests.spawned import wait_for
+from tests import spawned
+from tests.spawned import start_haproxy, wait_for
 from tests.test_cert_import import Pki
-from tests.test_generate_behaviour import free_port, self_signed, start_haproxy, write_release
+from tests.test_generate_behaviour import free_port, self_signed, write_release
 
 #
 # A name that resolves without DNS, so the pool can be named rather than
@@ -141,6 +142,7 @@ class APoolIsTrustedThroughTheClustersOwnCa(unittest.TestCase):
         cls.server.server_close()
         cls.directory.cleanup()
 
+    @spawned.retry_on_taken_port
     def serving(
         self, verify: str, ca_file: Path | None, *, web: int | None = None, template: str = OBJECT
     ) -> int:

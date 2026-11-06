@@ -38,8 +38,9 @@ from pathlib import Path
 from haprion.config import Vip
 from haprion.generate import generate
 from haprion.proxy_model import load_proxy
-from tests.spawned import wait_for
-from tests.test_generate_behaviour import free_port, self_signed, start_haproxy, write_release
+from tests import spawned
+from tests.spawned import start_haproxy, wait_for
+from tests.test_generate_behaviour import free_port, self_signed, write_release
 
 #
 # A name the certificate is issued for, so that the only thing being measured
@@ -140,6 +141,7 @@ class WhatACheckSendsInItsHandshake(unittest.TestCase):
             server.server_close()
         cls.directory.cleanup()
 
+    @spawned.retry_on_taken_port
     def serving(self, extra: str = "") -> tuple[int, list[str | None]]:
         """One HAProxy in front of a pool that insists on being named.
 

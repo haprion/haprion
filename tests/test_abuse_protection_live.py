@@ -19,7 +19,9 @@ from pathlib import Path
 from haprion.config import AbuseProtection, Vip
 from haprion.generate import generate
 from haprion.proxy_model import load_proxy
-from tests.test_generate_behaviour import free_port, start_haproxy, write_release
+from tests import spawned
+from tests.spawned import start_haproxy
+from tests.test_generate_behaviour import free_port, write_release
 
 WINDOW = 3
 
@@ -39,6 +41,7 @@ class _Application(BaseHTTPRequestHandler):
 
 @unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
 class ErrorLimit(unittest.TestCase):
+    @spawned.retry_on_taken_port
     def setUp(self) -> None:
         application = ThreadingHTTPServer(("127.0.0.1", 0), _Application)
         self.addCleanup(application.server_close)

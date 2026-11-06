@@ -28,12 +28,12 @@ from pathlib import Path
 from haprion.config import Vip
 from haprion.generate import generate
 from haprion.proxy_model import load_proxy
-from tests.spawned import wait_for
+from tests import spawned
+from tests.spawned import start_haproxy, wait_for
 from tests.test_generate_behaviour import (
     echo_server,
     free_port,
     self_signed,
-    start_haproxy,
     write_release,
 )
 
@@ -60,6 +60,7 @@ backends:
 
 CLIENT = """
 global
+    noreuseport
     expose-experimental-directives
 defaults
     mode http
@@ -91,6 +92,7 @@ class AVipServesHttp3BesideTcp(unittest.TestCase):
     client: int
 
     @classmethod
+    @spawned.retry_on_taken_port
     def setUpClass(cls) -> None:
         cls.directory = tempfile.TemporaryDirectory()
         root = Path(cls.directory.name)
@@ -127,7 +129,13 @@ class AVipServesHttp3BesideTcp(unittest.TestCase):
         ]
         cls.client = free_port()
         (root / "client.cfg").write_text(CLIENT.format(port=cls.client, site=cls.site))
-        cls.running.append(start_haproxy(HAPROXY, ["-f", str(root / "client.cfg")], cls.client))
+        try:
+            cls.running.append(start_haproxy(HAPROXY, ["-f", str(root / "client.cfg")], cls.client))
+        except BaseException:
+            for process in cls.running:
+                process.terminate()
+                process.wait(timeout=5)
+            raise
 
     @classmethod
     def tearDownClass(cls) -> None:

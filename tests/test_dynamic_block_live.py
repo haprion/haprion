@@ -38,6 +38,7 @@ from haprion.config import Vip
 from haprion.generate import block_tables, generate
 from haprion.proxy_model import load_proxy
 from haprion.traffic_stream import TRAFFIC_LOG_SOCKET
+from tests import spawned
 from tests.test_node_blocked import parsing
 from tests.test_node_server_state import load_helper
 
@@ -125,6 +126,7 @@ class TwoNodesBlock(unittest.TestCase):
 
         return _until(said)
 
+    @spawned.retry_on_taken_port
     def setUp(self) -> None:
         self.records: dict[str, list[str]] = {}
         self.root = Path(tempfile.mkdtemp())
@@ -221,12 +223,14 @@ backends:
         binary = shutil.which("haproxy")
         assert binary is not None
         self.sockets: dict[str, Path] = {}
+        self.outputs: list[Path] = []
         for node, address in NODES:
             directory = self.root / node
             (directory / "conf.d").mkdir(parents=True)
             self.sockets[address] = directory / "admin.sock"
             (directory / "haproxy.cfg").write_text(
                 "global\n"
+                f"{spawned.NOREUSEPORT}"
                 "    default-path config\n"
                 "    tune.stick-counters 5\n"
                 f"    stats socket {directory / 'admin.sock'} mode 600 level admin\n"
@@ -263,27 +267,40 @@ backends:
                 (directory / "conf.d" / name).write_text(
                     content.replace(TRAFFIC_LOG_SOCKET, str(log_path))
                 )
-            process = subprocess.Popen(  # the local haproxy, a generated config
-                [
-                    binary,
-                    "-db",
-                    "-L",
-                    node,
-                    "-f",
-                    str(directory / "haproxy.cfg"),
-                    "-f",
-                    str(directory / "conf.d"),
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.STDOUT,
-            )
+            self.outputs.append(directory / "haproxy.out")
+            with self.outputs[-1].open("wb") as output:
+                process = subprocess.Popen(  # the local haproxy, a generated config
+                    [
+                        binary,
+                        "-db",
+                        "-L",
+                        node,
+                        "-f",
+                        str(directory / "haproxy.cfg"),
+                        "-f",
+                        str(directory / "conf.d"),
+                    ],
+                    stdout=output,
+                    stderr=subprocess.STDOUT,
+                )
             self.addCleanup(process.wait, 5)
             self.addCleanup(process.terminate)
-            self.assertTrue(
-                _until(self.sockets[address].exists),
-                f"{node} did not start",
-            )
-        self.assertTrue(_until(self.peers_connected), "the nodes did not connect")
+            if not _until(self.sockets[address].exists):
+                self._did_not_start(f"{node} did not start")
+        try:
+            connected = _until(self.peers_connected)
+        except OSError:
+            connected = False
+        if not connected:
+            self._did_not_start("the nodes did not connect")
+
+    def _did_not_start(self, message: str) -> None:
+        """Fail the setup; as `PortTaken` when HAProxy said a port was held."""
+
+        said = "".join(path.read_text(errors="replace") for path in self.outputs if path.exists())
+        if "cannot bind" in said or "Address already in use" in said:
+            raise spawned.PortTaken(said)
+        self.fail(f"{message}\n{said}")
 
     def runtime(self, node: str, command: str) -> str:
         with socket.socket(socket.AF_UNIX) as connection:

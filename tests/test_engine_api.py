@@ -18,6 +18,8 @@ import hashlib
 import importlib
 import json
 import re
+import shutil
+import subprocess
 import unittest
 from collections.abc import Mapping
 from pathlib import Path
@@ -122,6 +124,42 @@ class TheLevelFollowsTheContract(unittest.TestCase):
                 f"engine_api {installed['engine_api']} went out with another contract: raise "
                 "engine_api and the interface's requirement with it",
             )
+
+    def test_installed_is_what_the_newest_release_went_out_with(self) -> None:
+        """26-11-06: 0.99.13 went out with level 41, `installed` still said 40.
+
+        Then the contract changed twice under 41 and every check above passed,
+        since none of them knew that 41 was installed. The newest release tag
+        says what went out; where there are no tags (a CI clone) there is
+        nothing to compare against, and the release is made here.
+        """
+
+        git = shutil.which("git")
+        if git is None:
+            self.skipTest("no git")
+        tags = subprocess.run(
+            [git, "-C", str(BASE), "tag", "--list", "v*", "--sort=-v:refname"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.split()
+        if not tags:
+            self.skipTest("no release tags in this clone")
+        shipped = json.loads(
+            subprocess.run(
+                [git, "-C", str(BASE), "show", f"{tags[0]}:src/haprion/compatibility.json"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+        )
+        recorded = json.loads(ENGINE.read_text())["installed"]
+        self.assertEqual(
+            recorded,
+            {key: shipped[key] for key in ("engine_api", "schemas_sha256", "requests_sha256")},
+            f"{tags[0]} went out with engine_api {shipped['engine_api']}: record its level and "
+            "digests as `installed` in src/haprion/compatibility.json",
+        )
 
     def test_the_inventory_holds_what_a_helper_takes(self) -> None:
         inventory = requests_inventory()

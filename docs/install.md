@@ -50,7 +50,7 @@ HAProxy reads the whole configuration while the old process still serves, so for
 - How long it takes with 10 000 large proxies: the first `haprion-objects apply` about eight minutes, a publish
   from the interface about 80 seconds, and a deploy about five minutes, of which each node's reload is about a
   minute and a half. With 10 000 simple proxies: under three minutes, under 40 seconds and under a minute.
-- Each size leaves room. A node one size smaller also managed the row, but with almost all of its memory in use.
+- Each size above the smallest leaves room. A node one size smaller also managed the row, but with almost all of its memory in use.
 - The sizes were measured with one cluster and without the WAF.
 
 ### What the machines must reach

@@ -2259,7 +2259,7 @@ def scale_steps(scenario: Scenario) -> None:
                 role, f"journalctl -u keepalived --since '{began[role]}' --no-pager", check=False
             )
             signs = keepalived_signs(journal)
-            print(f"\n      {role}: keepalived {len(signs)} state or check line(s)", end="")
+            print(f"\n      {role}: keepalived state and check lines: {len(signs)}", end="")
             for line in signs:
                 print(f"\n        {line}", end="")
             trouble += keepalived_trouble(role, signs)

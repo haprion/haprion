@@ -252,7 +252,9 @@ haprion-deploy -c alpha
 ```
 
 More changed objects than one publish carries are published in batches of up to 1 MiB of documents, each
-its own version. Every file is checked
+its own version. When a later batch is refused, the earlier ones stay published and the command ends with
+69 (`partial`). The output lists what was published and what was not. Fix what the refusal names and run the
+same command again: it publishes only what is still missing. Every file is checked
 by the same model the publish uses before anything is asked of the manager, so a mistake is reported with
 the name of its file.
 

@@ -503,6 +503,56 @@ class ObjectsFromFiles(unittest.TestCase):
         self.assertEqual([v["version"] for v in answer["result"]["versions"]], [11])
         self.assertEqual(answer["warnings"][0]["code"], "changes_invalid")
         self.assertIn("1 earlier batch published", err)
+        names = [f"site{number:03d}" for number in range(16)]
+        self.assertEqual(answer["result"]["added"], names[:10])
+        self.assertEqual(answer["result"]["not_published"], names[10:])
+
+    def test_a_partial_run_says_in_text_what_is_not_published(self) -> None:
+        fakes = Fakes({})
+        for number in range(16):
+            self.write(f"site{number:03d}", document(f"site{number:03d}"))
+        first = fakes.publish
+
+        def refuse_the_second(request: str) -> subprocess.CompletedProcess[str]:
+            if fakes.published:
+                fakes.refuse = {"code": "changes_invalid", "message": "no VIP named edge"}
+            return first(request)
+
+        fakes.publish = refuse_the_second  # type: ignore[method-assign]
+
+        with mock.patch.object(changes_publish, "MAX_REQUEST_BYTES", room_for(10)):
+            code, out, _ = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root))
+
+        self.assertEqual(code, exit_codes.PARTIAL)
+        self.assertIn("Did add site009\n", out)
+        self.assertNotIn("Did add site010", out)
+        self.assertIn("Not published: site010, site011", out)
+        self.assertIn("Run the same command again", out)
+
+    def test_a_later_batch_refused_under_check_is_an_ordinary_refusal(self) -> None:
+        fakes = Fakes({})
+        for number in range(16):
+            self.write(f"site{number:03d}", document(f"site{number:03d}"))
+        first = fakes.publish
+
+        def refuse_the_second(request: str) -> subprocess.CompletedProcess[str]:
+            if fakes.published:
+                fakes.refuse = {"code": "changes_invalid", "message": "no VIP named edge"}
+            return first(request)
+
+        fakes.publish = refuse_the_second  # type: ignore[method-assign]
+
+        with mock.patch.object(changes_publish, "MAX_REQUEST_BYTES", room_for(10)):
+            code, out, err = self.run_cli(
+                fakes, "apply", "-c", "alpha", str(self.root), "--check", "--json"
+            )
+
+        answer = assert_contract("haprion-objects-apply", out)
+        self.assertNotEqual(code, exit_codes.PARTIAL)
+        self.assertNotEqual(answer["outcome"], "partial")
+        self.assertNotIn("earlier batch", err)
+        self.assertEqual(answer["error"]["code"], "changes_invalid")
+        self.assertEqual(fakes.stored, {})
 
     def test_a_head_that_moved_is_blocked(self) -> None:
         fakes = Fakes({})

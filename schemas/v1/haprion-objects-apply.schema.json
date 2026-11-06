@@ -29,6 +29,10 @@
         "updated": { "$ref": "#/$defs/names" },
         "removed": { "$ref": "#/$defs/names" },
         "unchanged": { "$ref": "#/$defs/names" },
+        "not_published": {
+          "description": "On `partial`: the planned objects no published batch carried; `added`, `updated` and `removed` list only what was published. Empty otherwise. The same command run again publishes them.",
+          "$ref": "#/$defs/names"
+        },
         "versions": {
           "type": "array",
           "items": {

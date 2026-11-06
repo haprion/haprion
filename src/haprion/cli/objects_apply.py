@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
@@ -324,7 +324,11 @@ def publish(
         try:
             result = answer_of(run_publish(request), changes_publish.OPERATION, changes=True)
         except Refused as refused:
-            if not answers:
+            if check or not answers:
+                #
+                # A check writes nothing, so a refusal in a later batch is an
+                # ordinary refusal: nothing was published.
+                #
                 raise
             raise PartlyDone(
                 Refused(
@@ -346,14 +350,24 @@ def _summary(
     check: bool,
     versions: Sequence[Mapping[str, Any]],
     checked: Sequence[Mapping[str, Any]] = (),
+    published: Collection[str] | None = None,
 ) -> dict[str, Any]:
+    """`published` names what the published batches carried; None means all of the plan."""
+
     changed = (not plan.empty) and (check or any(v.get("changed") for v in versions))
+
+    def part(names: Sequence[str]) -> list[str]:
+        return [name for name in names if published is None or name in published]
+
     return {
         "changed": changed,
         "check": check,
-        "added": list(plan.added),
-        "updated": list(plan.changed),
-        "removed": list(plan.removed),
+        "added": part(plan.added),
+        "updated": part(plan.changed),
+        "removed": part(plan.removed),
+        "not_published": []
+        if published is None
+        else [n for n in plan.documents if n not in published],
         "unchanged": list(plan.unchanged),
         "versions": [
             {"version": v.get("version"), "hash": v.get("hash"), "changed": v.get("changed")}
@@ -430,11 +444,16 @@ def _render(cluster: str, plan: Plan, summary: Mapping[str, Any], writer: TextIO
         )
         return
     lead = "Would" if summary["check"] else "Did"
-    for verb, names in (("add", plan.added), ("change", plan.changed), ("remove", plan.removed)):
-        for name in names:
+    for verb, key in (("add", "added"), ("change", "updated"), ("remove", "removed")):
+        for name in summary[key]:
             writer.write(f"{lead} {verb} {name}\n")
-    for name in plan.changed:
+    for name in summary["updated"]:
         writer.write(plan.diffs.get(name, ""))
+    if summary["not_published"]:
+        writer.write(
+            f"Not published: {', '.join(summary['not_published'])}. "
+            "Run the same command again to publish them.\n"
+        )
     for version in summary["versions"]:
         writer.write(f"Published version {version['version']} of {cluster}.\n")
     for name in summary["unresolved_servers"]:
@@ -508,7 +527,8 @@ def main(
             else:
                 versions = answers
     except PartlyDone as stopped:
-        summary = _summary(plan, check=False, versions=stopped.done)
+        carried = {name for batch in batches(plan.documents)[: len(stopped.done)] for name in batch}
+        summary = _summary(plan, check=False, versions=stopped.done, published=carried)
         errors.write(stopped.report())
         if args.json:
             return write_document(

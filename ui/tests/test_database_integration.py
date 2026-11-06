@@ -4187,14 +4187,49 @@ class TheInstallCheckMatchesTheMigrations(unittest.TestCase):
         self.assertEqual(actual, expected)
         self.assertEqual(open_to_all, [])
 
-    def test_what_the_step_says_the_web_cannot_do_it_cannot_and_what_it_can_it_can(self) -> None:
+    PROBE = (
+        r'^(refuse|allow) "\$(WEB_USER|WORKER_USER|POLLER_USER)"\s+"([^"]+)" \\\n'
+        r'\s+"((?:[^"\\]|\\.)*)"'
+    )
+    ROLES = {
+        "WEB_USER": "HAPRION_UI_TEST_WEB_ROLE",
+        "WORKER_USER": "HAPRION_UI_TEST_WORKER_ROLE",
+        "POLLER_USER": "HAPRION_UI_TEST_POLLER_ROLE",
+    }
+
+    def probe_cluster(self, text: str) -> str:
+        """The cluster the probes write for, made by the script's own line as it makes it."""
+
+        (line,) = [line for line in text.splitlines() if line.startswith("PROBE_CLUSTER=")]
+        library = self.SCRIPT.parent.parent / "lib.sh"
+        return subprocess.run(  # noqa: S603 - a fixed shell, the script's own line
+            ["/bin/bash", "-c", f'source "{library}"; {line}; printf %s "$PROBE_CLUSTER"'],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+
+    def run_probe(self, role: str, statement: str) -> bool:
+        """Whether the database refused the statement for the role."""
+
+        with psycopg.connect(f"{DSN} user={role}") as connection:
+            try:
+                connection.execute(statement)
+                refused = False
+            except psycopg.Error:
+                refused = True
+            connection.rollback()
+        return refused
+
+    def test_what_the_step_says_the_roles_cannot_do_they_cannot_and_what_they_can_they_can(
+        self,
+    ) -> None:
         text = self.SCRIPT.read_text()
-        probes = re.findall(
-            r'^(refuse|allow) "\$WEB_USER"\s+"([^"]+)" \\\n\s+"((?:[^"\\]|\\.)*)"',
-            text,
-            re.MULTILINE,
-        )
+        probes = re.findall(self.PROBE, text, re.MULTILINE)
         self.assertGreater(len(probes), 5)
+        # The worker's and the poller's are run as well as the web's: the claim and
+        # the search index replacement otherwise run only when someone installs.
+        self.assertEqual({who for _, who, _, _ in probes}, set(self.ROLES))
         #
         # `allow` reads its expected answer as $4 under `set -u`: a call with
         # three arguments stops the install step at that line (2026-09-27).
@@ -4206,32 +4241,62 @@ class TheInstallCheckMatchesTheMigrations(unittest.TestCase):
         )
         self.assertTrue(calls)
         self.assertNotIn("", calls, "an allow call without its expected answer")
-        role = os.environ["HAPRION_UI_TEST_WEB_ROLE"]
         #
         # The cluster the probes write for, made by the script's own line, as
-        # the script makes it (26-11-06: a fixed `alpha` met a restored queued
-        # job). A statement still naming a shell variable is a probe this test
-        # would run unexpanded, refused for the wrong reason.
+        # the script makes it (a fixed `alpha` met a restored queued job). A
+        # statement still naming a shell variable is a probe this test would
+        # run unexpanded, refused for the wrong reason.
         #
-        (line,) = [line for line in text.splitlines() if line.startswith("PROBE_CLUSTER=")]
-        cluster = subprocess.run(  # noqa: S603 - a fixed shell, the script's own line
-            ["/bin/bash", "-c", f'{line}; printf %s "$PROBE_CLUSTER"'],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
-        for kind, description, statement in probes:
+        cluster = self.probe_cluster(text)
+        for kind, who, description, statement in probes:
             statement = statement.replace('\\"', '"').replace("${PROBE_CLUSTER}", cluster)
             self.assertNotIn("${", statement, description)
+            with self.subTest(who=who, description=description):
+                refused = self.run_probe(os.environ[self.ROLES[who]], statement)
+                self.assertEqual(refused, kind == "refuse")
+
+    def test_a_refusal_that_inserts_is_refused_for_the_grant_and_nothing_else(self) -> None:
+        """Review 26-11-06, S-1: a key, a foreign key or a unique name refused these too.
+
+        With the web role given INSERT, the probe must go through. Were it written
+        with a row, the provider's key, a missing account 1 or an existing token
+        name would still refuse it, and the probe could not see the grant.
+        """
+
+        text = self.SCRIPT.read_text()
+        cluster = self.probe_cluster(text)
+        tables = {
+            "cannot add a provider": "oidc_provider",
+            "cannot backdate a session": "app_session",
+            "cannot backdate an API token": "api_token",
+            "cannot add a feature switch": "feature_switch",
+        }
+        statements = {
+            description: statement.replace('\\"', '"').replace("${PROBE_CLUSTER}", cluster)
+            for kind, who, description, statement in re.findall(self.PROBE, text, re.MULTILINE)
+            if kind == "refuse" and who == "WEB_USER" and description in tables
+        }
+        self.assertEqual(set(statements), set(tables))
+        web = os.environ["HAPRION_UI_TEST_WEB_ROLE"]
+        for description, statement in statements.items():
+            table = tables[description]
             with self.subTest(description=description):
-                with psycopg.connect(f"{DSN} user={role}") as connection:
+                self.assertTrue(self.run_probe(web, statement), "refused without the grant")
+                #
+                # The grant is given inside a transaction of the server's own
+                # superuser and rolled back with it, so the roles' real grants
+                # are untouched (a REVOKE would remove the web's column grants too).
+                #
+                with psycopg.connect(DSN) as admin:
+                    admin.execute(f"grant insert on {table} to app_web")
+                    admin.execute("set local role app_web")
                     try:
-                        connection.execute(statement)
+                        admin.execute(statement)
                         refused = False
                     except psycopg.Error:
                         refused = True
-                    connection.rollback()
-                self.assertEqual(refused, kind == "refuse")
+                    admin.rollback()
+                self.assertFalse(refused, "still refused with the grant given")
 
 
 def _contains(expression: Any, text: str) -> bool:

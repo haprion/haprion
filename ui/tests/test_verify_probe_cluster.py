@@ -16,7 +16,9 @@ from pathlib import Path
 
 BASE = Path(__file__).resolve().parents[2]
 SCRIPTS = (BASE / "install/platform/03-verify", BASE / "install/platform/07-platform-services")
+LIBRARY = BASE / "install/lib.sh"
 BASELINE = BASE / "ui/migrations/versions/0115_baseline.py"
+MAKES = 'PROBE_CLUSTER="$(probe_cluster)"'
 #
 # Where a probe names a cluster: the second value of a job row, and the
 # search index's column.
@@ -27,10 +29,10 @@ SEARCH_ROW = re.compile(r"insert into search_entry \(cluster[^)]*\)\s+values \('
 
 
 def made_by(line: str) -> str:
-    """The name the script's own line makes, run as the script runs it."""
+    """The name the script's own line makes, run as the script runs it: with the library loaded."""
 
     return subprocess.run(  # noqa: S603 - a fixed shell, the line under test
-        ["/bin/bash", "-c", f'{line}; printf %s "$PROBE_CLUSTER"'],
+        ["/bin/bash", "-c", f'source "{LIBRARY}"; {line}; printf %s "$PROBE_CLUSTER"'],
         check=True,
         capture_output=True,
         text=True,
@@ -64,6 +66,7 @@ class TheProbesNameNoClusterThatCanExist(unittest.TestCase):
                 for line in script.read_text().splitlines()
                 if line.startswith("PROBE_CLUSTER=")
             ]
+            self.assertEqual(line, MAKES)
             made, again = (made_by(line) for _ in range(2))
             with self.subTest(script=script.name):
                 self.assertRegex(made, shape.group(1))

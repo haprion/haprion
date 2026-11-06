@@ -331,17 +331,18 @@ fi
 # each describes a way the separation could be lost without anything looking
 # wrong: a role that can edit the audit trail, or write a table it only reads.
 #
+# The cluster the probes write for, in transactions that are rolled back: one no
+# cluster has (see probe_cluster in lib.sh).
 #
-# The cluster the probes below write for, inside transactions that are rolled
-# back: a name no cluster has. A fixed one ('alpha') met a restored database
-# whose queued job was on a cluster of that name, and one active job per
-# cluster refused the probe - the allowed writes failed, and a refusal could
-# have passed for the wrong reason (measured 26-11-06, `haprion-backup restore`
-# in the install test). The shape is job_cluster_shape's.
-#
-PROBE_CLUSTER="verify-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+PROBE_CLUSTER="$(probe_cluster)"
 
 step "What the roles must not be able to do"
+#
+# A refusal that inserts is written as `insert ... select ... where false`:
+# PostgreSQL checks the privileges when the statement starts, without a row, so
+# only a missing grant can refuse it. With a row, a key, a foreign key or a
+# unique name would refuse it as well, and the probe could not see a grant that
+# had been given.
 #
 # Each probe runs inside a transaction that is rolled back, so a check that
 # unexpectedly SUCCEEDS reports the failure without leaving the row it managed
@@ -390,7 +391,7 @@ refuse "$WEB_USER"    "cannot remove a sign-in attempt" \
 # switch, no removed one, and no date of its own choosing.
 #
 refuse "$WEB_USER"    "cannot add a feature switch" \
-       "insert into feature_switch (name) values ('probe')"
+       "insert into feature_switch (name) select 'probe' where false"
 refuse "$WEB_USER"    "cannot remove a feature switch" \
        "delete from feature_switch"
 refuse "$WEB_USER"    "cannot set a feature switch's date" \
@@ -406,7 +407,7 @@ refuse "$WEB_USER"    "cannot set the provider's revision" \
 refuse "$WEB_USER"    "cannot set the provider's date" \
        "update oidc_provider set updated_at = now()"
 refuse "$WEB_USER"    "cannot add a provider" \
-       "insert into oidc_provider (singleton) values (true)"
+       "insert into oidc_provider (singleton) select true where false"
 refuse "$WEB_USER"    "cannot remove the provider" \
        "delete from oidc_provider"
 refuse "$WEB_USER"    "cannot rewrite a sign-in in progress" \
@@ -419,14 +420,15 @@ refuse "$POLLER_USER" "cannot read the provider" \
        "select client_id from oidc_provider"
 refuse "$WEB_USER"    "cannot backdate a session" \
        "insert into app_session (token_hash, user_id, expires_at, created_at)
-        values (repeat('x', 32)::bytea, 1, now(), now())"
+        select repeat('x', 32)::bytea, 1, now(), now() where false"
 #
 # An API token's life begins when it is made or extended (0107, 0108): the web
 # cannot backdate one, set where its life begins or give it back a key.
 #
 refuse "$WEB_USER"    "cannot backdate an API token" \
        "insert into api_token (name, level, token_hash, prefix, created_by, expires_at, created_at)
-        values ('probe', 'read', repeat('x', 32)::bytea, 'hap_aaaaaaaa', 'probe', now(), now())"
+        select 'probe', 'read', repeat('x', 32)::bytea, 'hap_aaaaaaaa', 'probe', now(), now()
+         where false"
 refuse "$WEB_USER"    "cannot set an API token's start" \
        "update api_token set valid_from = now()"
 refuse "$WEB_USER"    "cannot change an API token's key" \

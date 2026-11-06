@@ -434,15 +434,10 @@ fi
 # real deploy job for a cluster, or every cache row marked done (review
 # 26-10-24, 03-07).
 #
+# The cluster the probes write for, in transactions that are rolled back: one no
+# cluster has (see probe_cluster in lib.sh).
 #
-# The cluster the probe below writes for, inside transactions that are rolled
-# back: a name no cluster has. A fixed one ('alpha') met a restored database
-# whose queued job was on a cluster of that name, and one active job per
-# cluster refused the probe - the allowed writes failed, and a refusal could
-# have passed for the wrong reason (measured 26-11-06, `haprion-backup restore`
-# in the install test). The shape is job_cluster_shape's.
-#
-PROBE_CLUSTER="verify-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+PROBE_CLUSTER="$(probe_cluster)"
 
 refuse "$POLLER_USER" "cannot write a job row" \
     psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \

@@ -698,3 +698,15 @@ schema_version: 1
 receivers: {}
 certificates: {}"
 }
+
+#
+# The cluster the platform steps' database probes write for, inside
+# transactions that are rolled back: a name no cluster has. A fixed one
+# ('alpha') met a restored database whose queued job was on a cluster of that
+# name, and one active job per cluster refused the probe - the allowed writes
+# failed, and a refusal could have passed for the wrong reason (measured in the
+# install test, `haprion-backup restore`). The shape is job_cluster_shape's.
+#
+probe_cluster() {
+    printf 'verify-%s\n' "$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+}

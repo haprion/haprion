@@ -3159,8 +3159,8 @@ def older_manager_backup(
                 time.sleep(3)
             if result["state"] != "pending" or result["held"] is not True:
                 raise Failed(f"the restored job is not held: {job_line(result)}\n{result}")
-            status, _ = web.get("held-old", "/jobs")
-            if status == "200":
+            opened, _ = web.get("held-old", "/jobs")
+            if opened == "200":
                 raise Failed("a session from before the restore still opens the Jobs page")
             #
             # Longer than the worker's idle wake-up: it has had the chance to claim the job and

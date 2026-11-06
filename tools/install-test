@@ -1994,7 +1994,10 @@ RELOAD_READY_SECONDS = 120
 # address moves, which a reload of a large configuration on a small node must
 # not cause.
 #
-KEEPALIVED_SIGNS = re.compile(r"Entering (?:MASTER|BACKUP|FAULT) STATE|VRRP_Script\(own_address\)")
+KEEPALIVED_SIGNS = re.compile(
+    r"Entering (?:MASTER|BACKUP|FAULT) STATE|VRRP_Script\(own_address\)"
+    r"|Script `own_address` now returning|own_address.*timed out"
+)
 
 
 def keepalived_signs(journal: str) -> list[str]:
@@ -2217,6 +2220,14 @@ def scale_steps(scenario: Scenario) -> None:
 
     def reloaded() -> None:
         began = {role: run.on(role, "date '+%F %T'")[1].strip() for role in NODES}
+        #
+        # That the journal sees keepalived at all: every node entered a state
+        # when it started. Without this an empty reading below says nothing.
+        #
+        for role in NODES:
+            _, history = run.on(role, "journalctl -u keepalived --no-pager -o cat")
+            if not re.search(r"Entering (?:MASTER|BACKUP) STATE", history):
+                raise Failed(f"{role}: the journal holds no keepalived state; nothing can be read")
         for role in NODES:
             _, count = run.on(
                 role, "grep -c '^frontend ' /etc/haproxy/conf.d/*frontends.cfg || true"
@@ -2256,7 +2267,7 @@ def scale_steps(scenario: Scenario) -> None:
         trouble: list[str] = []
         for role in NODES:
             _, journal = run.on(
-                role, f"journalctl -u keepalived --since '{began[role]}' --no-pager", check=False
+                role, f"journalctl -u keepalived --since '{began[role]}' --no-pager"
             )
             signs = keepalived_signs(journal)
             print(f"\n      {role}: keepalived state and check lines: {len(signs)}", end="")

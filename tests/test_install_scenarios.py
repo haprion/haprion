@@ -59,6 +59,16 @@ class TheScenariosAreOptIn(unittest.TestCase):
 
         missed = "Nov 06 12:00:03 node-a Keepalived_vrrp[9]: VRRP_Script(own_address) failed (exited with status 1)\n"
         self.assertEqual(len(tool.keepalived_trouble("node-a", tool.keepalived_signs(missed))), 1)
+        # The first miss, before `fall` is reached (keepalived's words, measured
+        # 26-11-06), and a check past its time (not measured: any line naming
+        # the check and a timeout).
+        for first in (
+            "Nov 06 12:00:03 node-a Keepalived_vrrp[9]: Script `own_address` now returning 1\n",
+            "Nov 06 12:00:03 node-a Keepalived_vrrp[9]: Process [77] (own_address) timed out\n",
+        ):
+            self.assertEqual(
+                len(tool.keepalived_trouble("node-a", tool.keepalived_signs(first))), 1
+            )
         passed = "Nov 06 12:00:05 node-a Keepalived_vrrp[9]: VRRP_Script(own_address) succeeded\n"
         self.assertEqual(tool.keepalived_trouble("node-a", tool.keepalived_signs(passed)), [])
 

@@ -2961,15 +2961,18 @@ moved rather than rebuilt: *Change host* on its row under *Settings → Nodes & 
 - keepalived checks that the node still has the address its `keepalived.conf` names as its own. When
   the old address is gone, the node lets the virtual address go within about two seconds and waits in
   FAULT; the other node keeps it or takes it. The deploy after *Change host* gives both nodes the new
-  address, and the moved node goes back to BACKUP. A `keepalived.conf` you wrote yourself has no such
-  check.
+  address, and the moved node goes back to BACKUP. When every node loses its address at once - a new
+  DHCP range, a new IPv6 prefix - no node holds the virtual address until the deploy that gives them the
+  new ones. A node alone in its cluster has no such check, because no other node could take the address.
+  A `keepalived.conf` you wrote yourself has no such check either.
 
 A node that gets a new address must be reached on it before the manager can ask. sshd on the node
 listens on the old address only ([described under HAProxy and keepalived baseline](#haproxy-and-keepalived-baseline)), so
 change the address, run `sudo haprion-node-prepare` on the node from its console (it moves sshd to
 an address the node has), do *Change host*, and deploy. The same order holds for a machine whose name
 stays and whose address changes in DNS: run `sudo haprion-node-prepare`, then `sudo haprion-node
-pull-keys`.
+pull-keys`, then *Apply update* (or `haprion-publish -c <cluster> --regenerate`) and deploy. Until the
+nodes have the new address, keepalived on the moved node waits in FAULT.
 
 A machine with another host key is another machine: that is a restore, or a removal and an addition.
 
@@ -4121,7 +4124,7 @@ makes it a different server, which starts again. Reordering a pool changes nothi
   new one's at once, so a publish that replaces many objects needs room for both; the old ones are freed
   when the old process ends. The room costs nothing until it is used: the file grows with the objects in
   it, about 0.7 KiB each. A cluster made before the line has HAProxy's 2000. Add the line under `global`
-  in its `core/haproxy.cfg`, and the next deploy carries it.
+  in its `core/haproxy.cfg`, and the next publish and deploy carry it.
 
 - **A pool's own figures still start again on every reload.** HAProxy 3.4.6 carries a backend's own
   counters badly: each reload attaches the backend to the other of two places in the file, so its totals
@@ -6466,10 +6469,11 @@ it after that. The file always has the same shape:
 - The interface is the cluster's `address_interface`, or else the one carrying the node's own address.
 - The address list is included in `virtual_ipaddress`, the IPVS file at the top level, and the `notify_`
   lines are set.
-- A check, `own_address`, that the node still has its `unicast_src_ip`. When the address is missing,
-  the instance goes to FAULT and the node holds no virtual address. Without the check, a node given a
-  new address would keep advertising from the old one, the nodes would stop hearing each other, and
-  both would take the address.
+- In a cluster of two or more nodes, a check, `own_address`, that the node still has its
+  `unicast_src_ip`. When the address is missing, the instance goes to FAULT and the node holds no
+  virtual address. Without the check, a node given a new address would keep advertising from the old
+  one, the nodes would stop hearing each other, and both would take the address. A node alone has no
+  check: no other node could take the address, so the check would only make it lose the address.
 
 The file's first line, `# Written by Haprion - a deploy replaces this file.`, is how the deploy knows the
 file is the product's. Delete that line and the file is yours: from then on the deploy leaves it alone and

@@ -97,9 +97,33 @@ class TheShape(unittest.TestCase):
 
     def test_the_check_takes_an_address_and_nothing_a_shell_would_read(self) -> None:
         self.assertIn("show to 2001:db8::1 |", keepalived_conf.source_command("2001:db8::1"))
-        for word in ("192.0.2.12; reboot", "$(id)", "node-b", "192.0.2.12 "):
+        for word in (
+            "192.0.2.12; reboot",
+            "$(id)",
+            "node-b",
+            "192.0.2.12 ",
+            "fe80::1%eth0",
+            "fe80::1%$(id)",
+            "fe80::1%x';reboot;'",
+        ):
             with self.subTest(word=word), self.assertRaises(ValueError):
                 keepalived_conf.source_command(word)
+
+    def test_a_node_alone_has_no_check_for_there_is_no_one_to_take_the_address(self) -> None:
+        # B488: with the check a lone node whose address changes would drop the
+        # VIP and no other node would take it.
+        text = render("node-a", nodes=(("node-a", "192.0.2.11"),))
+        self.assertNotIn("own_address", text)
+        self.assertNotIn("vrrp_script", text)
+        self.assertNotIn("track_script", text)
+        self.assertIn("vrrp_instance alpha {", text)
+
+    def test_a_pair_has_the_check_on_both_nodes(self) -> None:
+        for node, address in PAIR:
+            with self.subTest(node=node):
+                text = render(node)
+                self.assertIn(f"ip -o addr show to {address} |", text)
+                self.assertRegex(text, r"track_script \{\n\s+own_address\n\s+\}")
 
     def test_without_an_interface_the_node_fills_in_its_own(self) -> None:
         self.assertEqual(directive(render(interface=None), "interface"), [" @INTERFACE@"])

@@ -462,13 +462,24 @@ def _keepalived_test(text: str, address: str, vip: str) -> tuple[str, list[tuple
     # The product's file checks that the node has its own address (B484). Left
     # on the old one, the check would hold the instance in FAULT.
     #
-    before, after = keepalived_conf.SOURCE_COMMAND.split("{address}")
+    # Rewritten where the address stands after `show to`, whatever the rest of
+    # the command says, so a later version's command still takes an older archive.
+    #
+    keepalived_conf.source_command(address)  # refuses what a shell would read
 
     def checked(matched: re.Match[str]) -> str:
-        changes.append(("vrrp_script", matched.group(1)))
-        return keepalived_conf.source_command(address)
+        found = re.search(r"(\bshow\s+to\s+)([0-9A-Fa-f.:]+)", matched.group(0))
+        if found is None:
+            return matched.group(0)
+        changes.append(("vrrp_script", found.group(2)))
+        return matched.group(0)[: found.start(2)] + address + matched.group(0)[found.end(2) :]
 
-    text = re.sub(re.escape(before) + r"([0-9A-Fa-f.:]+)" + re.escape(after), checked, text)
+    text = re.sub(
+        rf"^[ \t]*vrrp_script[ \t]+{keepalived_conf.SOURCE_CHECK}[ \t]*\{{[^}}]*\}}",
+        checked,
+        text,
+        flags=re.MULTILINE,
+    )
 
     included = re.compile(
         rf"^[ \t]*include[ \t]+{re.escape(KEEPALIVED_ADDRESSES)}[ \t]*$", re.MULTILINE

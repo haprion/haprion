@@ -30,7 +30,9 @@ and so they are written here from facts it already holds, in one shape:
     every node has rather than a script of the node package: a script that is
     not there makes `keepalived --config-test` fail, and a node not yet
     updated would refuse every deploy. `/usr/bin/bash` and not `/bin/sh`,
-    which script security refuses as a symlink
+    which script security refuses as a symlink. Only a node with a peer has
+    it: a node alone has no one to take the address, so the check would only
+    give it a way to lose the VIP when its address changes (B488)
 
 One file per node, carried in the release as `keepalived/node-<name>.conf`,
 one level deep like the address list so the release's shape is unchanged. The
@@ -74,9 +76,13 @@ SOURCE_COMMAND = "/usr/bin/bash -c 'ip -o addr show to {address} | grep -q .'"
 
 
 def source_command(address: str) -> str:
-    """The check's command for `address`, which goes into a shell and so is an address or refused."""
+    """The check's command for `address`, which goes into a shell and so is a plain address or refused."""
 
-    return SOURCE_COMMAND.format(address=ipaddress.ip_address(address))
+    parsed = ipaddress.ip_address(address)
+    # An IPv6 address takes anything after `%` as its zone, shell characters included.
+    if getattr(parsed, "scope_id", None) is not None or "%" in address:
+        raise ValueError(f"{address!r} has a zone and cannot go into the check")
+    return SOURCE_COMMAND.format(address=parsed)
 
 
 def file_name(node: str) -> str:
@@ -106,7 +112,9 @@ def render(
         raise ValueError(f"{node} is not a node of {cluster}")
     index = names.index(node)
     own = nodes[index][1]
-    peers = [address for name, address in nodes if name != node] or [LOOPBACK]
+    others = [address for name, address in nodes if name != node]
+    peers = others or [LOOPBACK]
+    checked = bool(others)
     lines = [
         MARK,
         "#",
@@ -121,13 +129,19 @@ def render(
         "",
         f"include {IPVS}",
         "",
-        f"vrrp_script {SOURCE_CHECK} {{",
-        f'    script "{source_command(own)}"',
-        "    interval 1",
-        "    fall 2",
-        "    rise 2",
-        "}",
-        "",
+        *(
+            [
+                f"vrrp_script {SOURCE_CHECK} {{",
+                f'    script "{source_command(own)}"',
+                "    interval 1",
+                "    fall 2",
+                "    rise 2",
+                "}",
+                "",
+            ]
+            if checked
+            else []
+        ),
         f"vrrp_instance {cluster} {{",
         "    state BACKUP",
         "    nopreempt",
@@ -143,9 +157,7 @@ def render(
         "    virtual_ipaddress {",
         f"        include {ADDRESSES}",
         "    }",
-        "    track_script {",
-        f"        {SOURCE_CHECK}",
-        "    }",
+        *(["    track_script {", f"        {SOURCE_CHECK}", "    }"] if checked else []),
         f'    notify_master "{STATE_HELPER} MASTER"',
         f'    notify_backup "{STATE_HELPER} BACKUP"',
         f'    notify_fault  "{STATE_HELPER} FAULT"',

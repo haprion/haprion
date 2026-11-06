@@ -247,6 +247,19 @@ class TestMode(Planning):
             plan.rewrites,
         )
 
+    def test_an_older_check_command_is_rewritten_too(self) -> None:
+        # The address is found after `show to`, not by matching today's whole command.
+        conf = (
+            "vrrp_script own_address {\n"
+            "    script \"/usr/bin/bash -c 'ip addr show to 192.0.2.21 | grep -c inet'\"\n"
+            "    interval 1\n}\n"
+            "vrrp_instance alpha {\n    unicast_src_ip 192.0.2.21\n}\n"
+        )
+        text, changes = restore_plan._keepalived_test(conf, "192.0.2.29", "198.51.100.254/32")
+        self.assertIn("show to 192.0.2.29 | grep -c inet", text)
+        self.assertNotIn("192.0.2.21", text)
+        self.assertIn(("vrrp_script", "192.0.2.21"), changes)
+
     def test_the_syslog_objects_virtual_servers_are_emptied(self) -> None:
         """B256: the production receivers are never checked or fed from a test node."""
 

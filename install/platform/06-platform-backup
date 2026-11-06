@@ -61,7 +61,7 @@ step "Proving the dump restores"
 /usr/sbin/haprion-backup verify-restore
 
 step "What must not be able to read a dump"
-newest="$(find "$DUMP_DIR" -maxdepth 1 -name '*.dump' -printf '%p\n' | sort -r | head -1)"
+newest="$(find "$DUMP_DIR" -maxdepth 1 -name '*.dump' -printf '%p\n' | sort -r | awk 'NR == 1')"
 failed=0
 for user in "$WEB_USER" "${WORKER_USER:-}" "${POLLER_USER:-}"; do
     [[ -n "$user" ]] || continue

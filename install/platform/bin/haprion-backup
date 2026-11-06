@@ -433,7 +433,7 @@ restore_takes() {
 
 do_verify_restore() {
     local newest
-    newest="$(daily_dumps | head -1)"
+    newest="$(daily_dumps | awk 'NR == 1')"
     [[ -n "$newest" ]] || die "no dump to restore from in ${DUMP_DIR}"
     local archive="${DUMP_DIR}/${newest}"
     local scratch="${DB_NAME}_restorecheck"

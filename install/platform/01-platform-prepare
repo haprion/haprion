@@ -33,7 +33,7 @@ done
 step "Read-only platform group"
 ensure_group "$PLATFORM_GROUP"
 for user in "$WEB_USER" "$WORKER_USER" "$POLLER_USER"; do
-    if id -nG "$user" | tr ' ' '\n' | grep -qxF "$PLATFORM_GROUP"; then
+    if id -nG "$user" | tr ' ' '\n' | grep -xF "$PLATFORM_GROUP" >/dev/null; then
         log "  ok       ${user} in ${PLATFORM_GROUP}"
     else
         usermod -aG "$PLATFORM_GROUP" "$user"

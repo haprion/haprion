@@ -45,7 +45,7 @@ systemctl is-active --quiet "$WEB_UNIT" \
 # nginx's workers must be that user, as Ubuntu's and Debian's nginx.conf have
 # them, or nginx cannot reach the interface at all.
 #
-nginx_user="$(sed -n 's/^[[:space:]]*user[[:space:]]\{1,\}\([^[:space:];]\{1,\}\).*/\1/p' /etc/nginx/nginx.conf | head -n 1)"
+nginx_user="$(sed -n 's/^[[:space:]]*user[[:space:]]\{1,\}\([^[:space:];]\{1,\}\).*/\1/p' /etc/nginx/nginx.conf | awk 'NR == 1')"
 [[ "$nginx_user" == www-data ]] \
     || die "nginx's workers run as ${nginx_user:-the default user}, and the web's socket admits www-data; set 'user www-data;' in /etc/nginx/nginx.conf"
 

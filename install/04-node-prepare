@@ -364,7 +364,7 @@ systemctl mask --quiet ipvsadm.service
 log "  masked   ipvsadm.service (keepalived owns the IPVS table)"
 DEBIAN_FRONTEND=noninteractive apt-get "${APT_WAIT[@]}" install -y -q ipvsadm >/dev/null \
     || die "ipvsadm: the package could not be installed"
-log "  ok       $(/usr/sbin/ipvsadm --version 2>/dev/null | head -n 1)"
+log "  ok       $(/usr/sbin/ipvsadm --version 2>/dev/null | awk 'NR == 1')"
 
 step "HAProxy's log sockets"
 
@@ -662,7 +662,7 @@ step "Node scripts"
 # after that is what `dpkg --verify` reports, and the configuration stops there
 # rather than recording the edited bytes as the installation.
 #
-dpkg-query -W -f='${Status}' haprion-node 2>/dev/null | grep -q "install ok installed" \
+dpkg-query -W -f='${Status}' haprion-node 2>/dev/null | grep "install ok installed" >/dev/null \
     || die "the haprion-node package is not installed; install it with apt install haprion-node (from a source tree: tools/install-node-package)"
 changed="$(node_package_changes)"
 if [[ -n "$changed" ]]; then
@@ -844,7 +844,7 @@ sshd_listen_file_stale() {
         address="${listed%:*}"
         [[ "$address" =~ ^[0-9]+(\.[0-9]+){3}$ ]] || continue
         if [[ "$address" == "$(cluster_value VIP "$CLUSTER")" ]] \
-            || ! ip -4 -o addr show | grep -qF " inet ${address}/"; then
+            || ! ip -4 -o addr show | grep -F " inet ${address}/" >/dev/null; then
             echo "$address"
         fi
     done < <(awk 'tolower($1) == "listenaddress" { print $2 }' "$SSHD_LISTEN")
@@ -886,7 +886,7 @@ sshd_off_the_virtual_address() {
         warn "sshd -T could not read sshd's configuration; its listen address is not checked"
     elif stale="$(sshd_listen_file_stale)" && [[ -z "$stale" ]] \
             && ! awk '$1 == "listenaddress" { print $2 }' <<<"$sshd_settings" \
-            | grep -qE '^(0\.0\.0\.0|\[::\]):'; then
+            | grep -E '^(0\.0\.0\.0|\[::\]):' >/dev/null; then
         log "  ok       sshd listens on chosen addresses only"
     else
         kept=""
@@ -920,7 +920,7 @@ sshd_off_the_virtual_address() {
             if [[ "$own_address" == "$(cluster_value VIP "$CLUSTER")" ]]; then
                 sshd_no_address "${own_address} is the virtual address; sshd cannot be put on it" "$stale" && return 0
             fi
-            if ! ip -4 -o addr show | grep -qF " inet ${own_address}/"; then
+            if ! ip -4 -o addr show | grep -F " inet ${own_address}/" >/dev/null; then
                 sshd_no_address "${own_address} is not an address of this node" "$stale" && return 0
             fi
             chosen=("$own_address")
@@ -949,7 +949,7 @@ sshd_off_the_virtual_address() {
             done
             [[ -n "$listening_here" ]] || sshd_put_back "sshd does not listen on ${want}"
         done
-        if ss -Hltn | awk -v p="${ssh_port}" '$4 == "0.0.0.0:" p || $4 == "[::]:" p' | grep -q .; then
+        if ss -Hltn | awk -v p="${ssh_port}" '$4 == "0.0.0.0:" p || $4 == "[::]:" p' | grep . >/dev/null; then
             sshd_put_back "sshd still listens on every address: sshd_config names it itself"
         fi
         log "  applied  sshd listens on ${wanted%, } only"

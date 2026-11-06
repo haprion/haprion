@@ -253,7 +253,7 @@ stage_keepalived_conf() {
     rendered="$(cat "$published")"
     if [[ "$rendered" == *"$KEEPALIVED_INTERFACE_FROM_NODE"* ]]; then
         own="$(awk '$1 == "unicast_src_ip" { print $2; exit }' "$published")"
-        interface="$(ip -o addr show | awk -v own="$own" '{ split($4, a, "/"); if (a[1] == own) { print $2; exit } }')"
+        interface="$(ip -o addr show | awk -v own="$own" '{ split($4, a, "/"); if (a[1] == own) { if (!done) print $2; done = 1 } }')"
         if [[ -z "$interface" ]]; then
             log "ERROR: keepalived: no interface carries this node's address ${own:-(none named)}."
             return 1
@@ -518,7 +518,7 @@ waf_listening() {
     # line; a value this does not read as a port is a release this node
     # cannot confirm, and is treated as not listening.
     #
-    bind="$(sed -n 's/^bind:[[:space:]]*//p' "${CURRENT}/waf/coraza.yaml" | head -n 1)"
+    bind="$(sed -n 's/^bind:[[:space:]]*//p' "${CURRENT}/waf/coraza.yaml" | awk 'NR == 1')"
     port="${bind##*:}"
     [[ "$port" =~ ^[0-9]{1,5}$ ]] || return 1
     #
@@ -526,7 +526,7 @@ waf_listening() {
     # would read as an engine that started while the engine itself failed to
     # bind. `-p` names the process, which needs root - as this script runs.
     #
-    ss -Hltnp "sport = :${port}" | grep -q '"coraza-spoa"'
+    ss -Hltnp "sport = :${port}" | grep '"coraza-spoa"' >/dev/null
 }
 
 #
@@ -717,7 +717,7 @@ dns_listening() {
     while read -r endpoint; do
         port="${endpoint##*:}"
         [[ "$port" =~ ^[0-9]{1,5}$ ]] || return 1
-        ss -Hlunp "sport = :${port}" | grep -q '"dnsdist"' || return 1
+        ss -Hlunp "sport = :${port}" | grep '"dnsdist"' >/dev/null || return 1
     done < <(sed -n 's/^\(setLocal\|addLocal\)("\([^"]*\)")$/\2/p' "${CURRENT}/dns/dnsdist.conf")
 }
 

@@ -131,7 +131,7 @@ setup_check_server_name() {
     local advice="its certificate is made for that name, and the nodes look it up. To use another: SERVER_NAME=<name> in a file given with haprion-setup --answers <file>"
     if [[ "$name" != *.* ]]; then
         setup_note "the web interface will answer to ${name}, a name without a domain; ${advice}"
-    elif ! awk '{ print $1 }' <<<"$addresses" | grep -qvE '^(127\.|::1$)'; then
+    elif ! awk '{ print $1 }' <<<"$addresses" | grep -vE '^(127\.|::1$)' >/dev/null; then
         #
         # Loopback alone here may be /etc/hosts' own line for this machine -
         # Debian's installer writes 127.0.1.1 for it - while DNS gives the other

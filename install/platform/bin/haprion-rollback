@@ -248,7 +248,7 @@ for service in "${SERVICES[@]}"; do
     # Read out of the unit rather than assumed, so a unit that was edited by
     # hand is checked as it actually is.
     #
-    program="$(sed -n 's|^ExecStart=\([^ ]*\).*|\1|p' "$unit" | head -1)"
+    program="$(sed -n 's|^ExecStart=\([^ ]*\).*|\1|p' "$unit" | awk 'NR == 1')"
     program="${program/${platform_root}\/current/${releases}/${target}}"
     if [[ -n "$program" && ! -x "$program" ]]; then
         warn "  missing  ${service}: ${program}"

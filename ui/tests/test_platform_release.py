@@ -78,7 +78,7 @@ class PreparedReleaseTests(unittest.TestCase):
         wrapper = (ROOT / "install/platform/check-compatibility").read_text()
 
         self.assertIn('-m "${checker_module}.compatibility" --help', wrapper)
-        self.assertIn("grep -q -- '--collector-config'", wrapper)
+        self.assertIn("grep -- '--collector-config' >/dev/null", wrapper)
         self.assertIn("predates the traffic collector inventory check", wrapper)
 
 

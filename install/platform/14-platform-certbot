@@ -152,7 +152,7 @@ install_file "/etc/systemd/system/${UNIT}.service" root:root 644 \
 install_file "/etc/systemd/system/${UNIT}.timer" root:root 644 \
     "$(cat "examples/${UNIT}.timer.example")"
 systemctl daemon-reload
-if systemctl list-unit-files certbot.timer --no-legend 2>/dev/null | grep -q .; then
+if systemctl list-unit-files certbot.timer --no-legend 2>/dev/null | grep . >/dev/null; then
     if [[ "$(systemctl is-enabled certbot.timer 2>/dev/null || true)" != "masked" ]]; then
         systemctl disable --now --quiet certbot.timer 2>/dev/null || true
         systemctl mask --quiet certbot.timer

@@ -64,7 +64,7 @@ join_key_expiry() {
     local public
     public="$(cut -d' ' -f1,2 < "${JOIN_KEY}.pub")"
     { grep -F " ${public}" "$JOIN_KEYS" || true; } \
-        | sed -n 's/^restrict,expiry-time="\([0-9]\{12\}\)Z".*/\1/p' | head -n 1
+        | sed -n 's/^restrict,expiry-time="\([0-9]\{12\}\)Z".*/\1/p' | awk 'NR == 1'
 }
 
 #

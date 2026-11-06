@@ -114,7 +114,10 @@ case "$*" in
     *"route get"*) echo "192.0.2.5 dev eth0 src ${SOURCE:-192.0.2.11} uid 0" ;;
     *"addr show"*)
         echo "2: eth0    inet 192.0.2.11/24 brd 192.0.2.255 scope global eth0"
-        echo "2: eth0    inet 192.0.2.13/24 brd 192.0.2.255 scope global secondary eth0" ;;
+        echo "2: eth0    inet 192.0.2.13/24 brd 192.0.2.255 scope global secondary eth0"
+        # Enough after the matching line that a reader which stops at the first
+        # match leaves the writer with a closed pipe (SIGPIPE) every time.
+        seq 1 100000 | sed 's|.*|3: eth1    inet 198.51.100.1/24 scope global eth1|' ;;
 esac
 """,
     "sleep": "#!/bin/sh\nexit 0\n",

@@ -253,7 +253,7 @@ ensure_dir() {
 is_packaged_conffile() {
     local package="$1" path="$2" recorded
     recorded="$(dpkg-query -W -f='${Conffiles}\n' "$package" 2>/dev/null \
-        | awk -v path="$path" '$1 == path { print $2; exit }')"
+        | awk -v path="$path" '$1 == path { if (!done) print $2; done = 1 }')"
     [[ -n "$recorded" && -f "$path" && ! -L "$path" ]] \
         && [[ "$(md5sum < "$path" | cut -d' ' -f1)" == "$recorded" ]]
 }
@@ -413,7 +413,7 @@ ensure_dnsdist() {
                "check that this machine reaches it, then run this step again"
     DEBIAN_FRONTEND=noninteractive apt-get "${APT_WAIT[@]}" install -y -q dnsdist >/dev/null \
         || die "dnsdist: the package could not be installed"
-    version="$(dnsdist --version 2>/dev/null | head -n 1)"
+    version="$(dnsdist --version 2>/dev/null | awk 'NR == 1')"
     [[ "$version" == "dnsdist 2.1."* ]] || die "dnsdist: expected the 2.1 series, found '${version}'"
     log "  ok       ${version%% (*}"
 }

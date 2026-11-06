@@ -310,7 +310,7 @@ where_it_stands() {
                 dump_dir="$(admin_value /etc/haprion/ui-admin.conf DUMP_DIR 2>/dev/null || true)"
                 [[ -z "$dump_dir" ]] || dump="$(find "${dump_dir}/before-migration" -maxdepth 1 \
                         -name "*-${schema_now}-to-*.dump" -printf '%T@ %p\n' 2>/dev/null \
-                        | sort -rn | head -1 | cut -d' ' -f2-)"
+                        | sort -rn | awk 'NR == 1' | cut -d' ' -f2-)"
                 echo "The database moved from schema ${schema_now} to ${schema}, which ${running} runs on."
                 [[ -z "$dump" ]] || echo "The dump taken before the migration: ${dump}"
             fi

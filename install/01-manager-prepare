@@ -175,7 +175,7 @@ step "Git safe.directory"
 #
 for cluster in $(each_cluster); do
     for repo in "${CONFIG_ROOT}/${cluster}.git" "${CONFIG_ROOT}/${cluster}"; do
-        if git config --global --get-all safe.directory 2>/dev/null | grep -qxF "$repo"; then
+        if git config --global --get-all safe.directory 2>/dev/null | grep -xF "$repo" >/dev/null; then
             log "  ok       ${repo}"
         else
             git config --global --add safe.directory "$repo"

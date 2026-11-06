@@ -158,7 +158,7 @@ if [[ "$traffic_logs_enabled" == "enabled" ]]; then
     # The inventory check belongs to the release that runs the check, not to
     # this checkout: a release without it is reported without it, never refused.
     if "${checker_root}/venv/bin/python" -m "${checker_module}.compatibility" --help 2>/dev/null \
-        | grep -q -- '--collector-config'; then
+        | grep -- '--collector-config' >/dev/null; then
         extra_args+=(
             --runtime-policy /etc/haprion/runtime-policy.yaml
             --collector-config /etc/haprion/traffic-collector.json

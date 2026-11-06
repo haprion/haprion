@@ -117,6 +117,20 @@ GITIGNORE = "*.swp\n*~\n.#*\n"
 #
 SHM_STATS_FILE = "/run/haproxy/stats.shm"
 #
+# How many objects that file may hold (B487). HAProxy 3.4's own limit is 2000,
+# and every frontend, listener and server the generator gives a GUID takes
+# one: a publish of about 700 objects was refused ("maximum number already
+# reached (2000)", 26-11-05). The limit is only a ceiling - the file grows with
+# the objects in use, about 0.7 KiB each, and 200 000 or 1 000 000 gave the
+# same file and the same memory for 20 000 servers; a reload into a higher
+# limit carries the file on. A reload holds the old process's counters and the
+# new one's at once, so a publish that replaces every object needs twice its
+# count; the old process's are freed when it ends (at 2000, a reload from
+# 1 500 servers to 1 500 others was refused; all measured 26-11-06 on 3.4.7).
+# 10 000 heavy objects take about 120 000.
+#
+SHM_STATS_MAX_OBJECTS = 1_000_000
+#
 # The socket the node's server state helper sets drain, maintenance and ready
 # on (Fas 20, B263): level admin, which `operator` is not (measured), and mode
 # 600, so only root opens it. Named in the core template below.
@@ -148,6 +162,9 @@ global
     # so the path is the host's (docs/user-manual.md, 'Counters across a
     # reload').
     shm-stats-file /run/haproxy/stats.shm
+    # Room in it for a million objects: HAProxy's own 2000 is reached by a few
+    # hundred proxies, and the room costs nothing until it is used.
+    shm-stats-file-max-objects 1000000
 
     # The manager's own runtime socket, root only: drain, maintenance and
     # ready per server (docs/user-manual.md, 'Node scripts').

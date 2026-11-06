@@ -632,6 +632,11 @@ class CreatingACluster(unittest.TestCase):
         wanted = f"    shm-stats-file {cluster_definition.SHM_STATS_FILE}"
 
         self.assertIn(wanted, ours.splitlines())
+        # B487: HAProxy's own 2000 refused a publish of about 700 objects.
+        self.assertIn(
+            f"    shm-stats-file-max-objects {cluster_definition.SHM_STATS_MAX_OBJECTS}",
+            ours.splitlines(),
+        )
         self.assertEqual(
             str(Path(cluster_definition.SHM_STATS_FILE).parent),
             candidate_validation.SHM_STATS_DIRECTORY,

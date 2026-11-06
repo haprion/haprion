@@ -4105,12 +4105,21 @@ Every deploy reloads HAProxy. A reloaded HAProxy starts its counters from nought
 ```
 global
     shm-stats-file /run/haproxy/stats.shm
+    shm-stats-file-max-objects 1000000
 ```
 
-A new cluster's core has the line. HAProxy then keeps each frontend's, listener's and server's counters in
+A new cluster's core has both lines. HAProxy then keeps each frontend's, listener's and server's counters in
 that file. After a reload it finds them again by the GUID (a fixed unique ID) the generator gives every
 object. A deploy therefore puts no step into a dashboard reading the exporter. Changing a server's address
 makes it a different server, which starts again. Reordering a pool changes nothing.
+
+- **The second line gives the file room.** Without it HAProxy holds 2000 counters, one for each frontend,
+  listener and server. A cluster of a few hundred proxies reaches that, and its publish is then refused
+  with *maximum number already reached (2000)*. A reload holds the old configuration's counters and the
+  new one's at once, so a publish that replaces many objects needs room for both; the old ones are freed
+  when the old process ends. The room costs nothing until it is used: the file grows with the objects in
+  it, about 0.7 KiB each. A cluster made before the line has HAProxy's 2000. Add the line under `global`
+  in its `core/haproxy.cfg`, and the next deploy carries it.
 
 - **A pool's own figures still start again on every reload.** HAProxy 3.4.6 carries a backend's own
   counters badly: each reload attaches the backend to the other of two places in the file, so its totals

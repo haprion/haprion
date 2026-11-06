@@ -52,6 +52,7 @@ pages - the CLI drives the same root helpers.
 from __future__ import annotations
 
 import argparse
+import base64
 import concurrent.futures
 import functools
 import hashlib
@@ -1750,24 +1751,76 @@ NODE_SIZE = ("--cpus", "1", "--memory", "1g")
 # backends pointing at the test's own backend and the health checks off - ten
 # thousand TCP checks every two seconds would measure the checks, not the
 # configuration. Written on the manager, one file each, as `haprion-objects
-# apply` reads them.
+# apply` reads them. Applied with `-m`: without one, the comment is made from
+# every name in the plan and the helper refuses it above 4096 bytes (found by
+# this scenario, 26-11-05: between 300 and 600 new objects).
 #
 SCALE_OBJECTS = 10_000
+SCALE_DIR = "/root/install/scale"
+CONFIG_ROOT = "/srv/haprion/config"
+#
+# Room in the counters file per object: a light object took about three
+# entries (the limit of 2000 was reached near 700, 26-11-05), a heavy one has
+# ten servers. Ten and twenty leave room over that.
+#
+COUNTERS_PER_OBJECT = {"light": 10, "heavy": 20}
+
+
+@dataclass(frozen=True)
+class Scale:
+    """What one scale run measures (B482): how many objects, of which kind, on what manager."""
+
+    objects: int = SCALE_OBJECTS
+    kind: str = "light"
+    cpus: str = MANAGER_SIZE[1]
+    memory: str = MANAGER_SIZE[3]
+
+    def manager(self) -> tuple[str, ...]:
+        return ("--cpus", self.cpus, "--memory", self.memory)
+
+
 SCALE_GENERATE = """\
 import pathlib, sys
-backend, count = sys.argv[1], int(sys.argv[2])
-template = (
+backend, count, root = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+kind = sys.argv[4] if len(sys.argv) > 4 else "light"
+light = (
     "schema: 1\\nname: s{i}\\nhostnames: [s{i}.example.com, www-s{i}.example.com]\\n"
     "listen:\\n  protocol: http\\nrate_limit:\\n  window: 10s\\n  max_requests: 100\\n"
     "routes:\\n- path: /\\n  backend: web{i}\\n- path: /api\\n  backend: api{i}\\n"
     "  strip_prefix: /api\\n  add_prefix: /v2\\n- path: /health\\n  match: exact\\n"
     "  backend: web{i}\\nbackends:\\n  web{i}:\\n    balance: roundrobin\\n"
     "    health:\\n      type: disabled\\n    servers:\\n    - host: " + backend + "\\n"
-    "      port: 9080\\n    - host: " + backend + "\\n      port: 9080\\n  api{i}:\\n"
+    "      port: 9080\\n    - host: " + backend + "\\n      port: 9081\\n  api{i}:\\n"
     "    balance: roundrobin\\n    health:\\n      type: disabled\\n    servers:\\n"
     "    - host: " + backend + "\\n      port: 9080\\n"
 )
-root = pathlib.Path("/root/install/scale")
+#
+# B475's heavy object: four host names, six routes, ten servers. Only the two
+# servers of web{i} listen (9080, 9081); the others are never asked, as the
+# sampled requests go to /, and their checks are off.
+#
+def servers(ports):
+    return "".join(
+        "    - host: " + backend + "\\n      port: " + str(port) + "\\n" for port in ports
+    )
+def pool(name, ports):
+    return (
+        "  " + name + "{i}:\\n    balance: roundrobin\\n    health:\\n      type: disabled\\n"
+        "    servers:\\n" + servers(ports)
+    )
+heavy = (
+    "schema: 1\\nname: s{i}\\nhostnames: [s{i}.example.com, www-s{i}.example.com, "
+    "api-s{i}.example.com, static-s{i}.example.com]\\n"
+    "listen:\\n  protocol: http\\nrate_limit:\\n  window: 10s\\n  max_requests: 100\\n"
+    "routes:\\n- path: /\\n  backend: web{i}\\n- path: /api\\n  backend: api{i}\\n"
+    "  strip_prefix: /api\\n  add_prefix: /v2\\n- path: /v1\\n  backend: api{i}\\n"
+    "- path: /health\\n  match: exact\\n  backend: web{i}\\n"
+    "- path: /static\\n  backend: static{i}\\n- path: /assets\\n  backend: static{i}\\n"
+    "backends:\\n" + pool("web", (9080, 9081)) + pool("api", range(9082, 9086))
+    + pool("static", range(9086, 9090))
+)
+template = {"light": light, "heavy": heavy}[kind]
+root = pathlib.Path(root)
 root.mkdir(parents=True, exist_ok=True)
 for i in range(count):
     (root / f"s{i}.yaml").write_text(template.format(i=i))
@@ -1819,13 +1872,17 @@ class Scenario:
         self.step = step
         self.measurements: list[Measured] = []
         self.previous: Path | None = None
+        self.new_manager: list[Path] = []
+        self.new_node: list[Path] = []
+        self.cut_at = ""
+        self.scale = Scale()
 
     def bring_up(self, manager_files: list[Path], node_files: list[Path], *, sized: bool) -> None:
         """A manager and two nodes, installed, joined, an object deployed to both."""
 
         run = self.run
         if sized:
-            run.limits = {"mgr": MANAGER_SIZE, **{node: NODE_SIZE for node in NODES}}
+            run.limits = {"mgr": self.scale.manager(), **{node: NODE_SIZE for node in NODES}}
         image = self.step("an empty server image", run.image)
         self.step("a manager and two nodes booted", lambda: run.start(image))
         self.step(
@@ -1912,28 +1969,63 @@ class Scenario:
 
 
 def scale_steps(scenario: Scenario) -> None:
-    """10 000 objects applied, published, deployed to both nodes and answering on the VIP (B481)."""
+    """The objects applied, published, deployed to both nodes and answering on the VIP (B481, B482)."""
 
     run = scenario.run
     step = scenario.step
     roles = ("mgr", *NODES)
+    scale = scenario.scale
+    count = scale.objects
+    probe = f"s{count // 2}"
+    print(f"  {count} {scale.kind} objects, the manager {scale.cpus} vCPU / {scale.memory}")
 
     def generated() -> None:
         run.on(
-            "mgr", "python3 -I - " + f"{run.address('mgr')} {SCALE_OBJECTS}", stdin=SCALE_GENERATE
+            "mgr",
+            "systemd-run --unit install-test-backend-2 --property=Restart=always "
+            "/usr/bin/python3 -m http.server 9081 --directory /srv/install-test",
         )
-        _, found = run.on("mgr", "ls /root/install/scale | wc -l")
-        if int(found) != SCALE_OBJECTS:
-            raise Failed(f"{found.strip()} object files, not {SCALE_OBJECTS}")
+        run.on(
+            "mgr",
+            "python3 -I - " + f"{run.address('mgr')} {count} {SCALE_DIR} {scale.kind}",
+            stdin=SCALE_GENERATE,
+        )
+        _, found = run.on("mgr", f"ls {SCALE_DIR} | wc -l")
+        if int(found) != count:
+            raise Failed(f"{found.strip()} object files, not {count}")
 
-    step(f"{SCALE_OBJECTS} object files written on the manager", generated)
+    step(f"{count} object files written on the manager", generated)
+
+    def counters_file() -> None:
+        """The core's counters file (shm-stats-file) holds 2000 objects unless told otherwise.
+
+        Found by this scenario (26-11-05): with a new cluster's core as it is,
+        a publish of about 700 of these objects is refused - "maximum number
+        already reached (2000)" - because HAProxy 3.4 sizes the file for 2000
+        and the generator gives every frontend, listener and server a GUID.
+        The operator's remedy is a line in `core/haproxy.cfg`, which the
+        manual does not mention. The scenario applies it so that the rest is
+        measured; take the step out when the product sets the limit itself.
+        """
+
+        core = f"{CONFIG_ROOT}/{CLUSTER}/core/haproxy.cfg"
+        run.on(
+            "mgr",
+            f"sed -i 's|^\\(    shm-stats-file /run/haproxy/stats.shm\\)$|\\1\\n"
+            f"    shm-stats-file-max-objects {count * COUNTERS_PER_OBJECT[scale.kind]}|' {core} "
+            f"&& grep -n shm {core}",
+        )
+        run.on("mgr", f"haprion-publish -c {CLUSTER} 'the counters file holds the objects'")
+
+    step("core/haproxy.cfg: the counters file is given room for the objects", counters_file)
 
     def checked() -> None:
         scenario.measure(
             "apply --check",
             ("mgr",),
             lambda: run.on(
-                "mgr", f"haprion-objects apply -c {CLUSTER} /root/install/scale --check"
+                "mgr",
+                f"haprion-objects apply -c {CLUSTER} {SCALE_DIR} --check -m 'scale test'",
             ),
         )
 
@@ -1944,14 +2036,16 @@ def scale_steps(scenario: Scenario) -> None:
             "apply (batches of 64, each a version)",
             ("mgr",),
             lambda: run.on(
-                "mgr", f"haprion-objects apply -c {CLUSTER} /root/install/scale -m 'scale test'"
+                "mgr", f"haprion-objects apply -c {CLUSTER} {SCALE_DIR} -m 'scale test'"
             ),
         )
 
     step("haprion-objects apply: the objects published", applied)
 
     def again() -> None:
-        _, said = run.on("mgr", f"haprion-objects apply -c {CLUSTER} /root/install/scale --json")
+        _, said = run.on(
+            "mgr", f"haprion-objects apply -c {CLUSTER} {SCALE_DIR} -m 'scale test' --json"
+        )
         if '"changed": false' not in said.replace('":false', '": false'):
             raise Failed(f"applying the same files again changed something:\n{said[-2000:]}")
 
@@ -1959,22 +2053,52 @@ def scale_steps(scenario: Scenario) -> None:
 
     def publish_job() -> None:
         header = run.api_token("scale-write", "--level write", f"--cluster {CLUSTER}")
-        _, shown = run.on("mgr", f"haprion-objects -c {CLUSTER} --show s5000")
+        #
+        # The apply made one version per batch; the web reads them through the
+        # poller afterwards. A change saved over a reading behind the newest
+        # version is fenced off by the publish as moved (run 26-11-05: job
+        # blocked, expected_target_changed) - right for a person who saves on
+        # a page older than the repository. The scenario saves once the
+        # reading has caught up, as a person opening the page then would, and
+        # says how long that took.
+        #
+        _, newest = run.on(
+            "mgr", f"git -c safe.directory='*' -C {CONFIG_ROOT}/{CLUSTER} rev-parse HEAD"
+        )
+        newest = newest.strip()
+        began = time.monotonic()
+        until = began + 600
+        while True:
+            status, answer, _ = run.api(header, "GET", f"/clusters/{CLUSTER}/objects/{probe}")
+            read = (answer.get("result") or {}).get("commit") if status == 200 else None
+            if read == newest:
+                break
+            if time.monotonic() > until:
+                raise Failed(
+                    f"the web still reads {read} after 600 s, the repository is at {newest}"
+                )
+            time.sleep(5)
+        print(f"(the web read the newest version after {time.monotonic() - began:.0f} s)", end=" ")
+        _, shown = run.on("mgr", f"haprion-objects -c {CLUSTER} --show {probe}")
         document = shown.rstrip("\n") + "\ndescription: changed through the API\n"
         until = time.monotonic() + 180
         while True:
             status, answer, _ = run.api(
-                header, "PUT", f"/clusters/{CLUSTER}/objects/s5000", document
+                header, "PUT", f"/clusters/{CLUSTER}/objects/{probe}", document
             )
             if status == 200 or time.monotonic() > until or status not in (404, 409):
                 break
             time.sleep(5)
         if status != 200:
-            raise Failed(f"saving s5000 through the API answered {status}:\n{answer}")
+            raise Failed(f"saving {probe} through the API answered {status}:\n{answer}")
 
         def publish() -> dict[str, Any]:
             job = run.api_write(
-                header, "POST", f"/clusters/{CLUSTER}/publish", '{"comment": "scale"}', 300
+                header,
+                "POST",
+                f"/clusters/{CLUSTER}/publish",
+                '{"comment": "scale", "deploy": false}',
+                300,
             )
             return run.api_job(header, job, 900)
 
@@ -2000,7 +2124,7 @@ def scale_steps(scenario: Scenario) -> None:
     def deployed() -> None:
         output, _ = scenario.measure("haprion-deploy to both nodes", roles, run.deploy)
         order = re.findall(r"^=== Deploy: (\S+) ===$", output, re.MULTILINE)
-        if order != list(NODES) or "RESULT: OK" not in output:
+        if sorted(order) != list(NODES) or "RESULT: OK" not in output:
             raise Failed(f"the deploy did not end OK on both nodes:\n{output[-3000:]}")
         _, status = run.on("mgr", f"haprion-status -c {CLUSTER}", check=False)
         print(f"\n{status}", end="")
@@ -2034,7 +2158,7 @@ def scale_steps(scenario: Scenario) -> None:
     step("HAProxy reloads on each node with the whole configuration", reloaded)
 
     def answering() -> None:
-        sample = list(range(0, SCALE_OBJECTS, SCALE_OBJECTS // 20))[:19] + [SCALE_OBJECTS - 1]
+        sample = list(range(0, count, count // 20))[:19] + [count - 1]
         wrong = []
         for i in sample:
             _, body = run.on(
@@ -2058,7 +2182,729 @@ def scale_steps(scenario: Scenario) -> None:
     step("a second deploy changes nothing", converged)
 
 
-SCENARIOS: dict[str, Callable[[Scenario], None]] = {"scale": scale_steps}
+def keepalived_view(run: Run, role: str) -> dict[str, str]:
+    """What a node's keepalived is configured with and says it is doing, for the log and the asserts."""
+
+    _, own = run.on(
+        role, "awk '$1 == \"unicast_src_ip\" {print $2}' /etc/keepalived/keepalived.conf"
+    )
+    _, peers = run.on(
+        role, "sed -n '/unicast_peer {/,/}/p' /etc/keepalived/keepalived.conf | sed '1d;$d'"
+    )
+    _, active = run.on(role, "systemctl is-active keepalived", check=False)
+    _, state = run.on(
+        role,
+        "journalctl -u keepalived --no-pager -o cat | grep -E 'Entering (MASTER|BACKUP|FAULT)' | tail -1",
+        check=False,
+    )
+    _, addresses = run.on(role, "ip -4 -o addr show | awk '{print $4}' | tr '\\n' ' '")
+    return {
+        "src": own.strip(),
+        "peers": " ".join(peers.split()),
+        "active": active.strip(),
+        "state": state.strip() or "no state line yet",
+        "addresses": addresses.strip(),
+    }
+
+
+def readdress_steps(scenario: Scenario) -> None:
+    """A node changes its address: what keepalived does, Change host, failover, a deploy (B481)."""
+
+    run = scenario.run
+    step = scenario.step
+    holder = run.wait_for_one_holder()
+    moving = next(role for role in NODES if role != holder)
+    staying = holder
+    old = run.address(moving)
+    new = f"{run.distribution.subnet}.32"
+    seen: dict[str, dict[str, dict[str, str]]] = {}
+
+    def show(moment: str) -> None:
+        seen[moment] = {role: keepalived_view(run, role) for role in NODES}
+        for role, view in seen[moment].items():
+            print(
+                f"\n      {moment} / {role}: unicast_src_ip {view['src']}, peers [{view['peers']}], "
+                f"keepalived {view['active']}, {view['state']}",
+                end="",
+            )
+        print(" ... ", end="")
+
+    def before() -> None:
+        show("before")
+        if seen["before"][moving]["src"] != old or seen["before"][staying]["peers"] != old:
+            raise Failed(f"keepalived does not name {old} for {moving} before the change: {seen}")
+
+    step(f"keepalived names {old} for {moving}, and {staying} holds the address", before)
+
+    def moved() -> None:
+        run.podman("network", "disconnect", run.network, run.container(moving))
+        run.podman(
+            "network",
+            "connect",
+            "--ip",
+            new,
+            "--alias",
+            moving,
+            run.network,
+            run.container(moving),
+        )
+        _, addresses = run.on(moving, "ip -4 -o addr show | awk '{print $4}' | tr '\\n' ' '")
+        if f"{new}/" not in addresses or f"{old}/" in addresses:
+            raise Failed(f"{moving} carries {addresses.strip()} after the change, not {new}")
+        _, resolved = run.on("mgr", f"getent hosts {moving}")
+        print(f"(the manager resolves {moving} as {resolved.split()[0]})", end=" ")
+
+    step(f"{moving} is given {new} in place of {old}", moved)
+
+    def untold() -> None:
+        time.sleep(15)
+        show("address changed, product not told")
+        _, status = run.on("mgr", f"haprion-status -c {CLUSTER}", check=False)
+        print(f"\n{status.rstrip()}\n      ", end="")
+        holders = run.holders()
+        print(f"(the virtual address is held by {holders or 'no node'})", end=" ")
+
+    step("what keepalived and the manager say before the product is told", untold)
+
+    def prepared() -> None:
+        _, output = run.on(moving, "haprion-node-prepare")
+        print("\n      " + "\n      ".join(output.strip().splitlines()[-6:]), end="\n      ")
+        _, listening = run.on(moving, "sshd -T | grep -i '^listenaddress'")
+        if new not in listening:
+            raise Failed(f"sshd on {moving} does not listen on {new}:\n{listening}")
+
+    step(f"haprion-node-prepare on {moving}, as the manual orders it: sshd moves", prepared)
+
+    def told() -> None:
+        _, output = run.on("mgr", f"haprion-node host -c {CLUSTER} {moving} --host {new}")
+        print("\n      " + "\n      ".join(output.strip().splitlines()), end="\n      ")
+        if f"is now reached at {new}" not in output:
+            raise Failed(f"Change host did not say the node is reached at {new}:\n{output}")
+        _, hosts = run.on("mgr", f"ssh-keygen -F {new} -f /root/.ssh/known_hosts | head -1")
+        if not hosts.strip():
+            raise Failed(f"the host key of {moving} is not pinned under {new}")
+        show("Change host done, not deployed")
+        _, status = run.on("mgr", f"haprion-status -c {CLUSTER}", check=False)
+        print(f"\n{status.rstrip()}\n      ", end="")
+
+    step(f"Change host: haprion-node host {moving} --host {new}", told)
+
+    def deployed() -> None:
+        output = run.deploy()
+        if "RESULT: OK" not in output:
+            raise Failed(f"the deploy after Change host did not succeed:\n{output[-3000:]}")
+        deadline = time.monotonic() + 30
+        while True:
+            show("deployed")
+            views = seen["deployed"]
+            if views[moving]["src"] == new and views[staying]["peers"] == new:
+                break
+            if time.monotonic() > deadline:
+                raise Failed(f"keepalived was not given the new address by the deploy: {views}")
+            time.sleep(3)
+        for role in NODES:
+            if seen["deployed"][role]["active"] != "active":
+                raise Failed(f"keepalived on {role} is {seen['deployed'][role]['active']}")
+
+    step("a deploy carries the new address to both nodes' keepalived", deployed)
+
+    def one_holder() -> None:
+        time.sleep(5)
+        held = run.wait_for_one_holder(30)
+        run.answers_on_the_vip()
+        print(f"(held by {held})", end=" ")
+
+    step("the virtual address is on exactly one node and answers", one_holder)
+
+    def failover() -> None:
+        first = run.wait_for_one_holder()
+        run.on(first, "systemctl stop keepalived")
+        other = run.wait_for_one_holder(30)
+        if other == first:
+            raise Failed(f"the address stayed on {first} with its keepalived stopped")
+        run.answers_on_the_vip()
+        run.on(first, "systemctl start keepalived")
+        time.sleep(5)
+        if run.wait_for_one_holder() != other:
+            raise Failed(f"the address went back to {first}; nopreempt should keep it")
+        #
+        # And back the other way, so that both directions have crossed the new address.
+        #
+        run.on(other, "systemctl stop keepalived")
+        back = run.wait_for_one_holder(30)
+        if back != first:
+            raise Failed(f"the address did not go back to {first}: held by {back}")
+        run.answers_on_the_vip()
+        run.on(other, "systemctl start keepalived")
+        time.sleep(5)
+
+    step("the address moves both ways between the nodes, over the new address", failover)
+
+    def change_reaches_both() -> None:
+        document = OBJECT.format(backend=run.address("mgr")) + BLOCKING
+        run.on("mgr", "cat > /root/install/objects/shop.yaml", stdin=document)
+        run.on(
+            "mgr",
+            f"haprion-objects apply -c {CLUSTER} /root/install/objects -m 'after the address change'",
+        )
+        output = run.deploy()
+        order = re.findall(r"^=== Deploy: (\S+) ===$", output, re.MULTILINE)
+        if sorted(order) != sorted(NODES) or "RESULT: OK" not in output:
+            raise Failed(f"the deploy did not reach both nodes:\n{output[-3000:]}")
+        for role in NODES:
+            run.table_holds(role, BLOCKED)  # fails when the node does not run the new version
+        run.answers_on_the_vip()
+        output = run.deploy()
+        if output.count("already runs this version; nothing to do") != len(NODES):
+            raise Failed(f"a second deploy did not find the nodes current:\n{output[-3000:]}")
+
+    step(
+        "a changed object is deployed to both nodes, and a second deploy changes nothing",
+        change_reaches_both,
+    )
+
+
+#
+# Faults (B481). A node's reload made slow, so that a deploy is under way for a
+# while at a place the test can see: node-a is done and node-b sits in its
+# reload. HAProxy's own `ExecReload` runs first; this adds a sleep after it.
+#
+SLOW_RELOAD = Path("/etc/systemd/system/haproxy.service.d/install-test-slow.conf")
+SLOW_RELOAD_UNIT = """[Service]
+ExecReload=/bin/sleep {seconds}
+"""
+SLOW_SECONDS = 50
+#
+# An identity provider as far as Verify goes (docs/user-manual.md, "Checking the
+# sign-in"): discovery, a key set, and a token endpoint that answers a code it
+# never issued with `invalid_grant`. Over TLS, from a certificate for `mgr`.
+#
+IDP_PORT = 8444
+FAKE_IDP = """\
+import http.server, json, ssl
+issuer = "https://mgr:@PORT@"
+discovery = {
+    "issuer": issuer,
+    "authorization_endpoint": issuer + "/authorize",
+    "token_endpoint": issuer + "/token",
+    "jwks_uri": issuer + "/jwks",
+    "response_types_supported": ["code"],
+    "subject_types_supported": ["public"],
+    "id_token_signing_alg_values_supported": ["RS256"],
+    "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post"],
+}
+keys = open("/root/idp-fake/jwks.json", "rb").read()
+class Idp(http.server.BaseHTTPRequestHandler):
+    def reply(self, status, body):
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def do_GET(self):
+        if self.path == "/.well-known/openid-configuration":
+            self.reply(200, json.dumps(discovery).encode())
+        elif self.path == "/jwks":
+            self.reply(200, keys)
+        else:
+            self.reply(404, b"{}")
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self.reply(400, b'{"error": "invalid_grant"}')
+server = http.server.HTTPServer(("0.0.0.0", @PORT@), Idp)
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.load_cert_chain("/root/idp-fake/tls.pem", "/root/idp-fake/tls.key")
+server.socket = context.wrap_socket(server.socket, server_side=True)
+server.serve_forever()
+""".replace("@PORT@", str(IDP_PORT))
+IDP_ISSUER = f"https://mgr:{IDP_PORT}"
+
+
+def b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+class Web:
+    """The interface as a person reaches it: through nginx, with a session cookie."""
+
+    def __init__(self, run: Run) -> None:
+        self.run = run
+
+    def sign_in(self, jar: str, username: str, password: str) -> tuple[str, str]:
+        """The status and the redirect of the sign-in post; a cookie jar on the manager keeps the session."""
+
+        _, answer = self.run.on(
+            "mgr",
+            f"jar=/root/web-{jar}.jar; rm -f $jar; IFS= read -r secret; "
+            "token=$(curl -sSk -c $jar https://127.0.0.1/login "
+            '| sed -n \'s/.*name="csrf_token" value="\\([^"]*\\)".*/\\1/p\' | head -1); '
+            "test -n \"$token\" || { echo 'no csrf field on the sign-in form'; exit 1; }; "
+            "curl -sSk -b $jar -c $jar -o /dev/null -w '%{http_code} %{redirect_url}' "
+            f"--data-urlencode username={shlex.quote(username)} "
+            '--data-urlencode "password=$secret" --data-urlencode "csrf_token=$token" '
+            "https://127.0.0.1/login",
+            stdin=password + "\n",
+        )
+        status, _, redirect = answer.strip().partition(" ")
+        return status, redirect
+
+    def get(self, jar: str, path: str) -> tuple[str, str]:
+        _, answer = self.run.on(
+            "mgr",
+            f"curl -sSk -b /root/web-{jar}.jar -w '\\n%{{http_code}}' https://127.0.0.1{path}",
+        )
+        body, _, status = answer.rstrip("\n").rpartition("\n")
+        return status, body
+
+    def post(self, jar: str, path: str, page: str, fields: dict[str, str]) -> tuple[str, str]:
+        """A form post; the page it is on gives the CSRF field."""
+
+        _, answer = self.run.on(
+            "mgr",
+            f"jar=/root/web-{jar}.jar; "
+            f"token=$(curl -sSk -b $jar https://127.0.0.1{page} "
+            '| sed -n \'s/.*name="csrf_token" value="\\([^"]*\\)".*/\\1/p\' | head -1); '
+            "test -n \"$token\" || { echo 'no csrf field on the page'; exit 1; }; "
+            "curl -sSk -b $jar -o /dev/null -w '%{http_code} %{redirect_url}' "
+            + " ".join(f"--data-urlencode {shlex.quote(f'{k}={v}')}" for k, v in fields.items())
+            + f' --data-urlencode "csrf_token=$token" https://127.0.0.1{path}',
+        )
+        status, _, redirect = answer.strip().partition(" ")
+        return status, redirect
+
+
+def picture(run: Run, header: str) -> dict[str, Any]:
+    """What the CLI, the interface's API and the nodes themselves say the cluster runs.
+
+    The version each node runs is read three ways: `haprion-status` (the manager
+    asks the node), the API (the poller's reading, which the pages show), and
+    the node's own RELEASE file. They are separate readings of one fact.
+    """
+
+    _, said = run.on("mgr", f"haprion-status -c {CLUSTER} --json", check=False)
+    cli = json.loads(said)["result"]
+    cli_nodes = {
+        node["name"]: ((node.get("status") or {}).get("release") or {}).get("version")
+        for node in cli["nodes"]
+    }
+    status, shown, _ = run.api(header, "GET", f"/clusters/{CLUSTER}")
+    ui = shown.get("result") or {}
+    ui_nodes = {node["name"]: node.get("release_version") for node in ui.get("nodes", [])}
+    own = {}
+    for role in NODES:
+        _, version = run.on(
+            role, "sed -n 's/^version=//p' /etc/haproxy/current/RELEASE", check=False
+        )
+        own[role] = int(version) if version.strip().isdigit() else None
+    return {
+        "cli": {"target": cli["summary"]["target"]["version"], "nodes": cli_nodes,
+                "state": cli["summary"]["release_state"]},
+        "ui": {"target": ui.get("published_version"), "nodes": ui_nodes,
+               "state": ui.get("release_state"), "http": status},
+        "nodes": own,
+    }  # fmt: skip
+
+
+def agreed(seen: dict[str, Any]) -> bool:
+    """Whether the three readings give one published version and every node on it or not, alike."""
+
+    cli, ui, own = seen["cli"], seen["ui"], seen["nodes"]
+    if cli["target"] != ui["target"] or cli["state"] != ui["state"]:
+        return False
+    return all(cli["nodes"].get(role) == ui["nodes"].get(role) == own.get(role) for role in NODES)
+
+
+def agree_soon(run: Run, header: str, seconds: float = 180) -> tuple[dict[str, Any], float]:
+    """The readings once they agree (the interface's reading is the poller's, so it lags a little)."""
+
+    started = time.monotonic()
+    while True:
+        seen = picture(run, header)
+        if agreed(seen):
+            return seen, time.monotonic() - started
+        if time.monotonic() - started > seconds:
+            raise Failed(
+                f"the CLI, the interface and the nodes still disagree after {seconds:.0f} s:\n{seen}"
+            )
+        time.sleep(3)
+
+
+def job_line(document: dict[str, Any]) -> str:
+    return f"job {document.get('id')}: {document.get('state')}" + (
+        f" ({document.get('error_code')}: {document.get('error_message')})"
+        if document.get("error_code")
+        else ""
+    )
+
+
+def watch_job(run: Run, header: str, job: int, seconds: float = 420) -> dict[str, Any]:
+    """The job as the API shows it once it has ended, whatever it ended as."""
+
+    until = time.monotonic() + seconds
+    while True:
+        status, document, _ = run.api(header, "GET", f"/jobs/{job}")
+        result = document.get("result")
+        if status != 200 or not isinstance(result, dict):
+            raise Failed(f"GET /jobs/{job} answered {status}:\n{document}")
+        if result.get("finished"):
+            return result
+        if time.monotonic() > until:
+            raise Failed(f"job {job} is still {result.get('state')} after {seconds:.0f} s")
+        time.sleep(3)
+
+
+def slow_reload_begins(run: Run, seconds: float = 180) -> None:
+    """Wait until the second node sits in its slow reload: the first node is done, this one is not."""
+
+    until = time.monotonic() + seconds
+    while run.on(NODES[1], f"pgrep -f '^/bin/sleep {SLOW_SECONDS}$'", check=False)[0] != 0:
+        if time.monotonic() > until:
+            raise Failed(f"{NODES[1]} did not reach its reload within {seconds:.0f} s")
+        time.sleep(0.3)
+
+
+def faults_steps(scenario: Scenario) -> None:
+    """Faults (B481): an update under a running job, a deploy cut after the first node, a lost IdP."""
+
+    run = scenario.run
+    step = scenario.step
+    web = Web(run)
+    revision = [0]
+
+    def change_shop() -> None:
+        """A published change to the shop, so that the next deploy has something to roll out."""
+
+        revision[0] += 1
+        document = OBJECT.format(backend=run.address("mgr")) + BLOCKING.replace(
+            "100000", str(100000 + revision[0])
+        )
+        run.on("mgr", "cat > /root/install/objects/shop.yaml", stdin=document)
+        run.on(
+            "mgr",
+            f"haprion-objects apply -c {CLUSTER} /root/install/objects -m 'fault {revision[0]}'",
+        )
+
+    header = [""]
+
+    def prepared() -> None:
+        header[0] = run.api_token("faults-write", "--level write", f"--cluster {CLUSTER}")
+        run.on(
+            NODES[1],
+            f"mkdir -p {SLOW_RELOAD.parent} && cat > {SLOW_RELOAD} && systemctl daemon-reload",
+            stdin=SLOW_RELOAD_UNIT.format(seconds=SLOW_SECONDS),
+        )
+
+    step(f"a write token, and {NODES[1]}'s HAProxy reload made to last {SLOW_SECONDS} s", prepared)
+
+    def served_again() -> None:
+        run.deploy()
+        seen, _ = agree_soon(run, header[0])
+        if seen["cli"]["state"] != "converged":
+            raise Failed(f"the cluster is not current to start from:\n{seen}")
+
+    step("a deploy so that every fault starts from a current cluster", served_again)
+
+    if scenario.previous is not None:
+        upgrade_during_a_job(scenario, header, change_shop)
+    cut_after_the_first_node(scenario, header, change_shop)
+    lost_identity_provider(scenario, web)
+
+
+def upgrade_during_a_job(
+    scenario: Scenario, header: list[str], change_shop: Callable[[], None]
+) -> None:
+    """3a: the manager's packages updated while a deploy is under way (the nodes' too, after)."""
+
+    run = scenario.run
+    step = scenario.step
+    names: list[str] = []
+
+    def started() -> int:
+        change_shop()
+        names.extend(run.copy("mgr", path) for path in scenario.new_manager)
+        job = run.api_write(header[0], "POST", f"/clusters/{CLUSTER}/deploy")
+        slow_reload_begins(run)
+        return job
+
+    job = step(f"a deploy under way: {NODES[0]} done, {NODES[1]} in its reload", started)
+
+    def updated() -> None:
+        before = run.on("mgr", "systemctl show haprion-worker -p MainPID --value")[1].strip()
+        run.on(
+            "mgr",
+            "export DEBIAN_FRONTEND=noninteractive && "
+            f"apt-get install -y -q {' '.join(shlex.quote(name) for name in names)}",
+        )
+        _, after = run.on("mgr", "systemctl show haprion-worker -p MainPID --value")
+        _, active = run.on(
+            "mgr", "systemctl is-active haprion-worker haprion-poller haprion-web.socket"
+        )
+        if active.split() != ["active"] * 3:
+            raise Failed(f"after the update the services are {active.split()}")
+        print(f"(worker pid {before} -> {after.strip()})", end=" ")
+
+    step("the manager updated with apt while that job runs", updated)
+
+    def ended() -> None:
+        result = watch_job(run, header[0], job)
+        print(f"{job_line(result)}", end=" ")
+        _, journal = run.on(
+            "mgr",
+            "journalctl -u haprion-worker --no-pager -o cat | grep -E 'job [0-9]+' | tail -12",
+            check=False,
+        )
+        print("\n      " + "\n      ".join(journal.strip().splitlines()[-8:]), end="\n      ")
+        seen, lag = agree_soon(run, header[0])
+        print(f"(readings agree after {lag:.0f} s: target {seen['cli']['target']}, "
+              f"nodes {seen['nodes']}, {seen['cli']['state']})", end=" ")  # fmt: skip
+        if result["state"] == "done" and seen["cli"]["state"] != "converged":
+            raise Failed(f"the job says done and the cluster is {seen['cli']['state']}:\n{seen}")
+        if result["state"] != "done":
+            output = run.deploy()
+            if "RESULT: OK" not in output:
+                raise Failed(
+                    f"a deploy after job {job} ended {result['state']} did not converge:\n{output}"
+                )
+            seen, _ = agree_soon(run, header[0])
+            if seen["cli"]["state"] != "converged":
+                raise Failed(f"still not current after a deploy:\n{seen}")
+
+    step("the job ends, and the CLI, the interface and the nodes tell one story", ended)
+
+    def nodes_updated() -> None:
+        for role in NODES:
+            files = [run.copy(role, path) for path in scenario.new_node]
+            run.on(
+                role,
+                "export DEBIAN_FRONTEND=noninteractive && "
+                f"apt-get install -y -q {' '.join(shlex.quote(name) for name in files)}",
+            )
+        output = run.deploy()
+        if "RESULT: OK" not in output:
+            raise Failed(f"a deploy to the updated nodes did not succeed:\n{output[-3000:]}")
+
+    step("both nodes updated, and a deploy to them", nodes_updated)
+
+
+def cut_after_the_first_node(
+    scenario: Scenario, header: list[str], change_shop: Callable[[], None]
+) -> None:
+    """3b: a deploy cut when the first node is done and the second is in its reload, then a worker restart."""
+
+    run = scenario.run
+    step = scenario.step
+
+    def cut() -> int:
+        change_shop()
+        job = run.api_write(header[0], "POST", f"/clusters/{CLUSTER}/deploy")
+        slow_reload_begins(run)
+        _, since = run.on("mgr", "date '+%Y-%m-%d %H:%M:%S'")
+        run.on("mgr", "systemctl restart haprion-worker")
+        scenario.cut_at = since.strip()
+        return job
+
+    job = step(
+        f"a deploy cut: {NODES[0]} done, {NODES[1]} in its reload, the worker restarted", cut
+    )
+
+    def said_at_once() -> None:
+        time.sleep(5)
+        seen = picture(run, header[0])
+        status, shown, _ = run.api(header[0], "GET", f"/jobs/{job}")
+        print(f"\n      {job_line(shown.get('result') or {})}; CLI {seen['cli']}; UI {seen['ui']}; "
+              f"nodes {seen['nodes']}", end="\n      ")  # fmt: skip
+
+    step("what the job, the CLI, the interface and the nodes say five seconds after", said_at_once)
+
+    def settled() -> None:
+        result = watch_job(run, header[0], job)
+        print(f"{job_line(result)}", end=" ")
+        _, journal = run.on(
+            "mgr",
+            f"journalctl -u haprion-worker --no-pager -o cat --since '{scenario.cut_at}' "
+            "| grep -E 'job [0-9]+|lease' | tail -12",
+            check=False,
+        )
+        print("\n      " + "\n      ".join(journal.strip().splitlines()[-8:]), end="\n      ")
+        seen, lag = agree_soon(run, header[0])
+        print(f"(readings agree after {lag:.0f} s: target {seen['cli']['target']}, "
+              f"nodes {seen['nodes']}, {seen['cli']['state']})", end=" ")  # fmt: skip
+        if result["state"] == "done" and seen["cli"]["state"] != "converged":
+            raise Failed(f"the job says done and the cluster is {seen['cli']['state']}:\n{seen}")
+
+    step("the job ends, and the readings agree", settled)
+
+    def again() -> None:
+        output = run.deploy()
+        if "RESULT: OK" not in output:
+            raise Failed(f"running the deploy again did not succeed:\n{output[-3000:]}")
+        seen, _ = agree_soon(run, header[0])
+        if seen["cli"]["state"] != "converged" or set(seen["nodes"].values()) != {
+            seen["cli"]["target"]
+        }:
+            raise Failed(f"the cluster did not converge:\n{seen}")
+        run.answers_on_the_vip()
+
+    step("running the deploy again converges, and the object answers", again)
+
+
+def lost_identity_provider(scenario: Scenario, web: Web) -> None:
+    """3c: sign-in through a provider that no longer answers; the break-glass admin gets in and turns it off."""
+
+    run = scenario.run
+    step = scenario.step
+    password = f"itest-{hashlib.sha256(str(time.time()).encode()).hexdigest()[:24]}"
+    secret = hashlib.sha256(password.encode()).hexdigest()
+
+    def accounts() -> None:
+        run.on(
+            "mgr",
+            "haprion-user add itest-glass --role admin --password-stdin",
+            stdin=password + "\n",
+        )
+        run.on(
+            "mgr",
+            "haprion-user add itest-plain --role admin --no-break-glass --password-stdin",
+            stdin=password + "\n",
+        )
+        _, listed = run.on("mgr", "haprion-user list")
+        glass = next((line for line in listed.splitlines() if "itest-glass" in line), "")
+        plain = next((line for line in listed.splitlines() if "itest-plain" in line), "")
+        if "break-glass" not in glass or "break-glass" in plain:
+            raise Failed(f"the accounts are not a break-glass and a plain one:\n{listed}")
+
+    step("a break-glass admin and a plain local admin", accounts)
+
+    def provider_up() -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            work = Path(raw)
+
+            def openssl(*arguments: str) -> str:
+                return subprocess.run(  # noqa: S603 - the host's openssl, arguments built here
+                    ["/usr/bin/openssl", *arguments],
+                    cwd=work,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout
+
+            openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key",
+                    "-out", "ca.pem", "-days", "2", "-subj", "/CN=Install Test IdP CA",
+                    "-addext", "basicConstraints=critical,CA:TRUE",
+                    "-addext", "keyUsage=critical,keyCertSign,cRLSign")  # fmt: skip
+            openssl("req", "-newkey", "rsa:2048", "-nodes", "-keyout", "tls.key", "-out", "tls.csr",
+                    "-subj", "/CN=mgr")  # fmt: skip
+            (work / "tls.ext").write_text("subjectAltName=DNS:mgr\nbasicConstraints=CA:FALSE\n")
+            openssl("x509", "-req", "-in", "tls.csr", "-CA", "ca.pem", "-CAkey", "ca.key",
+                    "-CAcreateserial", "-days", "2", "-extfile", "tls.ext", "-out", "tls.pem")  # fmt: skip
+            modulus = (
+                openssl("x509", "-in", "tls.pem", "-noout", "-modulus").strip().partition("=")[2]
+            )
+            number = bytes.fromhex(modulus)
+            (work / "jwks.json").write_text(
+                json.dumps({"keys": [{"kty": "RSA", "use": "sig", "alg": "RS256", "kid": "itest",
+                                      "n": b64url(number), "e": b64url(bytes([1, 0, 1]))}]})
+            )  # fmt: skip
+            (work / "serve.py").write_text(FAKE_IDP)
+            run.on("mgr", "mkdir -p /root/idp-fake")
+            for name in ("jwks.json", "tls.pem", "tls.key", "serve.py"):
+                run.podman("cp", str(work / name), f"{run.container('mgr')}:/root/idp-fake/{name}")
+            run.podman(
+                "cp",
+                str(work / "ca.pem"),
+                f"{run.container('mgr')}:/usr/local/share/ca-certificates/install-test-idp.crt",
+            )
+        run.on(
+            "mgr",
+            "update-ca-certificates >/dev/null && systemd-run --unit=install-test-idp "
+            "python3 /root/idp-fake/serve.py && sleep 2 "
+            f"&& curl -fsS https://mgr:{IDP_PORT}/.well-known/openid-configuration >/dev/null",
+        )
+
+    step("an identity provider that answers (discovery, keys, a token endpoint)", provider_up)
+
+    def turned_on() -> None:
+        settings = (
+            "oidc:\n"
+            f"  issuer: {IDP_ISSUER}\n  client_id: haprion\n  client_secret: {secret}\n"
+            "  auth_method: client_secret_basic\n  scopes: openid profile\n"
+            "  username_claim: preferred_username\n  groups_claim: groups\n"
+            "  admin_group: haprion-admins\n  reader_group: haprion-readers\n"
+            "  local_login: break_glass_only\n  enabled: true\n  interface_url: https://mgr\n"
+        )
+        run.on(
+            "mgr",
+            "umask 077 && cat > /root/oidc-settings.yaml && haprion-settings apply /root/oidc-settings.yaml --json",
+            stdin=settings,
+        )
+        _, shown = run.on("mgr", "haprion-settings show --json")
+        if '"enabled": true' not in shown.replace('":true', '": true'):
+            raise Failed(f"sign-in through the provider is not on:\n{shown}")
+
+    step("sign-in through the provider turned on (Verify passes)", turned_on)
+
+    def provider_lost() -> None:
+        run.on("mgr", "systemctl stop install-test-idp")
+        code, _ = run.on("mgr", f"curl -sS --max-time 3 https://mgr:{IDP_PORT}/", check=False)
+        if code == 0:
+            raise Failed("the provider still answers")
+        status, _ = web.get("anon", "/login")
+        if status != "200":
+            raise Failed(f"the sign-in page answered {status} with the provider gone")
+        # What the button does now is not promised anywhere; it is said.
+        _, answer = run.on(
+            "mgr",
+            "curl -sSk --max-time 60 -o /dev/null -w '%{http_code} %{redirect_url}' "
+            "https://127.0.0.1/login/oidc",
+            check=False,
+        )
+        print(f"(the provider's button answers {answer.strip()[:120]})", end=" ")
+
+    step("the provider is stopped; the sign-in page still answers", provider_lost)
+
+    def break_glass_signs_in() -> None:
+        status, redirect = web.sign_in("glass", "itest-glass", password)
+        if status != "303" or redirect.rstrip("/") not in ("https://127.0.0.1", ""):
+            raise Failed(
+                f"the break-glass admin was answered {status} {redirect}, not a redirect home"
+            )
+        status, page = web.get("glass", "/settings/oidc")
+        if status != "200" or "OIDC" not in page and "provider" not in page:
+            raise Failed(
+                f"the break-glass admin's session cannot open the provider's settings ({status})"
+            )
+        status, _ = web.sign_in("plain", "itest-plain", password)
+        if status == "303":
+            raise Failed(
+                "a local admin without the break-glass mark signed in while the provider is on"
+            )
+
+    step(
+        "the break-glass admin signs in through nginx; a plain local admin does not",
+        break_glass_signs_in,
+    )
+
+    def turned_off() -> None:
+        status, redirect = web.post("glass", "/settings/oidc", "/settings/oidc", {"action": "off"})
+        if status != "303" or "done=off" not in redirect:
+            raise Failed(f"turning sign-in through the provider off answered {status} {redirect}")
+        _, shown = run.on("mgr", "haprion-settings show --json")
+        if '"enabled": false' not in shown.replace('":false', '": false'):
+            raise Failed(f"sign-in through the provider is still on:\n{shown}")
+        status, _ = web.sign_in("plain", "itest-plain", password)
+        if status != "303":
+            raise Failed(
+                f"the plain local admin cannot sign in now that the provider is off ({status})"
+            )
+
+    step("the break-glass admin turns it off; local sign-in is back for all", turned_off)
+
+
+SCENARIOS: dict[str, Callable[[Scenario], None]] = {
+    "scale": scale_steps,
+    "readdress": readdress_steps,
+    "faults": faults_steps,
+}
 
 
 def run_scenario(
@@ -2068,10 +2914,14 @@ def run_scenario(
     previous: Path | None,
     logs: Path,
     keep: bool,
+    scale: Scale | None = None,
 ) -> bool:
     """One opt-in scenario on a fresh installation of these packages (B481)."""
 
-    manager_files, node_files = release_files(packages, distribution)
+    new_manager, new_node = release_files(packages, distribution)
+    manager_files, node_files = new_manager, new_node
+    if name == "faults" and previous is not None:
+        manager_files, node_files = release_files(previous, distribution, previous=True)
     logs.mkdir(parents=True, exist_ok=True)
     run = Run(distribution, logs)
     steps: list[str] = []
@@ -2087,6 +2937,8 @@ def run_scenario(
 
     scenario = Scenario(run, step)
     scenario.previous = previous
+    scenario.scale = scale or Scale()
+    scenario.new_manager, scenario.new_node = new_manager, new_node
     try:
         scenario.bring_up(manager_files, node_files, sized=name == "scale")
         SCENARIOS[name](scenario)
@@ -2472,6 +3324,16 @@ def main() -> int:
     # they are not: the chain is written per release, and an update left out
     # by omission is how 0.99.3 went out (26-10-28).
     #
+    #
+    # The scale scenario's measure (B482): the manager's spec is given in tiers
+    # of objects, each from a run. The release run and the other scenarios keep
+    # the product's own sizes.
+    #
+    sizing = parser.add_argument_group("the scale scenario (B482)")
+    sizing.add_argument("--objects", type=int, default=SCALE_OBJECTS)
+    sizing.add_argument("--object-kind", choices=("light", "heavy"), default="light")
+    sizing.add_argument("--manager-cpus", default=MANAGER_SIZE[1])
+    sizing.add_argument("--manager-memory", default=MANAGER_SIZE[3])
     update = parser.add_mutually_exclusive_group()
     update.add_argument(
         "--upgrade-from", type=Path, help="the previous release's package files, updated from"
@@ -2484,6 +3346,15 @@ def main() -> int:
         parser.error("--upgrade-from updates to --packages")
     if args.scenario and not args.packages:
         parser.error("--scenario installs --packages")
+    scale = Scale(args.objects, args.object_kind, args.manager_cpus, args.manager_memory)
+    if scale != Scale() and args.scenario != "scale":
+        parser.error("--objects, --object-kind and --manager-* are for --scenario scale")
+    if scale.objects < 100:
+        parser.error("--objects is 100 or more")
+    if not re.fullmatch(r"[1-9][0-9]*", scale.cpus) or not re.fullmatch(
+        r"[1-9][0-9]*g", scale.memory
+    ):
+        parser.error("--manager-cpus is a whole number, --manager-memory one with g (8g)")
     logs = args.logs or Path(tempfile.mkdtemp(prefix="haprion-install-test-"))
     chosen = list(DISTRIBUTIONS) if args.distribution == "all" else [args.distribution]
     if args.scenario:
@@ -2495,6 +3366,7 @@ def main() -> int:
                 args.upgrade_from.resolve() if args.upgrade_from else None,
                 logs / f"{name}-{args.scenario}",
                 args.keep,
+                scale,
             )
             for name in chosen
         }

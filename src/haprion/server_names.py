@@ -18,7 +18,9 @@ and the address is stored beside the name (B261), and an address is written.
 
 from __future__ import annotations
 
+import queue
 import socket
+import threading
 import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -82,11 +84,16 @@ def names(proxies: Iterable[Proxy]) -> list[str]:
 # timeout per name - seconds each - however large the publish (B483). The
 # system's cache (systemd-resolved on Ubuntu) keeps no failed answer, so it
 # does not help there. A name not reached in time is said, as a name that does
-# not resolve is: the node's own check before it switches stays the gate. One
-# lookup already under way is not cut, so the time can run over by one
-# resolver timeout.
+# not resolve is: the node's own check before it switches stays the gate.
+#
+# The names are asked several at a time: a name the cache does not hold took
+# 11.5 ms (median of 40 on a manager, 26-11-06), so one at a time a first import
+# of a few thousand names would have spent the ten seconds with the resolver
+# working. The askers are daemon threads, so a lookup still waiting when the
+# time is up holds neither the lock nor the helper's exit.
 #
 LOOKUP_SECONDS = 10.0
+LOOKUP_THREADS = 16
 
 
 @dataclass(frozen=True)
@@ -103,19 +110,48 @@ def lookups(
     *,
     seconds: float | None = None,
     clock: Callable[[], float] = time.monotonic,
+    threads: int = LOOKUP_THREADS,
 ) -> Lookups:
     """The servers' names by this host's resolver, in the order they appear, within `seconds`."""
 
     ask = resolve or resolves
     every = names(proxies)
     until = clock() + (LOOKUP_SECONDS if seconds is None else seconds)
-    unresolved: list[str] = []
-    for index, name in enumerate(every):
-        if clock() > until:
-            return Lookups(unresolved, every[index:])
-        if not ask(name):
-            unresolved.append(name)
-    return Lookups(unresolved, [])
+    waiting: queue.SimpleQueue[str] = queue.SimpleQueue()
+    for name in every:
+        waiting.put(name)
+    answered: dict[str, bool] = {}
+    changed = threading.Condition()
+
+    def asker() -> None:
+        try:
+            while clock() <= until:
+                try:
+                    name = waiting.get_nowait()
+                except queue.Empty:
+                    return
+                found = ask(name)
+                with changed:
+                    answered[name] = found
+                    changed.notify_all()
+        finally:
+            with changed:
+                changed.notify_all()
+
+    askers = [threading.Thread(target=asker, daemon=True) for _ in range(min(threads, len(every)))]
+    for thread in askers:
+        thread.start()
+    with changed:
+        while len(answered) < len(every) and any(thread.is_alive() for thread in askers):
+            left = until - clock()
+            if left <= 0:
+                break
+            changed.wait(min(left, 0.5))
+        seen = dict(answered)
+    return Lookups(
+        [name for name in every if name in seen and not seen[name]],
+        [name for name in every if name not in seen],
+    )
 
 
 def unresolved(proxies: Iterable[Proxy], resolve: Resolves | None = None) -> list[str]:

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import threading
+import time
 import unittest
 
 from haprion import server_names
@@ -55,7 +57,7 @@ class WhichNamesAreAsked(unittest.TestCase):
         proxies = [site("shop", *(f"app-{number}.example.com" for number in range(5)))]
         proxies.append(site("blog", "typo.example.com"))
 
-        found = server_names.lookups(proxies, slow, seconds=10.0, clock=lambda: now[0])
+        found = server_names.lookups(proxies, slow, seconds=10.0, clock=lambda: now[0], threads=1)
 
         self.assertEqual(asked, ["app-0.example.com", "app-1.example.com", "app-2.example.com"])
         self.assertEqual(found.unresolved, [])
@@ -63,6 +65,36 @@ class WhichNamesAreAsked(unittest.TestCase):
             found.unasked, ["app-3.example.com", "app-4.example.com", "typo.example.com"]
         )
         self.assertEqual(server_names.lookups(proxies, known("app-0.example.com")).unasked, [])
+
+    def test_the_names_are_asked_several_at_a_time(self) -> None:
+        """B483: 11.5 ms a name the cache does not hold; one at a time would not reach thousands."""
+
+        def slow(host: str) -> bool:
+            time.sleep(0.05)
+            return host != "typo-7.example.com"
+
+        hosts = [f"typo-{number}.example.com" for number in range(64)]
+        proxies = [site(f"s{number}", host) for number, host in enumerate(hosts)]
+        started = time.monotonic()
+
+        found = server_names.lookups(proxies, slow, seconds=5.0)
+
+        self.assertLess(time.monotonic() - started, 1.5)
+        self.assertEqual(found, server_names.Lookups(["typo-7.example.com"], []))
+
+    def test_a_lookup_that_never_returns_holds_nothing_past_the_time(self) -> None:
+        stuck = threading.Event()
+        started = time.monotonic()
+
+        found = server_names.lookups(
+            [site("shop", "a.example.com", "b.example.com")],
+            lambda host: stuck.wait(30) or True,
+            seconds=0.3,
+        )
+
+        self.assertLess(time.monotonic() - started, 1.5)
+        self.assertEqual(found, server_names.Lookups([], ["a.example.com", "b.example.com"]))
+        stuck.set()
 
     def test_the_names_not_looked_up_are_one_sentence(self) -> None:
         said = server_names.unasked_warning([f"app-{number}.example.com" for number in range(7)])

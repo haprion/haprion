@@ -2144,6 +2144,10 @@ def scale_steps(scenario: Scenario) -> None:
         "one change saved and published as a job: the sandbox checks of the whole candidate",
         publish_job,
     )
+    step(
+        "the manager's services stayed within their limits through the publishing",
+        functools.partial(within_limits, run),
+    )
 
     def deployed() -> None:
         output, _ = scenario.measure("haprion-deploy to both nodes", roles, run.deploy)
@@ -2218,6 +2222,51 @@ def scale_steps(scenario: Scenario) -> None:
             raise Failed(f"a second deploy did not skip the current nodes:\n{output[-3000:]}")
 
     step("a second deploy changes nothing", converged)
+    step(
+        "the manager's services stayed within their limits to the end",
+        functools.partial(within_limits, run),
+    )
+
+
+#
+# The manager's long-running services and their memory limits (B357). Found
+# by the scale run of 26-11-06: at 10 000 heavy objects the poller went past
+# its 512M and was killed, on 2 vCPU / 4 GiB and on 4 vCPU / 8 GiB alike.
+#
+LIMITED_UNITS = (
+    "haprion-web.service",
+    "haprion-worker.service",
+    "haprion-poller.service",
+    "haprion-traffic-collector.service",
+)
+
+
+def within_limits(run: Run) -> None:
+    """Each service's peak against its limit; one killed at its limit (restarted, or its result) fails."""
+
+    restarted = []
+    for unit in LIMITED_UNITS:
+        _, said = run.on(
+            "mgr",
+            f"systemctl show -p MemoryPeak -p MemoryMax -p NRestarts -p Result {unit}",
+            check=False,
+        )
+        values = dict(line.partition("=")[::2] for line in said.split())
+        peak, limit = values.get("MemoryPeak", ""), values.get("MemoryMax", "")
+        shown = [
+            f"{int(value) // 2**20} MiB" if value.isdigit() else (value or "?")
+            for value in (peak, limit)
+        ]
+        print(
+            f"\n      {unit}: peak {shown[0]} of {shown[1]}, "
+            f"restarted {values.get('NRestarts', '?')} times, result {values.get('Result', '?')}",
+            end="",
+        )
+        if values.get("NRestarts", "0") not in ("", "0") or values.get("Result") == "oom-kill":
+            restarted.append(unit)
+    print(" ... ", end="")
+    if restarted:
+        raise Failed(f"killed at their limits: {', '.join(restarted)}")
 
 
 def keepalived_view(run: Run, role: str) -> dict[str, str]:

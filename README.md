@@ -112,48 +112,14 @@ and a way back.
 **Start with the [quickstart](docs/quickstart.md)**: from empty machines to a site served by your
 HAProxy nodes. In short:
 
-1. Install the manager with its package and one command, `sudo haprion-setup`.
-2. Install each node with its package. It prints a *block*, a line you paste into the manager.
-3. Open the web interface. Its dashboard walks you through your first cluster: its name and address, the
+1. Add the project's apt repository on the manager and on each node.
+2. Install the manager with its package and one command, `sudo haprion-setup`.
+3. Install each node with its package. It prints a *block*, a line you paste into the manager.
+4. Open the web interface. Its dashboard walks you through your first cluster: its name and address, the
    nodes, and the first deploy.
 
-[Installing](docs/install.md) covers the installation in full, and the [user manual](docs/user-manual.md)
-everything else.
-
-The packages come from the project's signed apt repository. Add it on the manager and on each node:
-
-On **Ubuntu 26.04**:
-
-```bash
-sudo curl -fsSLo /usr/share/keyrings/haprion-archive-keyring.asc \
-  https://haprion.github.io/haprion/haprion-archive-keyring.asc
-sudo tee /etc/apt/sources.list.d/haprion.sources >/dev/null <<'EOF'
-Types: deb
-URIs: https://haprion.github.io/haprion/
-Suites: ubuntu26.04
-Components: main
-Signed-By: /usr/share/keyrings/haprion-archive-keyring.asc
-EOF
-sudo apt update
-```
-
-On **Debian 13**:
-
-```bash
-sudo curl -fsSLo /usr/share/keyrings/haprion-archive-keyring.asc \
-  https://haprion.github.io/haprion/haprion-archive-keyring.asc
-sudo tee /etc/apt/sources.list.d/haprion.sources >/dev/null <<'EOF'
-Types: deb
-URIs: https://haprion.github.io/haprion/
-Suites: deb13
-Components: main
-Signed-By: /usr/share/keyrings/haprion-archive-keyring.asc
-EOF
-sudo apt update
-```
-
-Then `sudo apt install haprion-ui` and `sudo haprion-setup` on the manager, and
-`sudo apt install haprion-node` on each node.
+[Installing](docs/install.md) covers the installation in full: requirements, sizes, answers, keys and what
+the machines must reach. The [user manual](docs/user-manual.md) covers everything else.
 
 ## What it does
 

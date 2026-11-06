@@ -1,9 +1,9 @@
 """The repository's key and source, written out the same way wherever a reader meets them.
 
-README, the quickstart and Installing each give the two commands for Ubuntu
-26.04 and for Debian 13 (26-10-18). Three copies drift unless they are held
-to one another, to the suites the repository has and to the path the keyring
-package takes over.
+The quickstart and Installing each give the two commands for Ubuntu 26.04
+and for Debian 13 (26-10-18); the README points to them (26-11-06). Two
+copies drift unless they are held to one another, to the suites the
+repository has and to the path the keyring package takes over.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 BASE = Path(__file__).resolve().parents[1]
-DOCUMENTS = ("README.md", "docs/quickstart.md", "docs/install.md")
+DOCUMENTS = ("docs/quickstart.md", "docs/install.md")
 BLOCK = re.compile(r"^```bash\n(.*?)^```$", re.M | re.S)
 
 
@@ -54,6 +54,12 @@ class TheSourceIsWrittenOnce(unittest.TestCase):
         first = source_blocks(DOCUMENTS[0])
         for document in DOCUMENTS[1:]:
             self.assertEqual(source_blocks(document), first, document)
+
+    def test_the_readme_points_to_them_rather_than_a_third_copy(self) -> None:
+        self.assertEqual(source_blocks("README.md"), [])
+        readme = (BASE / "README.md").read_text()
+        self.assertIn("(docs/quickstart.md)", readme)
+        self.assertIn("(docs/install.md)", readme)
 
     def test_the_key_goes_where_the_keyring_package_takes_it_over(self) -> None:
         for block in source_blocks(DOCUMENTS[0]):

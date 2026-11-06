@@ -2054,27 +2054,26 @@ def scale_steps(scenario: Scenario) -> None:
     step("the manager's service limits read and lifted for the measure", lifted)
 
     def counters_file() -> None:
-        """The core's counters file (shm-stats-file) holds 2000 objects unless told otherwise.
+        """A new cluster's core gives the counters file room for the objects (B487).
 
-        Found by this scenario (26-11-05): with a new cluster's core as it is,
-        a publish of about 700 of these objects is refused - "maximum number
-        already reached (2000)" - because HAProxy 3.4 sizes the file for 2000
-        and the generator gives every frontend, listener and server a GUID.
-        The operator's remedy is a line in `core/haproxy.cfg`, which the
-        manual does not mention. The scenario applies it so that the rest is
-        measured; take the step out when the product sets the limit itself.
+        Found by this scenario (26-11-05): HAProxy 3.4 holds 2000 counters,
+        one per frontend, listener and server, and a publish of about 700 of
+        these objects was refused. The scenario wrote the line by hand until
+        the core template carried it. A reload holds the old process's
+        counters and the new one's at once, hence twice.
         """
 
         core = f"{CONFIG_ROOT}/{CLUSTER}/core/haproxy.cfg"
-        run.on(
-            "mgr",
-            f"sed -i 's|^\\(    shm-stats-file /run/haproxy/stats.shm\\)$|\\1\\n"
-            f"    shm-stats-file-max-objects {count * COUNTERS_PER_OBJECT[scale.kind]}|' {core} "
-            f"&& grep -n shm {core}",
-        )
-        run.on("mgr", f"haprion-publish -c {CLUSTER} 'the counters file holds the objects'")
+        _, said = run.on("mgr", f"sed -n 's/^ *shm-stats-file-max-objects //p' {core}")
+        needed = 2 * count * COUNTERS_PER_OBJECT[scale.kind]
+        if not said.strip().isdigit() or int(said) < needed:
+            raise Failed(
+                f"the new cluster's core gives the counters file {said.strip() or 'no'} places, "
+                f"not the {needed} these objects need"
+            )
+        print(f"({said.strip()} places, {needed} needed)", end=" ")
 
-    step("core/haproxy.cfg: the counters file is given room for the objects", counters_file)
+    step("core/haproxy.cfg: a new cluster's counters file has room for the objects", counters_file)
 
     def checked() -> None:
         scenario.measure(

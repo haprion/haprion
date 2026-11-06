@@ -18,12 +18,14 @@ EXAMPLES = Path(__file__).resolve().parents[1] / "install" / "platform" / "examp
 #
 # The limit each unit carries, against the most it was measured to use
 # (26-10-23, in MB): the journal's peaks on the manager since 26-10-09 and,
-# for the helpers, what the largest step took.
+# for the helpers, what the largest step took. Web, worker and poller since
+# 26-11-06 from the install test's scale run with 10 000 heavy objects
+# (`tools/install-test --scenario scale`, which holds the peaks to these).
 #
 LIMITED = {
-    "haprion-web.service.example": ("768M", 177),
-    "haprion-worker.service.example": ("768M", 95),
-    "haprion-poller.service.example": ("512M", 138 + 45),
+    "haprion-web.service.example": ("768M", 236),
+    "haprion-worker.service.example": ("768M", 302),
+    "haprion-poller.service.example": ("1152M", 524 + 45),
     "haprion-traffic-collector.service.example": ("512M", 212),
     "haprion-node-restore-helper@.service.example": ("512M", 84),
     **{

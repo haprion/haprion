@@ -240,6 +240,7 @@ def _comment(plan: Plan, only: Collection[str] | None = None) -> str:
     scenario, 26-11-05); the counts always fit.
     """
 
+    wanted = None if only is None else set(only)
     groups = [
         (verb, names)
         for verb, all_names in (
@@ -247,7 +248,7 @@ def _comment(plan: Plan, only: Collection[str] | None = None) -> str:
             ("changed", plan.changed),
             ("removed", plan.removed),
         )
-        if (names := [n for n in all_names if only is None or n in only])
+        if (names := [n for n in all_names if wanted is None or n in wanted])
     ]
     named = "From the terminal: " + "; ".join(
         f"{verb} {', '.join(names)}" for verb, names in groups
@@ -368,8 +369,13 @@ def _summary(
     versions: Sequence[Mapping[str, Any]],
     checked: Sequence[Mapping[str, Any]] = (),
     published: Collection[str] | None = None,
+    unknown: Collection[str] = (),
 ) -> dict[str, Any]:
-    """`published` names what the published batches carried; None means all of the plan."""
+    """`published` names what the published batches carried; None means all of the plan.
+
+    `unknown` is the batch that answered nothing: it may be published, so it is
+    not said to be unpublished either.
+    """
 
     changed = (not plan.empty) and (check or any(v.get("changed") for v in versions))
 
@@ -384,7 +390,7 @@ def _summary(
         "removed": part(plan.removed),
         "not_published": []
         if published is None
-        else [n for n in plan.documents if n not in published],
+        else [n for n in plan.documents if n not in published and n not in unknown],
         "unchanged": list(plan.unchanged),
         "versions": [
             {"version": v.get("version"), "hash": v.get("hash"), "changed": v.get("changed")}
@@ -454,6 +460,9 @@ def _tls_mismatches(plan: Plan) -> list[str]:
     return said
 
 
+NAMES_SHOWN = server_names.SAID_ONE_BY_ONE
+
+
 def _render(cluster: str, plan: Plan, summary: Mapping[str, Any], writer: TextIO) -> None:
     if plan.empty:
         writer.write(
@@ -467,8 +476,10 @@ def _render(cluster: str, plan: Plan, summary: Mapping[str, Any], writer: TextIO
     for name in summary["updated"]:
         writer.write(plan.diffs.get(name, ""))
     if summary["not_published"]:
+        names = summary["not_published"]
+        shown = ", ".join(names[:NAMES_SHOWN]) + (", ..." if len(names) > NAMES_SHOWN else "")
         writer.write(
-            f"Not published: {', '.join(summary['not_published'])}. "
+            f"Not published: {labels.counted(len(names), 'object', 'objects')} ({shown}). "
             "Run the same command again to publish them.\n"
         )
     for version in summary["versions"]:
@@ -547,8 +558,12 @@ def main(
             else:
                 versions = answers
     except PartlyDone as stopped:
-        carried = {name for batch in batches(plan.documents)[: len(stopped.done)] for name in batch}
-        summary = _summary(plan, check=False, versions=stopped.done, published=carried)
+        cut = batches(plan.documents)
+        carried = {name for batch in cut[: len(stopped.done)] for name in batch}
+        silent = cut[len(stopped.done)] if stopped.code == "helper_silent" else []
+        summary = _summary(
+            plan, check=False, versions=stopped.done, published=carried, unknown=silent
+        )
         errors.write(stopped.report())
         if args.json:
             return write_document(

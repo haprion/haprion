@@ -542,6 +542,74 @@ class ObjectsFromFiles(unittest.TestCase):
         self.assertEqual(answer["result"]["added"], names[:10])
         self.assertEqual(answer["result"]["not_published"], names[10:])
 
+    def test_the_comment_looks_names_up_in_a_set(self) -> None:
+        class Counting(list):  # type: ignore[type-arg]
+            lookups = 0
+
+            def __contains__(self, item: object) -> bool:
+                Counting.lookups += 1
+                return super().__contains__(item)
+
+        plan = objects_apply.Plan(
+            documents={"shop": document("shop"), "blog": document("blog")},
+            added=("shop", "blog"),
+            changed=(),
+            removed=(),
+            unchanged=(),
+            diffs={},
+        )
+
+        said = objects_apply._comment(plan, Counting(["shop"]))
+
+        self.assertEqual(said, "From the terminal: added shop")
+        self.assertEqual(Counting.lookups, 0)
+
+    def test_a_partial_run_names_a_few_of_the_unpublished_and_counts_the_rest(self) -> None:
+        fakes = Fakes({})
+        for number in range(30):
+            self.write(f"site{number:03d}", document(f"site{number:03d}"))
+        first = fakes.publish
+
+        def refuse_the_second(request: str) -> subprocess.CompletedProcess[str]:
+            if fakes.published:
+                fakes.refuse = {"code": "changes_invalid", "message": "no VIP named edge"}
+            return first(request)
+
+        fakes.publish = refuse_the_second  # type: ignore[method-assign]
+
+        with mock.patch.object(changes_publish, "MAX_REQUEST_BYTES", room_for(10)):
+            code, out, _ = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root))
+
+        self.assertEqual(code, exit_codes.PARTIAL)
+        line = next(row for row in out.splitlines() if row.startswith("Not published:"))
+        self.assertIn("20 objects", line)
+        self.assertIn("site010", line)
+        self.assertNotIn("site029", line)
+        self.assertLess(len(line), 200)
+
+    def test_a_batch_that_answered_nothing_is_not_said_to_be_unpublished(self) -> None:
+        fakes = Fakes({})
+        for number in range(30):
+            self.write(f"site{number:03d}", document(f"site{number:03d}"))
+        first = fakes.publish
+
+        def go_silent_on_the_second(request: str) -> subprocess.CompletedProcess[str]:
+            if fakes.published:
+                fakes.published.append(json.loads(request))
+                return subprocess.CompletedProcess([], 1, "", "")
+            return first(request)
+
+        fakes.publish = go_silent_on_the_second  # type: ignore[method-assign]
+
+        with mock.patch.object(changes_publish, "MAX_REQUEST_BYTES", room_for(10)):
+            code, out, _ = self.run_cli(fakes, "apply", "-c", "alpha", "--json", str(self.root))
+
+        answer = json.loads(out)
+        self.assertEqual(code, exit_codes.PARTIAL)
+        names = [f"site{number:03d}" for number in range(30)]
+        self.assertEqual(answer["result"]["added"], names[:10])
+        self.assertEqual(answer["result"]["not_published"], names[20:])
+
     def test_a_partial_run_says_in_text_what_is_not_published(self) -> None:
         fakes = Fakes({})
         for number in range(16):
@@ -561,7 +629,9 @@ class ObjectsFromFiles(unittest.TestCase):
         self.assertEqual(code, exit_codes.PARTIAL)
         self.assertIn("Did add site009\n", out)
         self.assertNotIn("Did add site010", out)
-        self.assertIn("Not published: site010, site011", out)
+        self.assertIn(
+            "Not published: 6 objects (site010, site011, site012, site013, site014, ...)", out
+        )
         self.assertIn("Run the same command again", out)
 
     def test_a_later_batch_refused_under_check_is_an_ordinary_refusal(self) -> None:

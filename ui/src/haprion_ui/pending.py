@@ -339,7 +339,7 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
     # package's parts as the worker will send them, against the room the
     # helper leaves them.
     #
-    room = changes_publish.MAX_REQUEST_BYTES - changes_publish.REQUEST_RESERVE
+    room = changes_publish.room()
     spent = changes_publish.parts_bytes(
         objects or None, network=payload.get("network"), settings=payload.get("settings")
     )
@@ -360,7 +360,9 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
         else f"{' and '.join(lagging)} {'is' if len(lagging) == 1 else 'are'} still being read "
         "at the newest version. Publishing opens again within a minute."
         if lagging
-        else f"The saved changes take {_kib(spent)} KiB; at most {_kib(room)} KiB go in one publish."
+        else f"The saved changes take {_kib(spent, up=True)} KiB; at most {_kib(room)} KiB go in "
+        "one publish. Discard some, or apply them from the terminal with haprion-objects apply, "
+        "which publishes in parts."
         if spent > room
         else ""
     )
@@ -374,8 +376,11 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
     )
 
 
-def _kib(size: int) -> str:
-    return f"{size / 1024:,.0f}".replace(",", " ")
+def _kib(size: int, *, up: bool = False) -> str:
+    """Whole KiB: rounded up for what is spent and down for the room, so they never read alike."""
+
+    whole = -(-size // 1024) if up else size // 1024
+    return f"{whole:,}".replace(",", " ")
 
 
 def _rename_clashes(

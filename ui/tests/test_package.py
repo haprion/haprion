@@ -360,6 +360,20 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         self.assertIn("KiB go in one publish", answer.text)
         self.assertIn("at most 2 KiB", answer.text)
 
+    def test_a_package_one_byte_over_does_not_read_as_fitting(self) -> None:
+        """The sizes were both rounded to the nearest KiB: "992 KiB; at most 992 KiB"."""
+
+        self.rows = [row("site-1")]
+        spent = changes_publish.parts_bytes({"site-1": self.rows[0].yaml})
+        room = changes_publish.REQUEST_RESERVE + spent - 1
+
+        with mock.patch.object(changes_publish, "MAX_REQUEST_BYTES", room):
+            answer = self.publish(self.editor())
+
+        self.assertEqual(answer.status_code, 400)
+        self.assertIn("take 1 KiB; at most 0 KiB", answer.text)
+        self.assertIn("haprion-objects apply", answer.text)
+
     def test_a_comment_is_needed(self) -> None:
         self.rows = [row()]
 

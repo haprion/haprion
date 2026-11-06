@@ -263,10 +263,14 @@ def batches(documents: Mapping[str, str | None]) -> list[list[str]]:
 
     Each batch is as large as the request takes (B483): the candidate is built
     whole for every publish, so the number of publishes is what an apply costs.
-    An object is at most 256 KiB, so every batch holds at least one.
+    An object is at most 256 KiB, and JSON at most triples a byte (`\\uXXXX` for
+    two bytes, twelve for four; the YAML reader refuses control characters), so
+    768 KiB is the most one takes in a request: below the room, and every batch
+    holds at least one. A test holds that (raising `MAX_MODEL_BYTES` or
+    `REQUEST_RESERVE` would break it silently otherwise).
     """
 
-    room = changes_publish.MAX_REQUEST_BYTES - changes_publish.REQUEST_RESERVE
+    room = changes_publish.room()
     empty = changes_publish.parts_bytes({"": None}) - len('"":null')
     cut: list[list[str]] = []
     batch: list[str] = []

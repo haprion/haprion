@@ -92,7 +92,8 @@ PARAMETERS = frozenset(
 MAX_REQUEST_BYTES = 1024 * 1024
 #
 # What a request holds beside its parts, at the most: the comment (4096 bytes,
-# at worst six bytes each escaped as JSON), the request id, the cluster, the
+# at worst three bytes of JSON for each byte: `\uXXXX` for a character of two
+# bytes, twelve for one of four), the request id, the cluster, the
 # head and the actor. A sender that keeps its parts to the rest is never
 # refused for the size of a comment it was given later.
 #
@@ -113,9 +114,9 @@ __all__ = [
     "OPERATION",
     "SUDO",
     "build_request",
-    "fits",
     "main",
     "parts_bytes",
+    "room",
 ]
 
 
@@ -199,18 +200,10 @@ def parts_bytes(
     )
 
 
-def fits(
-    objects: Mapping[str, str | None] | None = None,
-    *,
-    network: str | None = None,
-    settings: str | None = None,
-) -> bool:
-    """Whether one publish can carry these parts, whatever comment and actor it is sent with."""
+def room() -> int:
+    """The bytes of parts one publish can carry, whatever comment and actor it is sent with."""
 
-    return (
-        parts_bytes(objects, network=network, settings=settings) + REQUEST_RESERVE
-        <= MAX_REQUEST_BYTES
-    )
+    return MAX_REQUEST_BYTES - REQUEST_RESERVE
 
 
 def _objects(parameters: Mapping[str, JsonValue]) -> dict[str, bytes | None]:

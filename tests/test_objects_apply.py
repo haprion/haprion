@@ -417,7 +417,7 @@ class ObjectsFromFiles(unittest.TestCase):
             f"s{number}": "x" * (300 + number % 700) for number in range(4000)
         }
         documents["gone"] = None
-        room = changes_publish.MAX_REQUEST_BYTES - changes_publish.REQUEST_RESERVE
+        room = changes_publish.room()
 
         cut = objects_apply.batches(documents)
 
@@ -431,6 +431,24 @@ class ObjectsFromFiles(unittest.TestCase):
                 self.assertGreater(
                     changes_publish.parts_bytes({name: documents[name] for name in more}), room
                 )
+
+    def test_the_largest_object_in_the_widest_encoding_fits_a_batch_of_its_own(self) -> None:
+        """`batches` takes it that every object fits one request: JSON at most triples a byte."""
+
+        from haprion.proxy_model import MAX_MODEL_BYTES
+
+        for character, size in (("é", 2), ("\U0001f600", 4), ("x", 1)):
+            document_ = character * (MAX_MODEL_BYTES // size)
+            self.assertLessEqual(len(document_.encode()), MAX_MODEL_BYTES)
+            with self.subTest(character=character):
+                self.assertLessEqual(
+                    changes_publish.parts_bytes({"big": document_}), changes_publish.room()
+                )
+                self.assertEqual(objects_apply.batches({"big": document_}), [["big"]])
+
+    def test_the_room_is_what_the_request_ceiling_leaves_the_parts(self) -> None:
+        with mock.patch.object(changes_publish, "MAX_REQUEST_BYTES", 100_000):
+            self.assertEqual(changes_publish.room(), 100_000 - changes_publish.REQUEST_RESERVE)
 
     def test_the_comment_counts_what_it_cannot_name(self) -> None:
         """The scale scenario, 26-11-05: the names of a few hundred new objects went over 4096 bytes."""

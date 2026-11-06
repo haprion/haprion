@@ -3002,9 +3002,41 @@ def older_manager_backup(
             "haprion-user add itest-held --role admin --password-stdin",
             stdin=password + "\n",
         )
+        #
+        # Node backups is off on a new installation (measured 26-11-06: the
+        # route answered 404), and turned on as an administrator does it.
+        # From a new installation no schedule is remembered, so turning it on
+        # queues no job that would hold the cluster.
+        #
+        status, redirect = web.sign_in("held-setup", "itest-held", password)
+        if status != "303":
+            raise Failed(f"the administrator cannot sign in ({status} {redirect})")
+        status, redirect = web.post(
+            "held-setup", "/settings/features/node_backups", "/settings", {"enabled": "on"}
+        )
+        if status != "303":
+            raise Failed(f"turning on Node backups answered {status} {redirect}, not a redirect")
+        #
+        # A node archive needs the node's Netplan (the manual's requirement:
+        # the cloud images of both distributions have it). The containers'
+        # network is podman's, so each node gets the file a cloud image would
+        # carry, describing its address; nothing applies it here.
+        #
+        for role in NODES:
+            run.on(
+                role,
+                "install -d -m 755 /etc/netplan && "
+                "install -m 600 /dev/stdin /etc/netplan/50-cloud-init.yaml",
+                stdin=(
+                    "network:\n  version: 2\n  ethernets:\n    eth0:\n"
+                    f"      addresses:\n        - {run.address(role)}/24\n"
+                ),
+            )
 
     step(
-        "an administrator for the Jobs page (Run and Discard are the web's, not the API's)", account
+        "an administrator for the Jobs page (Run and Discard are the web's, not the API's), "
+        "Node backups turned on, and each node given the Netplan file a cloud image has",
+        account,
     )
 
     def round_(kind: str, decision: str) -> None:
@@ -3080,14 +3112,26 @@ def older_manager_backup(
             f"({label}) the job runs, then more work: published and deployed", done_after_the_backup
         )
 
+        #
+        # The two ways a manager goes back (26-11-06). The backup round restores
+        # the database alone, as `haprion-backup restore` does: the helper's
+        # saved answer (/var/lib/haprion/answers) and the archives under /srv
+        # stay, which is the older backup with a saved answer. The deploy round
+        # puts back an image, the database and /srv together, as Veeam does:
+        # the nodes then run a version the manager has no record of (F18). A
+        # deploy keeps no answer, so nothing newer is left beside it.
+        #
+        image = kind == "deploy"
+
         def put_back() -> None:
             units = "haprion-worker haprion-poller haprion-web.socket haprion-web"
             run.on("mgr", f"systemctl stop {units}")
-            run.on(
-                "mgr",
-                "rm -rf /srv/haprion.newer && mv /srv/haprion /srv/haprion.newer "
-                f"&& tar --numeric-owner -C /srv -xpf /root/older-srv-haprion-{kind}.tar",
-            )
+            if image:
+                run.on(
+                    "mgr",
+                    "rm -rf /srv/haprion.newer && mv /srv/haprion /srv/haprion.newer "
+                    f"&& tar --numeric-owner -C /srv -xpf /root/older-srv-haprion-{kind}.tar",
+                )
             _, output = run.on("mgr", f"haprion-backup restore /root/older-manager-{kind}.dump")
             held = re.search(r"held for an admin on Jobs: \[([^\]]*)\]", output)
             if held is None or str(seen["job"]) not in held.group(1).replace(" ", "").split(","):
@@ -3095,7 +3139,11 @@ def older_manager_backup(
             run.on("mgr", "systemctl start haprion-poller haprion-web.socket")
             run.on("mgr", "systemctl start haprion-worker")
 
-        step(f"({label}) the older backup put back with haprion-backup restore", put_back)
+        step(
+            f"({label}) the older backup put back with haprion-backup restore"
+            + (", and /srv with it as an image" if image else ", the database alone"),
+            put_back,
+        )
 
         def held() -> None:
             until = time.monotonic() + 120
@@ -3130,6 +3178,12 @@ def older_manager_backup(
                 _, archives = run.on("mgr", f"haprion-list-backups -c {CLUSTER}", check=False)
                 if archives != seen["archives_ran"]:
                     raise Failed(f"a node backup was taken with the job held:\n{archives}")
+            if not image:
+                now, _ = agree_soon(run, header[0])
+                if now["nodes"] != seen["ahead"]:
+                    raise Failed(f"the readings after the restore:\n{now}")
+                print(f"(held; nodes {now['nodes']}, {now['cli']['state']})", end=" ")
+                return
             #
             # The nodes run a version this manager has no record of; the CLI says so
             # (cluster_status.ahead_words, cli/status.py:_release_line) and all readings agree
@@ -3144,7 +3198,8 @@ def older_manager_backup(
             print(f"(held; nodes {now['nodes']}, published {now['cli']['target']})", end=" ")
 
         step(
-            f"({label}) the job is held, no node moves, and the readings say the nodes are ahead",
+            f"({label}) the job is held and no node moves"
+            + (", and the readings say the nodes are ahead" if image else ""),
             held,
         )
 

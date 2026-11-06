@@ -130,7 +130,14 @@ def lookups(
                     name = waiting.get_nowait()
                 except queue.Empty:
                     return
-                found = ask(name)
+                try:
+                    found = ask(name)
+                except Exception:  # noqa: BLE001 - any failure of the resolver is a name it did not resolve
+                    #
+                    # A resolver that fails is a name it did not resolve, not
+                    # a name the time ran out before.
+                    #
+                    found = False
                 with changed:
                     answered[name] = found
                     changed.notify_all()
@@ -154,12 +161,6 @@ def lookups(
     )
 
 
-def unresolved(proxies: Iterable[Proxy], resolve: Resolves | None = None) -> list[str]:
-    """The servers' names that do not resolve, in the order they appear; by this host's resolver."""
-
-    return lookups(proxies, resolve, seconds=float("inf")).unresolved
-
-
 def unasked_warning(unasked: Sequence[str]) -> str:
     """What is said about names not looked up in time: one sentence for all of them."""
 
@@ -178,3 +179,25 @@ def warning(name: str) -> str:
         f"{name} is not in DNS as the manager sees it. If the nodes cannot find it either, "
         "the deploy stops"
     )
+
+
+#
+# Sentences said one by one before the rest is counted: a resolver that knows
+# none of a large import's names would otherwise bury every other warning.
+#
+SAID_ONE_BY_ONE = 5
+
+
+def warnings(unresolved: Sequence[str]) -> list[str]:
+    """`warning` for the first few names, then one sentence for all the others."""
+
+    said = [warning(name) for name in unresolved[:SAID_ONE_BY_ONE]]
+    rest = unresolved[SAID_ONE_BY_ONE:]
+    if rest:
+        shown = ", ".join(rest[:SAID_ONE_BY_ONE]) + (", ..." if len(rest) > SAID_ONE_BY_ONE else "")
+        said.append(
+            f"{labels.counted(len(rest), 'more server name is', 'more server names are')} "
+            f"not in DNS as the manager sees it ({shown}). "
+            "If the nodes cannot find them either, the deploy stops"
+        )
+    return said

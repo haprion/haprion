@@ -40,8 +40,32 @@ class WhichNamesAreAsked(unittest.TestCase):
         proxies = [site("shop", "app-1.example.com", "typo.example.com")]
 
         self.assertEqual(
-            server_names.unresolved(proxies, known("app-1.example.com")), ["typo.example.com"]
+            server_names.lookups(proxies, known("app-1.example.com")).unresolved,
+            ["typo.example.com"],
         )
+
+    def test_a_resolver_that_fails_leaves_the_name_unresolved_not_unasked(self) -> None:
+        def broken(host: str) -> bool:
+            raise OSError("boom")
+
+        found = server_names.lookups([site("shop", "app-1.example.com")], broken)
+
+        self.assertEqual((found.unresolved, found.unasked), (["app-1.example.com"], []))
+
+    def test_many_unresolved_names_are_a_few_sentences_and_a_count(self) -> None:
+        names = [f"app-{number}.example.com" for number in range(40)]
+
+        said = server_names.warnings(names)
+
+        self.assertEqual(len(said), server_names.SAID_ONE_BY_ONE + 1)
+        self.assertEqual(said[0], server_names.warning(names[0]))
+        self.assertTrue(said[-1].startswith("35 more server names are not in DNS"))
+        self.assertIn("app-5.example.com", said[-1])
+        self.assertNotIn("app-39.example.com", said[-1])
+        self.assertEqual(
+            server_names.warnings(names[:2]), [server_names.warning(n) for n in names[:2]]
+        )
+        self.assertEqual(server_names.warnings([]), [])
 
     def test_the_lookups_stop_when_their_time_is_spent(self) -> None:
         """B483: a resolver that does not answer costs seconds a name, under the lock."""

@@ -1017,7 +1017,7 @@ def unresolved_note(job: Job) -> str | None:
     names = body.get("unresolved_servers") if isinstance(body, dict) else None
     if not isinstance(names, list):
         return None
-    said = [server_names.warning(name) for name in names if isinstance(name, str) and name]
+    said = server_names.warnings([name for name in names if isinstance(name, str) and name])
     #
     # And the names the publish's time for lookups ran out before (B483).
     #

@@ -820,6 +820,21 @@ class ANodeChangeThatWasNotPublished(unittest.TestCase):
         )
         self.assertIn("1 server name was not looked up (late.x)", jobs.unresolved_note(late) or "")
 
+    def test_a_great_many_unresolved_names_are_not_a_wall_of_text(self) -> None:
+        names = [f"app-{number}.example.com" for number in range(300)]
+        job = replace(
+            queued(operation="changes_publish", cluster="alpha"),
+            state="done",
+            outcome="done",
+            result={"result": {"version": 7, "unresolved_servers": names}},
+        )
+
+        note = jobs.unresolved_note(job) or ""
+
+        self.assertIn("295 more server names are not in DNS", note)
+        self.assertNotIn("app-299.example.com", note)
+        self.assertLess(len(note), 2000)
+
     def test_a_node_the_publish_could_not_ask_is_the_note(self) -> None:
         """W05: said on the publish, also when it was deployed in the same job."""
 

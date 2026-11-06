@@ -460,8 +460,8 @@ def _render(cluster: str, plan: Plan, summary: Mapping[str, Any], writer: TextIO
         )
     for version in summary["versions"]:
         writer.write(f"Published version {version['version']} of {cluster}.\n")
-    for name in summary["unresolved_servers"]:
-        writer.write(f"WARNING: {server_names.warning(name)}\n")
+    for sentence in server_names.warnings(summary["unresolved_servers"]):
+        writer.write(f"WARNING: {sentence}\n")
     if summary["unasked_servers"]:
         writer.write(f"WARNING: {server_names.unasked_warning(summary['unasked_servers'])}\n")
     for sentence in summary["check_tls_mismatches"]:

@@ -2263,8 +2263,20 @@ def readdress_steps(scenario: Scenario) -> None:
         print(f"\n{status.rstrip()}\n      ", end="")
         holders = run.holders()
         print(f"(the virtual address is held by {holders or 'no node'})", end=" ")
+        #
+        # Found by this scenario (26-11-06): the moved node kept keepalived on
+        # its old address, both took the VIP, and the deploy that would have
+        # fixed it refuses a split brain. Since B484 the moved node checks its
+        # own address and lets the VIP go.
+        #
+        if holders != [staying]:
+            raise Failed(
+                f"the virtual address is held by {holders or 'no node'}, not by {staying} alone"
+            )
+        if "Entering FAULT" not in seen["address changed, product not told"][moving]["state"]:
+            raise Failed(f"keepalived on {moving} is not in FAULT: {seen}")
 
-    step("what keepalived and the manager say before the product is told", untold)
+    step("before the product is told: the moved node lets the address go", untold)
 
     def prepared() -> None:
         _, output = run.on(moving, "haprion-node-prepare")

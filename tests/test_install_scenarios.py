@@ -176,6 +176,21 @@ class TheScenariosAreOptIn(unittest.TestCase):
         self.assertFalse(tool.agreed(seen(4, 4, 3)))
         self.assertTrue(tool.agreed(seen(3, 3, 3, state="behind")))
 
+    def test_a_dated_partition_is_left_out_also_when_its_name_was_cut_short(self) -> None:
+        tool = self.install_test()
+        for name in (
+            "traffic_log_20261106",
+            "metric_backend_member_202611",
+            "traffic_log_20261106_client",
+            "metric_backend_member_2026110_cluster_backend_member_obser_idx1",
+            "metric_backend_member_2026121_cluster_backend_member_observ_idx",
+        ):
+            with self.subTest(name=name):
+                self.assertTrue(tool.DATED.search(name))
+        for name in ("traffic_log", "metric_backend_member_read", "job_cluster_idx", "app_user"):
+            with self.subTest(name=name):
+                self.assertIsNone(tool.DATED.search(name))
+
     def test_the_release_states_it_waits_for_are_ones_the_product_says(self) -> None:
         # The faults run of 26-11-06 waited for "current", a word the status
         # never says, and failed on a converged cluster.

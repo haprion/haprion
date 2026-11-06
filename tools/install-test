@@ -1075,12 +1075,14 @@ class Run:
 #
 # One entry of `pg_dump --schema-only`: its header names it and says its kind.
 # A day's or a month's partition, and what belongs to it, carries the date in
-# its name.
+# its name - cut short where PostgreSQL shortens a made-up index name to 63
+# characters: `metric_backend_member_2026110_cluster_backend_member_obser_idx1`
+# is a November day's (measured 26-11-06, the first run of the comparison).
 #
 DUMP_ENTRY = re.compile(
     r"^-- Name: (?P<name>.*?); Type: (?P<kind>.*?); Schema: .*?; Owner: .*$", re.M
 )
-DATED = re.compile(r"_\d{6}(?:\d{2})?(?:_[a-z_]+)?\b")
+DATED = re.compile(r"_\d{6,8}(?=_|\b)")
 
 
 def schema_entries(dump: str) -> dict[str, str]:
@@ -1649,8 +1651,15 @@ def run_one(
             psql = "runuser -u postgres -- psql -d haprion -qtAX -c "
             run.on("mgr", "haprion-backup dump")
             _, listed = run.on("mgr", "haprion-backup list")
-            # Newest first: the dump just taken.
-            dump = listed.splitlines()[0].split()[-1] if listed.strip() else ""
+            # Newest first, under its group's heading: the dump just taken.
+            dump = next(
+                (
+                    line.split()[-1]
+                    for line in listed.splitlines()
+                    if line.strip().endswith(".dump")
+                ),
+                "",
+            )
             if not dump.endswith(".dump"):
                 raise Failed(f"haprion-backup list named no dump:\n{listed}")
             run.on(

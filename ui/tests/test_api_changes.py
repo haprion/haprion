@@ -709,6 +709,7 @@ class Publishing(ChangesTestCase):
         self.rows = [saved_row()]
         for body in (
             {"comment": "x" * 4097},
+            {"comment": "\u00e4" * 2100},
             {"comment": "a b"},
             {"deploy": "perhaps"},
             {"extra": 1},

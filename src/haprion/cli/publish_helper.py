@@ -99,6 +99,7 @@ from haprion.reservations import (
 )
 from haprion.status_collect import read_target
 from haprion.version_history import (
+    MAX_COMMENT_BYTES,
     comment_problem,
     count_versions,
     index_left_behind,
@@ -122,7 +123,6 @@ COMMIT_ID = re.compile(r"^[0-9a-f]{40}$")
 # applied on the way in, so a comment that would be rejected when the version is
 # read back cannot be recorded in the first place.
 #
-MAX_COMMENT_BYTES = 4096
 
 TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 

@@ -103,6 +103,13 @@ def trailer_name(value: object) -> str:
     return value
 
 
+#
+# A version's comment, in UTF-8 bytes: the helpers' limit, which a form counting
+# characters would otherwise pass for a comment of two-byte letters.
+#
+MAX_COMMENT_BYTES = 4096
+
+
 def comment_problem(comment: str) -> str | None:
     """Why a version's comment cannot be committed, or None.
 
@@ -114,6 +121,8 @@ def comment_problem(comment: str) -> str | None:
     helper that takes a comment.
     """
 
+    if len(comment.encode("utf-8")) > MAX_COMMENT_BYTES:
+        return f"is longer than {MAX_COMMENT_BYTES} bytes"
     for character in comment:
         if character in "\t\n":
             continue

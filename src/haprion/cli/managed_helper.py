@@ -75,6 +75,7 @@ from haprion.repo_snapshot import (
 )
 from haprion.status_collect import read_target
 from haprion.version_history import (
+    MAX_COMMENT_BYTES,
     comment_problem,
     count_versions,
     recorded_on,
@@ -85,7 +86,6 @@ from haprion.version_history import (
 )
 
 COMMIT_ID = re.compile(r"^[0-9a-f]{40}$")
-MAX_COMMENT_BYTES = 4096
 TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 SUDO = "/usr/bin/sudo"
 

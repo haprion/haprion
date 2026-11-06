@@ -572,6 +572,35 @@ class ObjectsFromFiles(unittest.TestCase):
         self.assertEqual(answer["error"]["code"], "changes_invalid")
         self.assertEqual(fakes.stored, {})
 
+    def test_a_comment_with_no_room_for_the_batch_number_is_refused_before_anything(self) -> None:
+        fakes = Fakes({})
+        for number in range(16):
+            self.write(f"site{number:03d}", document(f"site{number:03d}"))
+
+        with mock.patch.object(changes_publish, "MAX_REQUEST_BYTES", room_for(10)):
+            code, out, _ = self.run_cli(
+                fakes, "apply", "-c", "alpha", str(self.root), "-m", "x" * 4090, "--json"
+            )
+
+        answer = assert_contract("haprion-objects-apply", out)
+        self.assertEqual((code, answer["error"]["code"]), (exit_codes.REFUSED, "bad_input"))
+        self.assertEqual(fakes.published, [])
+
+    def test_a_comment_over_the_limit_or_with_a_line_separator_is_refused_before_anything(
+        self,
+    ) -> None:
+        fakes = Fakes({})
+        self.write("shop", document("shop"))
+
+        for comment in ("\u00e4" * 2100, "one\u2028two"):
+            with self.subTest(comment=comment[:5]):
+                code, _, err = self.run_cli(
+                    fakes, "apply", "-c", "alpha", str(self.root), "-m", comment
+                )
+                self.assertEqual(code, exit_codes.REFUSED)
+                self.assertIn("the comment", err)
+        self.assertEqual(fakes.published, [])
+
     def test_a_head_that_moved_is_blocked(self) -> None:
         fakes = Fakes({})
         fakes.head = "f" * 40

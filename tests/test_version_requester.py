@@ -137,6 +137,10 @@ class ACommentThatSplitsALine(unittest.TestCase):
                 self.assertIsNotNone(comment_problem(f"before{separator}after"))
         self.assertIsNone(comment_problem("Move the shop\n\nand its pool\tto beta"))
 
+    def test_the_limit_is_in_bytes(self) -> None:
+        self.assertIsNone(comment_problem("\u00e4" * 2048))
+        self.assertEqual(comment_problem("\u00e4" * 2049), "is longer than 4096 bytes")
+
 
 if __name__ == "__main__":
     unittest.main()

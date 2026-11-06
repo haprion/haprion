@@ -394,6 +394,17 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         self.assertIn("line separators", answer.text)
         self.assertEqual(self.queued, [])
 
+    def test_a_comment_longer_in_bytes_than_the_helper_takes_is_refused_before_a_job(self) -> None:
+        """The form counts characters; two-byte letters are twice as long to the helper."""
+
+        self.rows = [row()]
+
+        answer = self.publish(self.editor(), comment="\u00e4" * 2100)
+
+        self.assertEqual(answer.status_code, 400)
+        self.assertIn("longer than 4096 bytes", answer.text)
+        self.assertEqual(self.queued, [])
+
     def test_a_page_drawn_at_an_older_version_is_read_again(self) -> None:
         self.rows = [row()]
 

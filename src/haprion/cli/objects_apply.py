@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from haprion import check_policy, exit_codes, held_ports, labels, server_names
-from haprion.cli import arguments, changes_publish, managed_helper
+from haprion.cli import arguments, changes_publish
 from haprion.cli.apply_common import (
     PartlyDone,
     Refused,
@@ -51,6 +51,7 @@ from haprion.proxy_model import (
     load_written,
     name_refusal,
 )
+from haprion.version_history import MAX_COMMENT_BYTES, comment_problem
 
 OPERATION = "objects_apply"
 SUFFIXES = (".yaml", ".yml")
@@ -251,7 +252,7 @@ def _comment(plan: Plan) -> str:
     named = "From the terminal: " + "; ".join(
         f"{verb} {', '.join(names)}" for verb, names in groups
     )
-    if len(named.encode("utf-8")) + BATCH_SUFFIX_BYTES <= managed_helper.MAX_COMMENT_BYTES:
+    if len(named.encode("utf-8")) + BATCH_SUFFIX_BYTES <= MAX_COMMENT_BYTES:
         return named
     return "From the terminal: " + "; ".join(
         f"{verb} {labels.counted(len(names), 'object', 'objects')}" for verb, names in groups
@@ -313,6 +314,18 @@ def publish(
     """
 
     cut = batches(plan.documents)
+    if comment and len(cut) > 1:
+        #
+        # Each version's " (2 of 3)" goes after the comment; the helper would
+        # refuse every batch for a comment with no room for it.
+        #
+        left = MAX_COMMENT_BYTES - BATCH_SUFFIX_BYTES
+        if len(comment.encode("utf-8")) > left:
+            raise Refused(
+                "bad_input",
+                f"the comment is longer than {left} bytes, which leaves no room for the batch "
+                f"number ({labels.counted(len(cut), 'version')} are published)",
+            )
     answers: list[dict[str, Any]] = []
     for number, batch in enumerate(cut, start=1):
         suffix = f" ({number} of {len(cut)})" if len(cut) > 1 else ""
@@ -499,6 +512,9 @@ def main(
     #
     found: str | None = None
     try:
+        problem = comment_problem(args.comment) if args.comment else None
+        if problem:
+            raise Refused("bad_input", f"the comment {problem}")
         wanted = read_files(args.targets) if command == "apply" else {}
         if command == "apply" and not wanted and args.prune:
             raise Refused(

@@ -68,7 +68,7 @@ def build_schedule_request(
 
 
 STORAGE_CODES = frozenset({"backup_storage_failed"})
-MESSAGE_CHARACTERS = 1024
+MESSAGE_CHARACTERS = 2048
 
 
 def _node_message(node: state_backup.NodeResult) -> str:
@@ -80,15 +80,35 @@ def _node_message(node: state_backup.NodeResult) -> str:
     return f"The node did not produce a valid state archive{detail}"
 
 
-def _none_produced(flagged: tuple[state_backup.NodeResult, ...]) -> str:
-    """The error when no node gave an archive, with what each node said (26-11-06).
+#
+# What each code says beside a node's name when no node gave an archive.
+#
+SHORT = {
+    "backup_archive_invalid": "not a valid archive",
+    "backup_node_mismatch": "the archive names another host",
+    "backup_directory_insecure": "the backup directory on the manager is not safe to write to",
+    "backup_version_exists": "this backup version already exists",
+    "backup_budget_exhausted": "the run ran out of time before this node",
+}
 
-    Bounded by the envelope's message, which takes 1024 characters.
+
+def _short(node: state_backup.NodeResult) -> str:
+    if node.error == "backup_storage_failed":
+        return "the manager could not write it" + (f": {node.detail}" if node.detail else "")
+    if node.detail:
+        return node.detail
+    return SHORT.get(node.error or "", node.error or "failed")
+
+
+def _none_produced(flagged: tuple[state_backup.NodeResult, ...]) -> str:
+    """The error when no node gave an archive, with what is wrong with each node.
+
+    Bounded by the envelope's error message, which takes 2048 characters.
     """
 
-    said = "; ".join(f"{node.name}: {node.detail}" for node in flagged if node.detail)
-    if not said:
+    if not any(node.detail for node in flagged):
         return "No node produced a valid state archive"
+    said = "; ".join(f"{node.name}: {_short(node)}" for node in flagged)
     message = f"No node produced a valid state archive ({said})"
     return (
         message

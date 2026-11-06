@@ -312,15 +312,27 @@ class StateBackupTests(unittest.TestCase):
         # 26-11-06: the export refused on a node without Netplan, and the job
         # said only that no node produced an archive.
         said = "starting\nERROR: required DR state is missing: /etc/netplan\n\n"
-        self.assertEqual(
-            state_backup._reason(said), "ERROR: required DR state is missing: /etc/netplan"
-        )
+        # The export's own `ERROR: ` is not repeated in the job's text.
+        self.assertEqual(state_backup._reason(said), "required DR state is missing: /etc/netplan")
         self.assertIsNone(state_backup._reason(" \n"))
         self.assertEqual(state_backup._reason("a\x1b[31mb"), "a?[31mb")
         long = state_backup._reason("x" * 500)
         assert long is not None
         self.assertEqual(len(long), state_backup.REASON_CHARACTERS)
         self.assertTrue(long.endswith("..."))
+
+    def test_the_exports_size_refusal_keeps_the_action(self) -> None:
+        # The export's one line: the reason, the three largest files, what to do.
+        line = (
+            "ERROR: the files would make an archive a restore cannot carry: 912 MiB against "
+            "480 MiB. The largest are /var/backups/archive/2026-database-dump.sql (400.0 MiB), "
+            "/var/log/journal/0123456789abcdef/system@0000000000000000-0000000000000001.journal"
+            " (300.5 MiB), /home/service/export/customers-full-2026.tar (150.2 MiB). "
+            "Take large paths out of EXTRA_BACKUP_PATHS in /etc/haprion/node.conf."
+        )
+        reason = state_backup._reason(f"starting\n{line}\n")
+        assert reason is not None
+        self.assertTrue(reason.endswith("in /etc/haprion/node.conf."))
 
 
 class TheRunAnswersWithinItsBudget(unittest.TestCase):

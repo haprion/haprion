@@ -92,8 +92,9 @@ class NodeResult:
     size_bytes: int | None
     error: str | None
     #
-    # What the OS said, for the text that names `error`. Not part of the
-    # contract: the code is, and the code is all the envelope carries.
+    # What the OS said, or the node's last stderr line, for the text that
+    # names `error`. Not part of the contract: the code is. The job's error
+    # text carries it too.
     #
     detail: str | None = None
 
@@ -283,16 +284,26 @@ def _one_node(
 # /etc/netplan", measured 26-11-06 in the install test); without it the job
 # said only that no node produced an archive, and the reason was on the node.
 #
-REASON_CHARACTERS = 200
+# 400 holds the export's size refusal with its three largest files and what
+# to do about it; a whole job error of eight such nodes still fits the
+# envelope's 2048.
+#
+REASON_CHARACTERS = 400
+ERROR_PREFIX = "ERROR: "
 
 
 def _reason(stderr: str) -> str | None:
-    """The last line the node wrote, printable and bounded, or None when it wrote none."""
+    """The last line the node wrote, printable and bounded, or None when it wrote none.
+
+    Past `node_ssh.MAX_STDERR_BYTES` only the first part of what the node wrote
+    is kept, so then it is the last line of that part.
+    """
 
     lines = [line.strip() for line in stderr.splitlines() if line.strip()]
     if not lines:
         return None
-    plain = "".join(character if character.isprintable() else "?" for character in lines[-1])
+    last = lines[-1].removeprefix(ERROR_PREFIX)
+    plain = "".join(character if character.isprintable() else "?" for character in last)
     if len(plain) > REASON_CHARACTERS:
         return plain[: REASON_CHARACTERS - 3] + "..."
     return plain

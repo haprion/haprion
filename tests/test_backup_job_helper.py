@@ -175,6 +175,29 @@ class BackupJobHelperTests(unittest.TestCase):
             f"No node produced a valid state archive (node-a: {reason}; node-b: {reason})",
         )
 
+    def test_every_flagged_node_is_named_and_the_managers_storage_is_not_the_nodes(self) -> None:
+        report = BackupResult(
+            "alpha",
+            "2026-09-21_05-00-00",
+            (
+                NodeResult("node-a", "failed", None, None, "node_export_failed", "no netplan"),
+                NodeResult("node-b", "failed", None, None, "backup_archive_invalid"),
+                NodeResult("node-c", "failed", None, None, "backup_storage_failed", "No space"),
+                NodeResult("node-d", "failed", None, None, "backup_node_mismatch"),
+            ),
+        )
+        document, _ = backup_job_helper.run_document(
+            report, cluster="alpha", request_id=str(uuid4())
+        )
+
+        message = cast(dict[str, str], document["error"])["message"]
+        self.assertEqual(
+            message,
+            "No node produced a valid state archive (node-a: no netplan; "
+            "node-b: not a valid archive; node-c: the manager could not write it: No space; "
+            "node-d: the archive names another host)",
+        )
+
     def test_the_error_stays_within_the_envelopes_message(self) -> None:
         report = BackupResult(
             "alpha",

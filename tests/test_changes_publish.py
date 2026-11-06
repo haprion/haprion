@@ -431,7 +431,9 @@ class ChangesPublishTests(ObjectsPublishFixture):
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
             self.assertFalse((self.repo / "managed/proxies/shop.yaml").exists())
 
-    def test_sixty_four_objects_publish_and_sixty_five_are_refused(self) -> None:
+    def test_no_count_bounds_a_publish_only_the_request_s_size(self) -> None:
+        """B483: 64 was a chosen count (B257); a hundred objects go out as one version."""
+
         def sites(count: int) -> dict[str, str | None]:
             return {
                 #
@@ -448,19 +450,11 @@ class ChangesPublishTests(ObjectsPublishFixture):
             self.seed()
             before = git(self.repo, "rev-parse", "HEAD")
 
-            code, document, _err = self.publish(
-                policy, self.changes(objects=sites(changes_publish.MAX_OBJECTS + 1))
-            )
-            self.assertEqual(code, 65)
-            self.assertEqual(document["error"]["code"], "bad_input")
-            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
-
-            code, document, err = self.publish(
-                policy, self.changes(objects=sites(changes_publish.MAX_OBJECTS))
-            )
+            code, document, err = self.publish(policy, self.changes(objects=sites(100)))
             self.assertEqual((code, err), (0, ""))
             assert_contract("haprion-changes-publish", json.dumps(document))
-            self.assertEqual(len(document["result"]["objects"]), 64)
+            self.assertEqual(len(document["result"]["objects"]), 100)
+            self.assertNotEqual(git(self.repo, "rev-parse", "HEAD"), before)
 
     def test_a_request_over_the_ceiling_is_refused_before_it_is_parsed(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

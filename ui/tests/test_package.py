@@ -10,6 +10,8 @@ from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
+from haprion.cli import changes_publish
+
 from haprion_ui import auth, db
 from tests.test_editor_page import COMMIT, NETWORK, OBSERVED, SHOP, EditorTestCase
 from tests.test_saved_changes import WIDER, saved
@@ -345,13 +347,18 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
 
         self.assertNotIn("haproxy-live", self.page(self.editor()))
 
-    def test_more_objects_than_one_publish_carries_are_refused(self) -> None:
-        self.rows = [row(f"site-{index}", id=uuid4()) for index in range(65)]
+    def test_more_than_one_publish_carries_is_refused(self) -> None:
+        """B483: the request's size, not a count; a hundred objects are one publish."""
 
-        answer = self.publish(self.editor())
+        self.rows = [row(f"site-{index}", id=uuid4()) for index in range(100)]
+        room = changes_publish.REQUEST_RESERVE + 2048
+
+        with mock.patch.object(changes_publish, "MAX_REQUEST_BYTES", room):
+            answer = self.publish(self.editor())
 
         self.assertEqual(answer.status_code, 400)
-        self.assertIn("65 proxies; at most 64", answer.text)
+        self.assertIn("KiB go in one publish", answer.text)
+        self.assertIn("at most 2 KiB", answer.text)
 
     def test_a_comment_is_needed(self) -> None:
         self.rows = [row()]

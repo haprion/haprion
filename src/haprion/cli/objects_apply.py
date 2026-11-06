@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from haprion import check_policy, exit_codes, held_ports, labels, server_names
-from haprion.cli import arguments, changes_publish
+from haprion.cli import arguments, changes_publish, managed_helper
 from haprion.cli.apply_common import (
     PartlyDone,
     Refused,
@@ -225,16 +225,67 @@ def plan_remove(names: Sequence[str], current: Mapping[str, str]) -> Plan:
     )
 
 
+#
+# Room left in a comment for the batch's " (12 of 40)".
+#
+BATCH_SUFFIX_BYTES = 32
+
+
 def _comment(plan: Plan) -> str:
-    parts = []
-    for verb, names in (
-        ("added", plan.added),
-        ("changed", plan.changed),
-        ("removed", plan.removed),
-    ):
-        if names:
-            parts.append(f"{verb} {', '.join(names)}")
-    return "From the terminal: " + "; ".join(parts)
+    """Every name the plan touches, or how many when the names do not fit a comment.
+
+    Made from the names, the comment of an apply of a few hundred new objects
+    went over the helper's 4096 bytes and the publish was refused (the scale
+    scenario, 26-11-05); the counts always fit.
+    """
+
+    groups = [
+        (verb, names)
+        for verb, names in (
+            ("added", plan.added),
+            ("changed", plan.changed),
+            ("removed", plan.removed),
+        )
+        if names
+    ]
+    named = "From the terminal: " + "; ".join(
+        f"{verb} {', '.join(names)}" for verb, names in groups
+    )
+    if len(named.encode("utf-8")) + BATCH_SUFFIX_BYTES <= managed_helper.MAX_COMMENT_BYTES:
+        return named
+    return "From the terminal: " + "; ".join(
+        f"{verb} {labels.counted(len(names), 'object', 'objects')}" for verb, names in groups
+    )
+
+
+def batches(documents: Mapping[str, str | None]) -> list[list[str]]:
+    """The names in their order, cut where the next would not fit one publish's request.
+
+    Each batch is as large as the request takes (B483): the candidate is built
+    whole for every publish, so the number of publishes is what an apply costs.
+    An object is at most 256 KiB, so every batch holds at least one.
+    """
+
+    room = changes_publish.MAX_REQUEST_BYTES - changes_publish.REQUEST_RESERVE
+    empty = changes_publish.parts_bytes({"": None}) - len('"":null')
+    cut: list[list[str]] = []
+    batch: list[str] = []
+    used = empty
+    for name in documents:
+        #
+        # `"name":document` and the comma before all but the first: exactly
+        # what `build_request` adds for it, so the batch is measured, not guessed.
+        #
+        size = changes_publish.parts_bytes({name: documents[name]}) - empty + (1 if batch else 0)
+        if batch and used + size > room:
+            cut.append(batch)
+            batch, used = [], empty
+            size -= 1
+        batch.append(name)
+        used += size
+    if batch:
+        cut.append(batch)
+    return cut
 
 
 def publish(
@@ -257,14 +308,10 @@ def publish(
     each is checked against the version they all start from (K05).
     """
 
-    names = list(plan.documents)
-    batches = [
-        names[start : start + changes_publish.MAX_OBJECTS]
-        for start in range(0, len(names), changes_publish.MAX_OBJECTS)
-    ]
+    cut = batches(plan.documents)
     answers: list[dict[str, Any]] = []
-    for number, batch in enumerate(batches, start=1):
-        suffix = f" ({number} of {len(batches)})" if len(batches) > 1 else ""
+    for number, batch in enumerate(cut, start=1):
+        suffix = f" ({number} of {len(cut)})" if len(cut) > 1 else ""
         request = changes_publish.build_request(
             cluster,
             new_request_id(),

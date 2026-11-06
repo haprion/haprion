@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from haprion import exit_codes
 from haprion.cli import changes_publish, objects, objects_apply
@@ -25,6 +26,13 @@ def document(name: str, port: int = 8080) -> str:
         .replace("shop.example.com", f"{name}.example.com")
         .replace("port: 8080", f"port: {port}")
     )
+
+
+def room_for(count: int) -> int:
+    """A request ceiling that holds exactly `count` of the `site000`... documents in one publish."""
+
+    sites = {f"site{number:03d}": document(f"site{number:03d}") for number in range(count)}
+    return changes_publish.parts_bytes(sites) + changes_publish.REQUEST_RESERVE
 
 
 class Fakes:
@@ -385,34 +393,75 @@ class ObjectsFromFiles(unittest.TestCase):
                 self.assertEqual(fakes.published, [])
 
     def test_more_than_one_publish_takes_is_batched_and_each_batch_fenced(self) -> None:
-        count = changes_publish.MAX_OBJECTS + 6
+        count = 16
         fakes = Fakes({})
         for number in range(count):
             self.write(f"site{number:03d}", document(f"site{number:03d}"))
 
-        code, out, _ = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root), "--json")
+        with mock.patch.object(changes_publish, "MAX_REQUEST_BYTES", room_for(10)):
+            code, out, _ = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root), "--json")
 
         self.assertEqual(code, 0)
         self.assertEqual(
             [len(sent["parameters"]["objects"]) for sent in fakes.published],
-            [changes_publish.MAX_OBJECTS, 6],
+            [10, 6],
         )
         self.assertEqual(fakes.published[1]["parameters"]["expected_head"], f"{1:040x}")
         self.assertEqual(len(fakes.stored), count)
         self.assertEqual(len(json.loads(out)["result"]["versions"]), 2)
+
+    def test_each_batch_is_as_large_as_one_request_takes(self) -> None:
+        """B483: measured with the request the helper is sent, not guessed from a count."""
+
+        documents: dict[str, str | None] = {
+            f"s{number}": "x" * (300 + number % 700) for number in range(4000)
+        }
+        documents["gone"] = None
+        room = changes_publish.MAX_REQUEST_BYTES - changes_publish.REQUEST_RESERVE
+
+        cut = objects_apply.batches(documents)
+
+        self.assertEqual([name for batch in cut for name in batch], list(documents))
+        self.assertGreater(len(cut), 1)
+        for number, batch in enumerate(cut):
+            spent = changes_publish.parts_bytes({name: documents[name] for name in batch})
+            self.assertLessEqual(spent, room)
+            if number + 1 < len(cut):
+                more = [*batch, cut[number + 1][0]]
+                self.assertGreater(
+                    changes_publish.parts_bytes({name: documents[name] for name in more}), room
+                )
+
+    def test_the_comment_counts_what_it_cannot_name(self) -> None:
+        """The scale scenario, 26-11-05: the names of a few hundred new objects went over 4096 bytes."""
+
+        few = objects_apply.Plan(added=("shop",), changed=("blog",), removed=(), unchanged=())
+        many = objects_apply.Plan(
+            added=tuple(f"site-{number:04d}" for number in range(600)),
+            changed=(),
+            removed=("old",),
+            unchanged=(),
+        )
+
+        self.assertEqual(objects_apply._comment(few), "From the terminal: added shop; changed blog")
+        self.assertEqual(
+            objects_apply._comment(many), "From the terminal: added 600 objects; removed 1 object"
+        )
 
     def test_what_is_removed_or_changed_goes_in_a_batch_before_what_is_added(self) -> None:
         """Code review 26-10-30 again, R11: a new object that took a removed one's name
         went in the first batch while the removed one was still there."""
 
         fakes = Fakes({"old": document("old"), "kept": document("kept")})
-        for number in range(changes_publish.MAX_OBJECTS + 1):
+        for number in range(11):
             self.write(f"site{number:03d}", document(f"site{number:03d}"))
         self.write("kept", document("kept", port=9090))
 
-        code, _, _ = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root), "--prune")
+        with mock.patch.object(changes_publish, "MAX_REQUEST_BYTES", room_for(10)):
+            code, _, _ = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root), "--prune")
 
         self.assertEqual(code, 0)
+        self.assertGreater(len(fakes.published), 1)
         first = list(fakes.published[0]["parameters"]["objects"])
         self.assertEqual(first[:2], ["old", "kept"])
         self.assertIsNone(fakes.published[0]["parameters"]["objects"]["old"])
@@ -435,7 +484,7 @@ class ObjectsFromFiles(unittest.TestCase):
         """Review 2026-10-22, 4-2: the published versions were only in the message."""
 
         fakes = Fakes({})
-        for number in range(changes_publish.MAX_OBJECTS + 6):
+        for number in range(16):
             self.write(f"site{number:03d}", document(f"site{number:03d}"))
         first = fakes.publish
 
@@ -446,7 +495,8 @@ class ObjectsFromFiles(unittest.TestCase):
 
         fakes.publish = refuse_the_second  # type: ignore[method-assign]
 
-        code, out, err = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root), "--json")
+        with mock.patch.object(changes_publish, "MAX_REQUEST_BYTES", room_for(10)):
+            code, out, err = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root), "--json")
 
         answer = assert_contract("haprion-objects-apply", out)
         self.assertEqual((code, answer["outcome"]), (exit_codes.PARTIAL, "partial"))

@@ -44,9 +44,8 @@
         },
         "deployment_required": { "type": "boolean" },
         "unresolved_servers": {
-          "description": "Finding 72: the published objects' server names the manager cannot resolve, as the publish reported them. A warning.",
+          "description": "Finding 72: the published objects' server names the manager cannot resolve, as the publishes reported them, each once. A warning. Bounded by the applied objects.",
           "type": "array",
-          "maxItems": 256,
           "items": { "type": "string", "minLength": 1, "maxLength": 253 }
         },
         "unchecked_nodes": {

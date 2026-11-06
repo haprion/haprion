@@ -60,15 +60,18 @@ def _is_address(host: str) -> bool:
 def names(proxies: Iterable[Proxy]) -> list[str]:
     """Every server written as a name, once each, in the order they appear."""
 
-    found: list[str] = []
+    #
+    # A dict keeps the order and finds a name again at once; a list's `in` made
+    # this quadratic in the servers of a publish (B483).
+    #
+    found: dict[str, None] = {}
     for proxy in proxies:
         for backend in proxy.backends.values():
             for server in backend.servers:
                 if server.address is not None or _is_address(server.host):
                     continue
-                if server.host not in found:
-                    found.append(server.host)
-    return found
+                found.setdefault(server.host)
+    return list(found)
 
 
 def unresolved(proxies: Iterable[Proxy], resolve: Resolves | None = None) -> list[str]:

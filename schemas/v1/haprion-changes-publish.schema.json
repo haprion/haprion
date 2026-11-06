@@ -67,17 +67,16 @@
      }
     },
     "unresolved_servers": {
-          "description": "Finding 72: the published objects' server names the manager cannot resolve. A warning; a node that cannot resolve one either stops the deploy.",
+          "description": "Finding 72: the published objects' server names the manager cannot resolve, each once. A warning; a node that cannot resolve one either stops the deploy. Bounded by the request's objects.",
           "type": "array",
-          "maxItems": 256,
           "items": { "type": "string", "minLength": 1, "maxLength": 253 }
         }
       },
       "additionalProperties": true
     },
     "object_names": {
+      "description": "As many as one request carries: the request is at most 1 MiB, and no count bounds it (B483).",
       "type": "array",
-      "maxItems": 64,
       "items": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,39}$" }
     }
   }

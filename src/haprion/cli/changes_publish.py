@@ -81,17 +81,22 @@ PARAMETERS = frozenset(
     }
 )
 #
-# Everything somebody saved before publishing, which is more than one person's
-# selection: 64 objects (B257). Generating and validating the candidate costs
-# the same for one changed object as for 64 - the whole configuration is built
-# either way - so the count is a sentence about the package and not a cost.
-# The ceiling on the request is what keeps a helper from parsing megabytes
-# under the cluster's lock: the objects in service measured 300-600 bytes
-# (2026-10-08), so 1 MiB holds 64 objects at 15 KB each beside a network and
-# settings document at their own limits.
+# One publish carries as many objects as its request holds (B483, 26-11-06;
+# it was 64, a chosen count, B257). Generating and validating the candidate
+# costs the same for one changed object as for a thousand - the whole
+# configuration is built either way - so a count bounded nothing, and the
+# scale scenario's 10 000 objects took 157 publishes and 47 minutes on the
+# documented manager. The ceiling on the request is what keeps a helper from
+# parsing megabytes under the cluster's lock, and it is the one bound.
 #
-MAX_OBJECTS = 64
 MAX_REQUEST_BYTES = 1024 * 1024
+#
+# What a request holds beside its parts, at the most: the comment (4096 bytes,
+# at worst six bytes each escaped as JSON), the request id, the cluster, the
+# head and the actor. A sender that keeps its parts to the rest is never
+# refused for the size of a comment it was given later.
+#
+REQUEST_RESERVE = 32 * 1024
 MESSAGE = "Publish changes"
 HELPER = "/opt/haprion/current/bin/haprion-changes-publish-helper"
 WORDS = Words(
@@ -102,7 +107,16 @@ WORDS = Words(
     moved="the configuration changed since this was read or saved. Review it and try again.",
     invalid="these changes did not produce a valid HAProxy candidate. Nothing was published.",
 )
-__all__ = ["HELPER", "MAX_OBJECTS", "OPERATION", "SUDO", "build_request", "main"]
+__all__ = [
+    "HELPER",
+    "MAX_REQUEST_BYTES",
+    "OPERATION",
+    "SUDO",
+    "build_request",
+    "fits",
+    "main",
+    "parts_bytes",
+]
 
 
 def build_request(
@@ -164,6 +178,41 @@ def build_request(
     )
 
 
+def parts_bytes(
+    objects: Mapping[str, str | None] | None = None,
+    *,
+    network: str | None = None,
+    settings: str | None = None,
+) -> int:
+    """The bytes a request spends on these parts: the request with nothing else in it."""
+
+    return len(
+        build_request(
+            "",
+            "",
+            expected_head="",
+            comment="",
+            objects=objects,
+            network=network,
+            settings=settings,
+        )
+    )
+
+
+def fits(
+    objects: Mapping[str, str | None] | None = None,
+    *,
+    network: str | None = None,
+    settings: str | None = None,
+) -> bool:
+    """Whether one publish can carry these parts, whatever comment and actor it is sent with."""
+
+    return (
+        parts_bytes(objects, network=network, settings=settings) + REQUEST_RESERVE
+        <= MAX_REQUEST_BYTES
+    )
+
+
 def _objects(parameters: Mapping[str, JsonValue]) -> dict[str, bytes | None]:
     """The objects part: name to document, or to removal; empty when not sent.
 
@@ -180,12 +229,6 @@ def _objects(parameters: Mapping[str, JsonValue]) -> dict[str, bytes | None]:
         raise HelperProtocolError(
             "parameters.objects must be a non-empty object", exit_code=exit_codes.REFUSED
         )
-    if len(raw) > MAX_OBJECTS:
-        raise HelperProtocolError(
-            f"parameters.objects carries more than {MAX_OBJECTS} objects",
-            exit_code=exit_codes.REFUSED,
-        )
-
     objects: dict[str, bytes | None] = {}
     for name, document in raw.items():
         if not NAME.fullmatch(name):

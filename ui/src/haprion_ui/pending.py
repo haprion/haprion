@@ -334,6 +334,15 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
             for change in sorted(changes.values(), key=lambda change: change.kind)
         ]
     clashes = _rename_clashes(saved, replaced)
+    #
+    # What one publish carries is its request's size, not a count (B483): the
+    # package's parts as the worker will send them, against the room the
+    # helper leaves them.
+    #
+    room = changes_publish.MAX_REQUEST_BYTES - changes_publish.REQUEST_RESERVE
+    spent = changes_publish.parts_bytes(
+        objects or None, network=payload.get("network"), settings=payload.get("settings")
+    )
     stale = [row.name for row in rows if row.stale and not row.moved]
     changed = [row.name for row in rows if row.moved]
     problem = (
@@ -351,8 +360,8 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
         else f"{' and '.join(lagging)} {'is' if len(lagging) == 1 else 'are'} still being read "
         "at the newest version. Publishing opens again within a minute."
         if lagging
-        else f"{len(objects)} proxies; at most {changes_publish.MAX_OBJECTS} go in one publish."
-        if len(objects) > changes_publish.MAX_OBJECTS
+        else f"The saved changes take {_kib(spent)} KiB; at most {_kib(room)} KiB go in one publish."
+        if spent > room
         else ""
     )
     return Package(
@@ -363,6 +372,10 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
         problem=problem,
         lagging=tuple(lagging),
     )
+
+
+def _kib(size: int) -> str:
+    return f"{size / 1024:,.0f}".replace(",", " ")
 
 
 def _rename_clashes(

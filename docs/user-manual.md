@@ -123,8 +123,8 @@ checks objects against the saved network, so an object may name a VIP that the s
 adds. The confirmation for the default VIP is asked when the network is saved.
 
 **Publishing.** Saved changes are published from *Versions*. Each cluster lists what is saved there and by
-whom. One publish takes all of it, with one comment, as one version - up to 64 objects (the job is called
-`changes_publish`).
+whom. One publish takes all of it, with one comment, as one version - up to 1 MiB of saved documents, which
+is a thousand or more ordinary objects (the job is called `changes_publish`).
 
 Sometimes a publish changes an object after your change to it was saved. Your change then holds back the
 cluster's whole list: its row says *Changed since it was saved*. *Open* takes you to the editor, which
@@ -238,8 +238,9 @@ the object `shop`.
   other objects, the certificates, the ports and features of the nodes, HAProxy's own check - and refuses
   what the publish would refuse. It leaves nothing in the repository, and it does not write out the files
   of an earlier publish that stopped halfway; it says so and stops, and the next publish finishes that first.
-  More than 64 objects are published, and so checked, in batches of 64, each against the version they all
-  start from, so a conflict between two batches shows only when they are published.
+  More objects than one publish carries (1 MiB of documents) are published, and so checked, in batches,
+  each against the version they all start from, so a conflict between two batches shows only when they are
+  published. Without `-m` the comment names the objects, or counts them when the names would not fit.
 - `--json` answers with `changed`.
 - Deploying stays a step of its own.
 
@@ -250,7 +251,8 @@ sudo haprion-objects remove -c alpha staging
 haprion-deploy -c alpha
 ```
 
-More than 64 changed objects are published in batches of 64, each its own version. Every file is checked
+More changed objects than one publish carries are published in batches of up to 1 MiB of documents, each
+its own version. Every file is checked
 by the same model the publish uses before anything is asked of the manager, so a mistake is reported with
 the name of its file.
 

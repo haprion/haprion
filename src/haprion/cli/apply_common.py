@@ -58,7 +58,7 @@ class Refused(Exception):
 class PartlyDone(Refused):
     """Refused after some of the change was published, so not a refusal of it all.
 
-    `haprion-objects apply` publishes in versions of at most 64 objects; when a
+    `haprion-objects apply` publishes in versions of what one request carries; when a
     later one is refused, the earlier ones stand. They were named only in the
     message, with `result` null (review 2026-10-22, 4-2); the result carries
     them now, under an outcome that says the run is `partial`.

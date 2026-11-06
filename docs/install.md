@@ -13,6 +13,8 @@ looks after. When it is done, you continue in the web interface, which walks you
 | Manager | one | Ubuntu 26.04 or Debian 13, amd64 | 2 vCPU, 4 GB memory |
 | HAProxy node | one to eight per cluster, two for failover | Ubuntu 26.04 or Debian 13, amd64 | 1 vCPU, 1 GB memory; 2 GB with the WAF |
 
+With thousands of proxies the nodes need more memory: see [Size by number of proxies](#size-by-number-of-proxies).
+
 Only these two distributions are supported; `haprion-setup` refuses any other. You do not need to install
 anything else first. The packages and the setup bring the rest: Python, nginx, PostgreSQL, HAProxy, keepalived
 and dnsdist.
@@ -29,6 +31,27 @@ and dnsdist.
   it first, so a second version is never installed beside it.
 - How much traffic one vCPU handles, with and without the WAF, is under *Size* in
   [the manual's part on the nodes](user-manual.md#part-2--the-nodes).
+
+### Size by number of proxies
+
+The sizes above hold up to 2 500 proxies in a cluster. Past that the nodes need more memory. On every reload
+HAProxy reads the whole configuration while the old process still serves, so for a moment a node holds it twice.
+
+| Proxies in one cluster | Manager | Each node, simple proxies | Each node, large proxies |
+|---|---|---|---|
+| up to 2 500 | 2 vCPU, 4 GB | 1 vCPU, 1 GB | 1 vCPU, 1 GB |
+| up to 5 000 | 2 vCPU, 4 GB | 1 vCPU, 1 GB | 1 vCPU, 2 GB |
+| up to 10 000 | 2 vCPU, 4 GB | 1 vCPU, 2 GB | 1 vCPU, 3 GB |
+
+- A simple proxy has two host names, three routes and three servers. A large one has four host names, six routes
+  and ten servers.
+- More vCPUs do not make it faster. The manager checks and publishes one step at a time, and HAProxy reads its
+  configuration on one core. Memory is what grows.
+- How long it takes with 10 000 large proxies: the first `haprion-objects apply` about eight minutes, a publish
+  from the interface about 80 seconds, and a deploy about five minutes, of which each node's reload is about a
+  minute and a half. With 10 000 simple proxies: under three minutes, under 40 seconds and under a minute.
+- Each size leaves room. A node one size smaller also managed the row, but with almost all of its memory in use.
+- The sizes were measured with one cluster and without the WAF.
 
 ### What the machines must reach
 

@@ -182,6 +182,12 @@ class AnOldAnswersFile(unittest.TestCase):
         self.assertIn("readonly variable", done.stderr)
         self.assertNotIn("not valid shell", done.stderr)
 
+    def test_a_failure_without_output_leaves_no_trailing_colon(self) -> None:
+        done = self.load("false\n")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("cannot be read", done.stderr)
+        self.assertRegex(done.stderr.strip(), r"answers\.env$")
+
     def test_a_syntax_error_is_refused_with_the_shells_reason(self) -> None:
         done = self.load("MANAGER_HOST=(\n")
         self.assertNotEqual(done.returncode, 0)

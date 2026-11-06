@@ -113,7 +113,7 @@ load_answers() {
     [[ -r "$file" ]] || die "answers file not readable: $file"
     # shellcheck disable=SC1090
     said="$( ( set -e; source "$file" ) 2>&1 >/dev/null )" \
-        || die "answers file cannot be read: ${file}: ${said%%$'\n'*}"
+        || die "answers file cannot be read: ${file}${said:+: ${said%%$'\n'*}}"
     # shellcheck disable=SC1090
     source "$file"
     default_answers

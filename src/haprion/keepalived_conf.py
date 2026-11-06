@@ -21,6 +21,16 @@ and so they are written here from facts it already holds, in one shape:
     own adverts and warn every second (both measured 26-10-15)
   * the address list and the IPVS file included, as the files a person wrote
     include them (B57, B256)
+  * a check that the node still has its own address (B484). A node given a
+    new address kept keepalived on the old one, the pair stopped hearing each
+    other and both took the VIP; the deploy that would fix it refuses a split
+    brain (B4). With the check the instance goes to FAULT and lets the VIP go
+    about 2 s after the address is gone, and back to BACKUP when it returns
+    (measured 26-11-06, keepalived 2.3.3 and 2.3.4). It is written with what
+    every node has rather than a script of the node package: a script that is
+    not there makes `keepalived --config-test` fail, and a node not yet
+    updated would refuse every deploy. `/usr/bin/bash` and not `/bin/sh`,
+    which script security refuses as a symlink
 
 One file per node, carried in the release as `keepalived/node-<name>.conf`,
 one level deep like the address list so the release's shape is unchanged. The
@@ -30,6 +40,7 @@ there is none: a keepalived.conf a person wrote is theirs.
 
 from __future__ import annotations
 
+import ipaddress
 from collections.abc import Sequence
 
 #
@@ -53,6 +64,19 @@ LOOPBACK = "127.0.0.1"
 ADDRESSES = "/etc/keepalived/addresses.conf"
 IPVS = "/etc/keepalived/ipvs.conf"
 STATE_HELPER = "/usr/sbin/haprion-keepalived-state"
+#
+# The check of the node's own address (B484): the name keepalived logs, and
+# the command, which succeeds only while an interface carries the address.
+# `restore_plan` rewrites the address in it with `unicast_src_ip`.
+#
+SOURCE_CHECK = "own_address"
+SOURCE_COMMAND = "/usr/bin/bash -c 'ip -o addr show to {address} | grep -q .'"
+
+
+def source_command(address: str) -> str:
+    """The check's command for `address`, which goes into a shell and so is an address or refused."""
+
+    return SOURCE_COMMAND.format(address=ipaddress.ip_address(address))
 
 
 def file_name(node: str) -> str:
@@ -97,6 +121,13 @@ def render(
         "",
         f"include {IPVS}",
         "",
+        f"vrrp_script {SOURCE_CHECK} {{",
+        f'    script "{source_command(own)}"',
+        "    interval 1",
+        "    fall 2",
+        "    rise 2",
+        "}",
+        "",
         f"vrrp_instance {cluster} {{",
         "    state BACKUP",
         "    nopreempt",
@@ -111,6 +142,9 @@ def render(
         "    }",
         "    virtual_ipaddress {",
         f"        include {ADDRESSES}",
+        "    }",
+        "    track_script {",
+        f"        {SOURCE_CHECK}",
         "    }",
         f'    notify_master "{STATE_HELPER} MASTER"',
         f'    notify_backup "{STATE_HELPER} BACKUP"',

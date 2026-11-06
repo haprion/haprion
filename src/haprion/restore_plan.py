@@ -37,7 +37,7 @@ from typing import Any, Literal
 
 import yaml
 
-from haprion import haprion_repository, haproxy_repository, labels, safe_yaml
+from haprion import haprion_repository, haproxy_repository, keepalived_conf, labels, safe_yaml
 from haprion.restore_source import Account, Entry, Group, RestoreSource, content
 
 Mode = Literal["new_vm", "test", "overwrite"]
@@ -458,6 +458,17 @@ def _keepalived_test(text: str, address: str, vip: str) -> tuple[str, list[tuple
         return f"{matched.group(1)}{address}"
 
     text = re.sub(r"^([ \t]*unicast_src_ip[ \t]+)(\S+)", source_ip, text, flags=re.MULTILINE)
+    #
+    # The product's file checks that the node has its own address (B484). Left
+    # on the old one, the check would hold the instance in FAULT.
+    #
+    before, after = keepalived_conf.SOURCE_COMMAND.split("{address}")
+
+    def checked(matched: re.Match[str]) -> str:
+        changes.append(("vrrp_script", matched.group(1)))
+        return keepalived_conf.source_command(address)
+
+    text = re.sub(re.escape(before) + r"([0-9A-Fa-f.:]+)" + re.escape(after), checked, text)
 
     included = re.compile(
         rf"^[ \t]*include[ \t]+{re.escape(KEEPALIVED_ADDRESSES)}[ \t]*$", re.MULTILINE
@@ -569,6 +580,7 @@ def build(
                 for name, old in changes:
                     new = {
                         "unicast_src_ip": str(profile.address.ip),
+                        "vrrp_script": str(profile.address.ip),
                         "virtual_ipaddress": str(profile.vip),
                         "include": "(removed)",
                     }[name]

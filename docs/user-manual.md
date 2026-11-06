@@ -2956,17 +2956,20 @@ moved rather than rebuilt: *Change host* on its row under *Settings → Nodes & 
   *the release names no file for this node* and the node shows as incomplete. A node prepared
   before `NODE_NAME` existed uses its host name, as before.
 - With counter sharing on (`peers`), the next publish and deploy carry the new address to the nodes.
+- keepalived checks that the node still has the address its `keepalived.conf` names as its own. When
+  the old address is gone, the node lets the virtual address go within about two seconds and waits in
+  FAULT; the other node keeps it or takes it. The deploy after *Change host* gives both nodes the new
+  address, and the moved node goes back to BACKUP. A `keepalived.conf` you wrote yourself has no such
+  check.
 
 A node that gets a new address must be reached on it before the manager can ask. sshd on the node
 listens on the old address only ([described under HAProxy and keepalived baseline](#haproxy-and-keepalived-baseline)), so
 change the address, run `sudo haprion-node-prepare` on the node from its console (it moves sshd to
-an address the node has), and then do *Change host*. The same order holds for a machine whose name
+an address the node has), do *Change host*, and deploy. The same order holds for a machine whose name
 stays and whose address changes in DNS: run `sudo haprion-node-prepare`, then `sudo haprion-node
 pull-keys`.
 
-A machine whose name stays and whose address changes in DNS needs `sudo haprion-node pull-keys`
-instead. A machine with another host key is another machine: that is a restore, or a removal and an
-addition.
+A machine with another host key is another machine: that is a restore, or a removal and an addition.
 
 **A node change is a configuration change.** Every node's `keepalived.conf` names its peers. So an
 addition, a removal and a host change are each published as a version of their own - *Nodes: node-c
@@ -6452,6 +6455,10 @@ it after that. The file always has the same shape:
 - The interface is the cluster's `address_interface`, or else the one carrying the node's own address.
 - The address list is included in `virtual_ipaddress`, the IPVS file at the top level, and the `notify_`
   lines are set.
+- A check, `own_address`, that the node still has its `unicast_src_ip`. When the address is missing,
+  the instance goes to FAULT and the node holds no virtual address. Without the check, a node given a
+  new address would keep advertising from the old one, the nodes would stop hearing each other, and
+  both would take the address.
 
 The file's first line, `# Written by Haprion - a deploy replaces this file.`, is how the deploy knows the
 file is the product's. Delete that line and the file is yours: from then on the deploy leaves it alone and

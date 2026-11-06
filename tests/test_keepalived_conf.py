@@ -74,6 +74,33 @@ class TheShape(unittest.TestCase):
         for state in ("MASTER", "BACKUP", "FAULT"):
             self.assertIn(f'"/usr/sbin/haprion-keepalived-state {state}"', text)
 
+    def test_each_node_checks_that_it_still_has_its_own_address(self) -> None:
+        # B484: a node given a new address kept keepalived on the old one and
+        # both nodes took the VIP. Measured 26-11-06: FAULT about 2 s after the
+        # address is gone, with what every node has (a script of the node
+        # package that is missing fails `keepalived --config-test`, and
+        # `/bin/sh` is refused as a symlink).
+        text = render("node-b")
+        check = re.search(r"(?m)^vrrp_script own_address \{\n(.*?)\n\}", text, re.DOTALL)
+        assert check
+        self.assertEqual(
+            check.group(1).splitlines(),
+            [
+                "    script \"/usr/bin/bash -c 'ip -o addr show to 192.0.2.12 | grep -q .'\"",
+                "    interval 1",
+                "    fall 2",
+                "    rise 2",
+            ],
+        )
+        self.assertRegex(text, r"track_script \{\n\s+own_address\n\s+\}")
+        self.assertLess(text.index("vrrp_script"), text.index("vrrp_instance"))
+
+    def test_the_check_takes_an_address_and_nothing_a_shell_would_read(self) -> None:
+        self.assertIn("show to 2001:db8::1 |", keepalived_conf.source_command("2001:db8::1"))
+        for word in ("192.0.2.12; reboot", "$(id)", "node-b", "192.0.2.12 "):
+            with self.subTest(word=word), self.assertRaises(ValueError):
+                keepalived_conf.source_command(word)
+
     def test_without_an_interface_the_node_fills_in_its_own(self) -> None:
         self.assertEqual(directive(render(interface=None), "interface"), [" @INTERFACE@"])
         self.assertEqual(directive(render(interface="ens18"), "interface"), [" ens18"])

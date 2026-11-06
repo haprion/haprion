@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from haprion import restore_plan, restore_source
+from haprion import keepalived_conf, restore_plan, restore_source
 from haprion.restore_plan import PlanError, Target, TestProfile
 from tests.restore_fixture import FILES, NETPLAN, NODE_CONF, build
 
@@ -223,6 +223,29 @@ class TestMode(Planning):
         self.assertNotIn("192.0.2.20/24", conf)
         self.assertNotIn("include /etc/keepalived/addresses.conf", conf)
         self.assertEqual(self.data(plan, "/etc/keepalived/addresses.conf"), "198.51.100.254/32\n")
+
+    def test_the_products_file_checks_the_test_address_not_the_nodes(self) -> None:
+        # B484: left on the node's address, the check would hold the instance
+        # in FAULT once keepalived is unmasked.
+        product = keepalived_conf.render(
+            "alpha",
+            router_id=51,
+            nodes=(("node-a", "192.0.2.21"), ("node-b", "192.0.2.22")),
+            node="node-a",
+            interface="eth0",
+        )
+        files = {**FILES, "/etc/keepalived/keepalived.conf": (product, 0o644)}
+        plan = restore_plan.build(self.source(files), "test", TARGET, PROFILE)
+        conf = self.data(plan, "/etc/keepalived/keepalived.conf")
+
+        self.assertIn(f'script "{keepalived_conf.source_command("192.0.2.29")}"', conf)
+        self.assertNotIn("192.0.2.21", conf)
+        self.assertIn(
+            restore_plan.Rewrite(
+                "/etc/keepalived/keepalived.conf", "vrrp_script", "192.0.2.21", "192.0.2.29"
+            ),
+            plan.rewrites,
+        )
 
     def test_the_syslog_objects_virtual_servers_are_emptied(self) -> None:
         """B256: the production receivers are never checked or fed from a test node."""

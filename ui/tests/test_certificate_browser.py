@@ -42,6 +42,12 @@ def free_port() -> int:
 class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
     _playwright: ClassVar[Playwright]
     _browser: ClassVar[Browser]
+    #
+    # A browser sends requests side by side (a page and the row it opens), as
+    # the traffic page's browser tests say; a handler that takes a second
+    # connection is still caught by `nested` (26-11-06: CI saw two at once).
+    #
+    concurrent_connections = True
 
     @classmethod
     def setUpClass(cls) -> None:

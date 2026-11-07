@@ -12,21 +12,19 @@ browser suite runs it, with the editor suite's substituted readings.
 from __future__ import annotations
 
 import contextlib
-import threading
 import unittest
 from collections.abc import Iterator
 from dataclasses import replace
 from typing import Any, ClassVar
 
-import uvicorn
 from playwright.sync_api import Browser, Playwright
 
 from haprion_ui.app import create_app
-from tests import browser_policy
+from tests import browser_policy, live_server
 from tests.test_editor_page import SHOP, EditorTestCase, writing_configuration
 from tests.test_login import PASSWORD
 from tests.test_moved_under import draft
-from tests.test_traffic_browser import free_port, sync_playwright
+from tests.test_traffic_browser import sync_playwright
 
 #
 # Each value beside a field: how many lines it took, by its height against the
@@ -62,25 +60,7 @@ class WhatMovedFitsItsBox(EditorTestCase):
             base_document=SHOP.replace("shop.example.com", "storefront-archive.example.com")
         )
         self.account = replace(self.account, role="admin")
-        self.port = free_port()
-        server = uvicorn.Server(
-            uvicorn.Config(
-                create_app(writing_configuration()),
-                host="127.0.0.1",
-                port=self.port,
-                log_level="warning",
-            )
-        )
-        thread = threading.Thread(target=server.run, daemon=True)
-        thread.start()
-        self.addCleanup(thread.join, 5)
-        self.addCleanup(setattr, server, "should_exit", True)
-        for _ in range(200):
-            if server.started:
-                break
-            threading.Event().wait(0.05)
-        else:
-            self.fail("the test server did not start")
+        self.port = live_server.serve(self, create_app(writing_configuration()))
 
     @contextlib.contextmanager
     def editor_at(self, width: int) -> Iterator[Any]:

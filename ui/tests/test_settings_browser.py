@@ -11,23 +11,21 @@ certificate browser suites run it, with the page suite's substituted readings.
 from __future__ import annotations
 
 import contextlib
-import threading
 import unittest
 from collections.abc import Iterator
 from dataclasses import replace
 from typing import Any, ClassVar
 from unittest import mock
 
-import uvicorn
 from playwright.sync_api import Browser, Playwright
 
 from haprion_ui import demo
 from haprion_ui.app import create_app
-from tests import browser_policy
+from tests import browser_policy, live_server
 from tests.test_login import PASSWORD, configuration
 from tests.test_queue_route import QueueRouteTestCase
 from tests.test_settings_cluster import NOW
-from tests.test_traffic_browser import free_port, sync_playwright
+from tests.test_traffic_browser import sync_playwright
 
 #
 # What a select's own arrow takes beside its text. Measured in Chromium: at the
@@ -88,22 +86,7 @@ class TheLogsAndMetricsForm(QueueRouteTestCase):
             management_writes=True,
             clusters=("edge-demo", "service-demo"),
         )
-        self.port = free_port()
-        server = uvicorn.Server(
-            uvicorn.Config(
-                create_app(config), host="127.0.0.1", port=self.port, log_level="warning"
-            )
-        )
-        thread = threading.Thread(target=server.run, daemon=True)
-        thread.start()
-        self.addCleanup(thread.join, 5)
-        self.addCleanup(setattr, server, "should_exit", True)
-        for _ in range(200):
-            if server.started:
-                break
-            threading.Event().wait(0.05)
-        else:
-            self.fail("the test server did not start")
+        self.port = live_server.serve(self, create_app(config))
 
     @contextlib.contextmanager
     def signed_in(self, width: int) -> Iterator[Any]:

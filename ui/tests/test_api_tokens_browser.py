@@ -7,20 +7,18 @@ the application on a loopback port with the demo tokens in the table.
 from __future__ import annotations
 
 import contextlib
-import threading
 from collections.abc import Iterator
 from dataclasses import replace
 from typing import Any, ClassVar
 from unittest import mock
 
-import uvicorn
 from playwright.sync_api import Browser, Playwright
 
 from haprion_ui import demo
 from haprion_ui.app import create_app
-from tests import browser_policy
+from tests import browser_policy, live_server
 from tests.test_login import PASSWORD, LoginTestCase, configuration
-from tests.test_traffic_browser import free_port, sync_playwright
+from tests.test_traffic_browser import sync_playwright
 
 ROW_HEIGHTS = "Array.from(document.querySelectorAll('.api-token-table tbody tr')).map(r => r.getBoundingClientRect().height)"
 NO_SIDEWAYS = "document.documentElement.scrollWidth <= window.innerWidth"
@@ -65,22 +63,7 @@ class TheTokensPage(LoginTestCase):
             management_writes=True,
             clusters=("edge-demo", "service-demo"),
         )
-        self.port = free_port()
-        server = uvicorn.Server(
-            uvicorn.Config(
-                create_app(config), host="127.0.0.1", port=self.port, log_level="warning"
-            )
-        )
-        thread = threading.Thread(target=server.run, daemon=True)
-        thread.start()
-        self.addCleanup(thread.join, 5)
-        self.addCleanup(setattr, server, "should_exit", True)
-        for _ in range(200):
-            if server.started:
-                break
-            threading.Event().wait(0.05)
-        else:
-            self.fail("the test server did not start")
+        self.port = live_server.serve(self, create_app(config))
 
     @contextlib.contextmanager
     def signed_in(self, width: int, path: str) -> Iterator[Any]:
@@ -155,5 +138,9 @@ class TheTokensPage(LoginTestCase):
             page.click("form[action$=new] button[type=submit]")
             page.wait_for_selector(".api-token-secret code")
             self.assertTrue(page.inner_text(".api-token-secret code").startswith("hap_"))
-            self.assertTrue(page.is_visible(".copy-button-beside"))
+            #
+            # Added by copy-command.js once the page has loaded: waited for, not
+            # read at once (26-11-07: read at once it was there or not by timing).
+            #
+            page.wait_for_selector(".copy-button-beside", state="visible", timeout=5000)
             self.assertTrue(page.evaluate(NO_SIDEWAYS))

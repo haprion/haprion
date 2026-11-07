@@ -14,29 +14,20 @@ browser suite does it, with the same substituted readings the page suite uses.
 from __future__ import annotations
 
 import contextlib
-import socket
-import threading
 import unittest
 from collections.abc import Iterator
 from dataclasses import replace
 from typing import Any, ClassVar
 from unittest import mock
 
-import uvicorn
 from playwright.sync_api import Browser, Playwright, sync_playwright
 
 from haprion_ui.app import create_app
-from tests import browser_policy
+from tests import browser_policy, live_server
 from tests.test_certificate_page import TheCertificatePageHasTwoViews
 from tests.test_certificates import node, status
 from tests.test_login import PASSWORD, configuration
 from tests.test_queue_route import queued
-
-
-def free_port() -> int:
-    with socket.socket() as held:
-        held.bind(("127.0.0.1", 0))
-        return int(held.getsockname()[1])
 
 
 class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
@@ -64,22 +55,7 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
         config = replace(
             configuration(cookie_secure=False), management_writes=True, clusters=("alpha",)
         )
-        self.port = free_port()
-        server = uvicorn.Server(
-            uvicorn.Config(
-                create_app(config), host="127.0.0.1", port=self.port, log_level="warning"
-            )
-        )
-        thread = threading.Thread(target=server.run, daemon=True)
-        thread.start()
-        self.addCleanup(thread.join, 5)
-        self.addCleanup(setattr, server, "should_exit", True)
-        for _ in range(200):
-            if server.started:
-                break
-            threading.Event().wait(0.05)
-        else:
-            self.fail("the test server did not start")
+        self.port = live_server.serve(self, create_app(config))
 
     @contextlib.contextmanager
     def signed_in(self, query: str = "", *, path: str = "/certificates") -> Iterator[Any]:

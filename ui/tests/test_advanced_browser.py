@@ -8,23 +8,21 @@ the page with the draft.
 
 from __future__ import annotations
 
-import threading
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, ClassVar
 from unittest import mock
 from uuid import uuid4
 
-import uvicorn
 from playwright.sync_api import Browser, Playwright
 
 from haprion_ui.app import create_app
 from haprion_ui.db import ProxyDraft
-from tests import browser_policy
+from tests import browser_policy, live_server
 from tests.test_editor_page import OBSERVED
 from tests.test_login import PASSWORD, configuration
 from tests.test_object_page import DraftReading
-from tests.test_traffic_browser import free_port, sync_playwright
+from tests.test_traffic_browser import sync_playwright
 
 WRITTEN_POOL = """schema: 1
 name: public-web
@@ -86,22 +84,7 @@ class TheDialogInABrowser(DraftReading):
         config = replace(
             configuration(cookie_secure=False), demo_fixture=True, management_writes=True
         )
-        self.port = free_port()
-        server = uvicorn.Server(
-            uvicorn.Config(
-                create_app(config), host="127.0.0.1", port=self.port, log_level="warning"
-            )
-        )
-        thread = threading.Thread(target=server.run, daemon=True)
-        thread.start()
-        self.addCleanup(thread.join, 5)
-        self.addCleanup(setattr, server, "should_exit", True)
-        for _ in range(200):
-            if server.started:
-                break
-            threading.Event().wait(0.05)
-        else:
-            self.fail("the test server did not start")
+        self.port = live_server.serve(self, create_app(config))
 
     def _save(self, _c: object, **values: Any) -> ProxyDraft:
         self.saved.append(values)

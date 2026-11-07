@@ -32,6 +32,12 @@ if ! python3 -c 'import build' >/dev/null 2>&1; then
     exit 2
 fi
 
+#
+# The versions the gate runs on, the same here as on GitHub (B494): a version
+# that moved is a refusal that names it, before anything is tested on it.
+#
+python3 "$base/tools/check_toolchain.py" --ui-python "$HAPRION_UI_PYTHON"
+
 python3 "$base/tools/secret_scan.py" \
     --worktree "$base" \
     --rules "$HAPRION_SECRET_RULES"

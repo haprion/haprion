@@ -27,7 +27,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.13", "3.14"]
+        # The versions toolchain.json pins for this gate and the local one
+        # alike (B494); a test holds the two equal.
+        python: ["3.13.15", "3.14.4"]
     env:
       # Ahead of .python-version, which names the floor for local work.
       UV_PYTHON: ${{ matrix.python }}
@@ -127,6 +129,25 @@ jobs:
           set -euo pipefail
           sudo apt-get -o Acquire::Retries=5 update -q
           sudo apt-get -o Acquire::Retries=5 install -y -q postgresql-18
+
+      # The runner image carries a newer git than Ubuntu ships; the gate runs
+      # the one the manager and the installations get from the archive
+      # (B494). The check at the start of the gate refuses any other.
+      - name: Install the git the installations run
+        shell: bash
+        run: |
+          set -euo pipefail
+          want=$(python3 -c 'import json; print(json.load(open("toolchain.json"))["git"])')
+          sudo apt-get -o Acquire::Retries=5 update -q
+          version=$(apt-cache madison git | awk -v want="$want" '$3 ~ ("^1:" want "-") {print $3; exit}')
+          if [[ -z "${version}" ]]; then
+            echo "CI: no git ${want} in the configured archives" >&2
+            apt-cache madison git >&2
+            exit 2
+          fi
+          sudo apt-get -o Acquire::Retries=5 install -y -q --allow-downgrades \
+            "git=${version}" "git-man=${version}"
+          git --version
 
       - name: Run all source, quality, test, and dependency gates
         env:

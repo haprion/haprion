@@ -10,6 +10,7 @@ import grp
 import io
 import json
 import os
+import re
 import shutil
 import signal
 import tempfile
@@ -195,8 +196,25 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             self.assertFalse((self.repo / "managed/proxies/shop.yaml").exists())
             self.assertFalse(self.publish_path.exists())
 
-    def loose_objects(self) -> int:
-        return sum(1 for path in (self.repo / ".git/objects").rglob("*") if path.is_file())
+    def git_objects(self) -> set[str]:
+        """The repository's objects: loose ones and packs, by path.
+
+        By name and not by counting files: a count took a file git keeps beside
+        its objects for one (CI 26-11-07, 15 != 16 once on 3.13, not seen
+        locally), and said nothing about which. A real object left behind is
+        still in the difference, and the failure names it.
+        """
+
+        root = self.repo / ".git/objects"
+        return {
+            path.relative_to(root).as_posix()
+            for path in root.rglob("*")
+            if path.is_file()
+            and (
+                re.fullmatch(r"[0-9a-f]{2}/[0-9a-f]{38,62}", path.relative_to(root).as_posix())
+                or (path.parent.name == "pack" and path.suffix == ".pack")
+            )
+        }
 
     def test_a_check_leaves_no_git_objects_behind(self) -> None:
         """W06: the tree a check builds is thrown away with the rest of it."""
@@ -204,12 +222,13 @@ class ObjectPublicationTests(ObjectsPublishFixture):
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))
             self.seed()
-            before = self.loose_objects()
+            before = self.git_objects()
+            self.assertTrue(before)
 
             code, document, _err = self.publish_objects(policy, self.request(check=True))
 
             self.assertEqual((code, document["result"]["checked_only"]), (0, True))
-            self.assertEqual(self.loose_objects(), before)
+            self.assertEqual(self.git_objects() ^ before, set())
 
     def check_objects(self, temporary: Path) -> list[str]:
         return sorted(path.name for path in temporary.glob("haprion-check-objects-*"))

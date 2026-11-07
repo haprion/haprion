@@ -1140,9 +1140,9 @@ def _metrics_frontend(metrics: Metrics, nodes: Sequence[tuple[str, str]]) -> lis
         "    mode http",
         "    option dontlog-normal",
         #
-        # The defaults carry `option httplog` and, on a new cluster, no log
-        # address, and HAProxy warns on every load about a format with nowhere
-        # to go. `no log` does not silence it (measured on 3.4.7); an address
+        # A cluster made before 1.0.1 carries `option httplog` in its defaults
+        # and may have no log address, and HAProxy warns on every load about a
+        # format with nowhere to go. `no log` does not silence it (measured on 3.4.7); an address
         # does. The process's own output is where a failed scrape is read, as
         # `dontlog-normal` leaves nothing else to log.
         #
@@ -1993,13 +1993,17 @@ def _frontend_file(
             f" guid-prefix {listener_guid_prefix(identity)}",
             *_quic(vip, protocol, ports, identity, listing),
             "    mode http",
-            "    option httplog",
             #
             # One line, whether it is for the node's own file, the external
             # receivers or both: rsyslog takes it from there (B286, B287).
+            # `option httplog` only with it: without an address of its own the
+            # frontend takes the core's `defaults`, and a log format with
+            # nowhere to go is a warning on every load (26-11-07, measured on
+            # 3.4.7). A core with a `log` line of its own sets the format there.
             #
             *(
                 (
+                    "    option httplog",
                     f"    log {TRAFFIC_LOG_SOCKET} len {TRAFFIC_LOG_LENGTH} format local profile {TRAFFIC_LOG_PROFILE} local2",
                 )
                 if structured

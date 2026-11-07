@@ -5966,6 +5966,10 @@ reach from there (an object with a `source` on the VIP). The last level on the l
 the message is still logged, as `alert`. A `core/` without a `log` line - as `haprion-cluster` writes it -
 is not affected.
 
+**Add `option httplog` together with a `log` line.** With a `log` line of your own, put `option httplog`
+under `defaults` to get HTTP request lines there. Without a `log` line, leave it out: HAProxy warns on every
+load about a log format with nowhere to go. The traffic log sets its own format either way.
+
 **An HTTPS object may override its VIP's TLS policy.** The generated certificate list then has an explicit
 row, filtered by SNI, for every object, so several names can use the same wildcard certificate with
 different policies. The first row has no filter, on purpose: a client that sends no SNI, or an unknown one,

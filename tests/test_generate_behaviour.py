@@ -44,7 +44,7 @@ from typing import Any
 
 import yaml
 
-from haprion import crs, geo
+from haprion import cluster_definition, crs, geo, tls_policy
 from haprion.cluster_settings import ClusterSettings, Metrics
 from haprion.config import AbuseProtection, Vip
 from haprion.generate import (
@@ -2654,11 +2654,17 @@ class AccessRulesAnswerAndNameThemselvesInTheRealHaproxy(unittest.TestCase):
                 networks={"SE": ("198.51.100.0/25",), "XX": ("203.0.113.0/24",)},
             ),
         )
-        window = "    option httplog\n    http-after-response set-header X-Rule %[var(txn.rule)]\n"
+        #
+        # Hung on a line every http frontend has: a frontend without the
+        # traffic log has no `option httplog` (26-11-07), and a window that
+        # finds no line to hang on would leave every name empty.
+        #
+        anchor = "    timeout client "
+        window = "    http-after-response set-header X-Rule %[var(txn.rule)]\n" + anchor
+        assert any(anchor in text for text in layer.configuration.values())
         layer = GeneratedLayer(
             configuration={
-                name: text.replace("    option httplog\n", window)
-                for name, text in layer.configuration.items()
+                name: text.replace(anchor, window) for name, text in layer.configuration.items()
             },
             certificate_lists=layer.certificate_lists,
             map_files=layer.map_files,
@@ -4102,18 +4108,16 @@ class TheProbeAsksWhatTheCheckAsks(unittest.TestCase):
         self.assertIn(b"host: app.example.com", probed.lower())
 
 
-NEW_CLUSTER_CORE = """
-global
-    daemon
-    default-path config
-defaults
-    log     global
-    mode    http
-    option  httplog
-    timeout connect 5s
-    timeout client  50s
-    timeout server  50s
-"""
+def new_cluster_core(root: Path) -> str:
+    """The core a new cluster is given, with its counters file under `root`.
+
+    The template itself, not a copy: a copy without the template's `defaults`
+    passed while every new cluster without the traffic log warned (26-11-07).
+    """
+
+    core = cluster_definition.CORE_TEMPLATE.format(tls=tls_policy.core_defaults_lines())
+    assert "/run/haproxy/stats.shm" in core
+    return core.replace("/run/haproxy/stats.shm", str(root / "stats.shm"))
 
 
 @unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
@@ -4123,10 +4127,17 @@ class AReleaseLoadsWithoutWarnings(unittest.TestCase):
     Two warnings were printed on every deploy: a log format on the metrics
     frontend, which has no log address, and an `http-request` rule written
     after another object's `use_backend`. Both are about how the file reads,
-    not what it does, and both are only visible in HAProxy's own output.
+    not what it does, and both are only visible in HAProxy's own output. A
+    third on every frontend of a cluster without the traffic log: the
+    template's `defaults` named a log format and nothing gave it an address.
     """
 
     def test_the_check_prints_nothing(self) -> None:
+        for traffic_logging in (True, False):
+            with self.subTest(traffic_logging=traffic_logging):
+                self.assertEqual(self.warnings(traffic_logging=traffic_logging), [])
+
+    def warnings(self, *, traffic_logging: bool) -> list[str]:
         web = 8080
         objects = [
             load_apart("guarded", GUARDED.format(web=web).encode()),
@@ -4148,19 +4159,16 @@ class AReleaseLoadsWithoutWarnings(unittest.TestCase):
                 stamp="2026-10-01",
                 networks={"SE": ("198.51.100.0/25",), "XX": ("203.0.113.0/24",)},
             ),
-            traffic_logging=True,
+            traffic_logging=traffic_logging,
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             arguments = write_release(root, layer)
-            (root / "haproxy.cfg").write_text(NEW_CLUSTER_CORE)
+            (root / "haproxy.cfg").write_text(new_cluster_core(root))
             binary = shutil.which("haproxy")
             assert binary is not None
             done = subprocess.run(
                 [binary, "-c", *arguments], capture_output=True, text=True, timeout=30
             )
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(
-            [line for line in done.stderr.splitlines() if "WARNING" in line],
-            [],
-        )
+        return [line for line in done.stderr.splitlines() if "WARNING" in line]

@@ -184,7 +184,9 @@ global
 defaults
     log     global
     mode    http
-    option  httplog
+    # With a `log` line of your own under `global`, add `option httplog` here
+    # for its request lines. The traffic log sets its own format either way;
+    # a format with no log line to go to is a warning on every load.
     timeout connect 5s
     timeout client  50s
     timeout server  50s

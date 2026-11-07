@@ -12,6 +12,8 @@ import re
 import unittest
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parent.parent
 SHELL_DIRS = ("install", "examples", "tools", "ui/tools")
 SHEBANG = re.compile(r"^#! ?(/usr)?/bin/(env )?(ba)?sh( |$)")
@@ -117,10 +119,29 @@ def command_substitutions(statement: str) -> list[str]:
 
 
 def offences(path: Path) -> list[str]:
+    return offences_in(path.read_text(), str(path.relative_to(ROOT)))
+
+
+def workflow_scripts() -> list[tuple[str, str]]:
+    """Each workflow step's script that runs under pipefail: `shell: bash` is
+    `bash -eo pipefail` on GitHub (26-11-07: `apt-cache madison | awk '... exit'`
+    failed a gate with apt's 100, and no scan read the workflows)."""
+
+    found = []
+    for path in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        for name, job in yaml.safe_load(path.read_text())["jobs"].items():
+            for step in job.get("steps", []):
+                script = step.get("run")
+                if script and (step.get("shell") == "bash" or "pipefail" in script):
+                    found.append((f"{path.name} {name} '{step.get('name', '')}'", script))
+    return found
+
+
+def offences_in(text: str, label: str) -> list[str]:
     found = []
     expanded = [
         (number, inner)
-        for number, whole in statements(path.read_text())
+        for number, whole in statements(text)
         for inner in command_substitutions(whole)
     ]
     for number, statement in expanded:
@@ -129,7 +150,7 @@ def offences(path: Path) -> list[str]:
         parts = segments(statement)
         for part in parts[1:]:
             if stops_early(part):
-                found.append(f"{path.relative_to(ROOT)}:{number}: {part[:70]}")
+                found.append(f"{label}:{number}: {part[:70]}")
                 break
     return found
 
@@ -140,6 +161,12 @@ class NoPipelineEndsInAnEarlyReader(unittest.TestCase):
 
     def test_no_pipeline_under_pipefail_ends_in_an_early_reader(self) -> None:
         found = [line for path in shell_scripts() if has_pipefail(path) for line in offences(path)]
+        self.assertEqual([], found, "read to the end: grep ... >/dev/null, awk 'NR == 1'")
+
+    def test_no_workflow_step_ends_a_pipeline_in_an_early_reader(self) -> None:
+        scripts = workflow_scripts()
+        self.assertGreater(len(scripts), 10)
+        found = [line for label, script in scripts for line in offences_in(script, label)]
         self.assertEqual([], found, "read to the end: grep ... >/dev/null, awk 'NR == 1'")
 
     def test_the_scan_sees_the_pattern(self) -> None:

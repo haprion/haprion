@@ -90,7 +90,15 @@ class GitHubRunsThePins(unittest.TestCase):
 
     def test_the_gate_matrix_is_the_pinned_pythons(self) -> None:
         pythons, _ = tool().load()
-        self.assertEqual(self.job()["strategy"]["matrix"]["python"], list(pythons))
+        legs = self.job()["strategy"]["matrix"]["include"]
+        self.assertEqual([leg["python"] for leg in legs], list(pythons))
+
+    def test_the_newest_python_is_ubuntus_own(self) -> None:
+        """As on the manager: setup-python's builds are not the installations'."""
+
+        legs = self.job()["strategy"]["matrix"]["include"]
+        self.assertEqual([leg["ubuntu"] for leg in legs], [False] * (len(legs) - 1) + [True])
+        self.assertEqual(self.job()["env"]["UV_PYTHON_PREFERENCE"], "only-system")
 
     def test_the_gate_installs_the_pinned_git_before_it_runs(self) -> None:
         steps = [step.get("name", "") for step in self.job()["steps"]]

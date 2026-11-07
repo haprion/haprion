@@ -1106,9 +1106,6 @@ start_units() {
 # account could hold the lock, and every dump then failed after the wait
 # (review 2026-11-05, R06).
 LOCK=/run/haprion/backup.lock
-# Where the release before took it. A run of that release can be under way while
-# the package is replaced, so this one waits for it there too.
-LEGACY_LOCK=/run/lock/haprion-backup.lock
 LOCK_WAIT_SECONDS=1800
 
 #
@@ -1150,15 +1147,6 @@ take_lock() {
     umask "$mask"
     chmod 600 -- "$LOCK"
     wait_for_lock 9 "$LOCK"
-    #
-    # Only a regular file of root's, and never made: the release before's own.
-    # Closed to other accounts from here on.
-    #
-    if [[ -f "$LEGACY_LOCK" && ! -L "$LEGACY_LOCK" && -O "$LEGACY_LOCK" ]]; then
-        chmod 600 -- "$LEGACY_LOCK" 2>/dev/null || true
-        exec 7<"$LEGACY_LOCK"
-        wait_for_lock 7 "$LEGACY_LOCK"
-    fi
 }
 
 #

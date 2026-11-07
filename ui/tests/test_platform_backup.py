@@ -240,15 +240,13 @@ class TheUnitsWaitForTheDumpDirectory(unittest.TestCase):
 class OneRunAtATime(unittest.TestCase):
     """Review 2026-10-20, R3: a run by hand beside the timer's shared its files."""
 
-    def locked(
-        self, lock: Path, *, wait: int, legacy: Path | None = None
-    ) -> subprocess.CompletedProcess[str]:
+    def locked(self, lock: Path, *, wait: int) -> subprocess.CompletedProcess[str]:
         source = SCRIPT.read_text()
         program = (
             "set -Eeuo pipefail\numask 022\n"
             'log() { echo "$*"; }\n'
             'die() { echo "ERROR: $*" >&2; exit 1; }\n'
-            f"LOCK={lock}\nLEGACY_LOCK={legacy or lock.parent / 'none'}\nLOCK_WAIT_SECONDS={wait}\n"
+            f"LOCK={lock}\nLOCK_WAIT_SECONDS={wait}\n"
             + function("wait_for_lock", source)
             + function("take_lock", source)
             + "take_lock\necho locked\n"
@@ -279,30 +277,7 @@ class OneRunAtATime(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(lock.stat().st_mode), 0o600)
         source = SCRIPT.read_text()
         self.assertIn("\nLOCK=/run/haprion/backup.lock\n", source)
-
-    def test_the_lock_of_the_release_before_is_waited_for_and_closed_to_others(self) -> None:
-        """A dump of that release can be under way while the package is replaced."""
-
-        with tempfile.TemporaryDirectory() as directory:
-            legacy = Path(directory) / "legacy"
-            legacy.write_text("")
-            legacy.chmod(0o644)
-            holder = subprocess.Popen(  # noqa: S603 - fixed program
-                ["/usr/bin/flock", str(legacy), "/usr/bin/sleep", "5"], start_new_session=True
-            )
-            self.addCleanup(holder.wait)
-            self.addCleanup(os.killpg, holder.pid, signal.SIGKILL)
-            time.sleep(0.3)
-            done = self.locked(Path(directory) / "lock", wait=1, legacy=legacy)
-            self.assertEqual(done.returncode, 1)
-            self.assertIn(str(legacy), done.stderr)
-            self.assertEqual(stat.S_IMODE(legacy.stat().st_mode), 0o600)
-
-    def test_no_legacy_lock_is_created(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            done = self.locked(Path(directory) / "lock", wait=1)
-            self.assertEqual(done.returncode, 0, done.stderr)
-            self.assertFalse((Path(directory) / "none").exists())
+        self.assertNotIn("/run/lock/", source)
 
     def test_a_held_lock_is_waited_for_and_then_named(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

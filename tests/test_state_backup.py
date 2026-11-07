@@ -379,7 +379,6 @@ class TheRunAnswersWithinItsBudget(unittest.TestCase):
 
     def backup(self, nodes: int, **kwargs: Any) -> state_backup.BackupResult:
         kwargs.setdefault("lock_path", self.raw / "lock")
-        kwargs.setdefault("legacy_lock_path", None)
         cluster = mock.Mock(
             nodes=tuple(Node(name=f"node-{i}", mgmt_host="node.example") for i in range(nodes))
         )
@@ -425,27 +424,6 @@ class TheRunAnswersWithinItsBudget(unittest.TestCase):
         self.backup(1, lock_path=None)
         lock = self.root / state_backup.LOCK_NAME
         self.assertEqual(stat.S_IMODE(lock.stat().st_mode), 0o600)
-
-    def test_a_lock_the_release_before_took_in_run_lock_is_waited_for_and_made_root_only(
-        self,
-    ) -> None:
-        """A run of that release can be under way while the package is replaced."""
-
-        legacy = self.raw / "legacy.lock"
-        legacy.write_bytes(b"")
-        legacy.chmod(0o644)
-        with legacy.open("a+b") as other:
-            fcntl.flock(other.fileno(), fcntl.LOCK_EX)
-            with self.assertRaises(state_backup.BackupBusy):
-                self.backup(1, lock_path=None, legacy_lock_path=legacy)
-        self.assertEqual(self.asked, [])
-        self.assertEqual(stat.S_IMODE(legacy.stat().st_mode), 0o600)
-        self.backup(1, lock_path=None, legacy_lock_path=legacy)
-        self.assertEqual(len(self.asked), 1)
-
-    def test_a_missing_or_foreign_legacy_lock_is_not_created_or_waited_for(self) -> None:
-        self.backup(1, lock_path=None, legacy_lock_path=self.raw / "none.lock")
-        self.assertFalse((self.raw / "none.lock").exists())
 
     def test_a_lock_held_too_long_is_busy_and_nothing_is_asked(self) -> None:
         with (self.raw / "lock").open("a+b") as other:

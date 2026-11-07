@@ -994,6 +994,22 @@ class WhatPublishingAgainWouldChange(unittest.TestCase):
             "Publish & deploy to apply the update (the WAF rule set 4.25.1 → 4.25.2)",
         )
 
+    def test_a_difference_the_nodes_do_not_need_raises_no_row(self) -> None:
+        """B493: only a required difference asks for a deploy; the card still offers it."""
+
+        quiet = regeneration(required=False)
+        self.assertEqual(attention.from_regeneration([quiet]), [])
+        self.assertEqual(attention.regeneration_changes([quiet]), frozenset({"alpha"}))
+        (item,) = attention.from_regeneration(
+            [
+                regeneration(
+                    required=True,
+                    causes=[{"kind": "generator", "published": "1", "installed": "2"}],
+                )
+            ]
+        )
+        self.assertEqual(item.message, "Publish & deploy to apply the update")
+
     def test_a_refusal_is_its_own_row_with_the_engines_words(self) -> None:
         (item,) = attention.from_regeneration(
             [regeneration(outcome="refused", message="a listener clashes")]

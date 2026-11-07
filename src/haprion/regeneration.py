@@ -29,9 +29,11 @@ would read, less what only refuses:
 - held ports are not asked: they need the nodes, and only refuse. Neither is
   the sandbox's `haproxy -c`, which a publish runs and this does not.
 
-The published tree does not record which version of the product made it, so no
-result says "made by X, now Y" for the engine; it says only what can be read:
-the rule set's version in the tree against the installed one.
+The published tree does not record which version of the product made it. It
+records the generator level its manifest was written at (B493) and the rule
+set it carries, and a difference is `required` - a reason to publish and
+deploy - only when the installed level is higher or the rule set another. Any
+other difference is how the files read; the next publish takes it.
 """
 
 from __future__ import annotations
@@ -53,8 +55,10 @@ from haprion import (
     release_checks,
 )
 from haprion.config import Cluster, ConfigError
+from haprion.generate import GENERATOR_LEVEL
 from haprion.managed_network import location as network_location
 from haprion.managed_publish import MANAGED_PREFIX, managed_files
+from haprion.object_manifest import BASELINE_LEVEL
 from haprion.object_manifest import REPOSITORY_PATH as MANIFEST_PATH
 from haprion.object_manifest import compare as compare_manifests
 from haprion.object_manifest import parse as parse_manifest
@@ -175,6 +179,7 @@ def unpublished_result(key: str) -> dict[str, Any]:
         "managed": False,
         "message": None,
         "causes": [],
+        "required": False,
         "objects": [],
         "files_changed": 0,
         "diff": None,
@@ -276,9 +281,22 @@ def _object_changes(
 
 
 def _causes(files: Mapping[str, bytes], installed_crs: str | None) -> list[dict[str, Any]]:
-    """What can be said about why, from what the published tree records."""
+    """What can be said about why, from what the published tree records.
+
+    Each is a reason the difference must reach the nodes (B493): a generator
+    level above the one the published version was written at, or another rule
+    set. A difference with neither is how the files read, and goes out with the
+    next publish.
+    """
 
     causes: list[dict[str, Any]] = []
+    manifest = files.get(MANIFEST_PATH)
+    parsed = parse_manifest(manifest.decode("utf-8", "replace")) if manifest is not None else None
+    written = parsed.generator_level if parsed is not None else BASELINE_LEVEL
+    if written < GENERATOR_LEVEL:
+        causes.append(
+            {"kind": "generator", "published": str(written), "installed": str(GENERATOR_LEVEL)}
+        )
     try:
         carried = crs.from_tree(files)
     except ConfigError:
@@ -321,6 +339,7 @@ def regenerate(
         "managed": True,
         "message": None,
         "causes": [],
+        "required": False,
         "objects": [],
         "files_changed": 0,
         "diff": None,
@@ -398,9 +417,11 @@ def regenerate(
         result["causes"] = _causes(files, installed_crs)
         return result
     diff = artifact_diff(published, candidate, commit)
+    causes = _causes(files, installed_crs)
     result.update(
         outcome=CHANGED_OUTCOME,
-        causes=_causes(files, installed_crs),
+        causes=causes,
+        required=bool(causes),
         objects=_object_changes(files, tree),
         files_changed=sum(
             1

@@ -351,6 +351,10 @@ def check_regeneration_semantics(document: dict[str, object], path: Path) -> Non
         raise AssertionError(f"{path}: nothing published has no commit")
     if outcome != "changed" and (result["objects"] or result["files_changed"]):
         raise AssertionError(f"{path}: only a changed result lists what changed")
+    if result["required"] != (outcome == "changed" and bool(result["causes"])):
+        raise AssertionError(
+            f"{path}: a difference is required exactly when it is changed and a cause says why"
+        )
 
 
 def check_publish_semantics(document: dict[str, object], path: Path) -> None:
@@ -560,11 +564,13 @@ def check_config_status_semantics(document: dict[str, object], path: Path) -> No
         raise AssertionError(
             f"{path}: saved_is_published is null exactly when nothing is published"
         )
-    if (
-        result["regeneration"]["outcome"] == "changed"
-        and "files_changed" not in result["regeneration"]
-    ):
-        raise AssertionError(f"{path}: a changed regeneration counts its files")
+    if result["regeneration"]["outcome"] == "changed" and not {
+        "files_changed",
+        "required",
+    } <= set(result["regeneration"]):
+        raise AssertionError(
+            f"{path}: a changed regeneration counts its files and says whether it is required"
+        )
 
 
 def check_cert_renew_semantics(document: dict[str, object], path: Path) -> None:

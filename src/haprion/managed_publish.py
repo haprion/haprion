@@ -16,7 +16,7 @@ from pathlib import PurePosixPath
 
 from haprion import cluster_settings, crs, geo, ipvs_config, keepalived_conf
 from haprion.config import Cluster, ConfigError
-from haprion.generate import countries_named, generate
+from haprion.generate import GENERATOR_LEVEL, countries_named, generate
 from haprion.keepalived_fragment import NAME as KEEPALIVED_NAME
 from haprion.keepalived_fragment import render as keepalived_addresses
 from haprion.managed_network import load_document
@@ -333,5 +333,7 @@ def managed_files(
     # this is where the objects being published are known, and a manifest built
     # anywhere else would describe a different set.
     #
-    result[MANIFEST_PATH] = render_manifest(build_manifest(generated.object_parts))
+    result[MANIFEST_PATH] = render_manifest(
+        build_manifest(generated.object_parts, generator_level=GENERATOR_LEVEL)
+    )
     return result

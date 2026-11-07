@@ -300,6 +300,69 @@ class TheComparison(unittest.TestCase):
         )
 
 
+class AnUpdateIsRequiredOnlyWhenTheLevelSaysSo(unittest.TestCase):
+    """B493: a difference asks for a deploy only when the generator level rose
+    above the published version's, or the rule set is another."""
+
+    def setUp(self) -> None:
+        patch = core_is_current()
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    @staticmethod
+    def another_generator() -> Any:
+        original = generate._backend
+
+        def backend(proxy: Any, *args: Any, **kwargs: Any) -> list[str]:
+            return [*original(proxy, *args, **kwargs), "    # written another way"]
+
+        return mock.patch.object(generate, "_backend", backend)
+
+    def test_a_difference_at_the_same_level_is_not_required(self) -> None:
+        files = published_tree()
+        with self.another_generator():
+            result = regenerated(files)
+
+        self.assertEqual(
+            (result["outcome"], result["required"], result["causes"]), ("changed", False, [])
+        )
+
+    def test_a_higher_level_is_required_and_says_so(self) -> None:
+        files = published_tree()
+        with self.another_generator(), mock.patch.object(regeneration, "GENERATOR_LEVEL", 2):
+            result = regenerated(files)
+
+        self.assertEqual((result["outcome"], result["required"]), ("changed", True))
+        self.assertEqual(
+            result["causes"], [{"kind": "generator", "published": "1", "installed": "2"}]
+        )
+
+    def test_a_higher_level_with_nothing_different_is_unchanged(self) -> None:
+        files = published_tree()
+        with mock.patch.object(regeneration, "GENERATOR_LEVEL", 2):
+            result = regenerated(files)
+
+        self.assertEqual((result["outcome"], result["required"]), ("unchanged", False))
+
+    def test_a_version_published_before_the_level_was_recorded_is_at_the_baseline(self) -> None:
+        files = published_tree()
+        document = json.loads(files["managed/manifest.json"])
+        self.assertEqual(document.pop("generator_level"), generate.GENERATOR_LEVEL)
+        files["managed/manifest.json"] = json.dumps(document).encode()
+        with self.another_generator():
+            same = regenerated(files)
+        with self.another_generator(), mock.patch.object(regeneration, "GENERATOR_LEVEL", 2):
+            higher = regenerated(files)
+
+        self.assertEqual((same["required"], higher["required"]), (False, True))
+        self.assertEqual(higher["causes"][0]["published"], "1")
+
+    def test_another_rule_set_is_required(self) -> None:
+        result = regenerated(published_tree(), rules=rule_set("9.9.10", b"# rules, newer\n"))
+
+        self.assertEqual((result["outcome"], result["required"]), ("changed", True))
+
+
 class TheHelper(unittest.TestCase):
     def setUp(self) -> None:
         patch = core_is_current()

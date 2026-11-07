@@ -11,7 +11,7 @@
     "published": { "state": "published", "version": "3" },
     "saved": { "version": "3", "date": "2026-01-02 03:04", "comment": "Added shop" },
     "saved_is_published": true,
-    "regeneration": { "outcome": "changed", "files_changed": 2, "objects": ["shop"] },
+    "regeneration": { "outcome": "changed", "files_changed": 2, "required": true, "objects": ["shop"] },
     "unsent": [{ "path": "manual/extra.cfg", "kind": "new" }],
     "interface_owned": []
   }

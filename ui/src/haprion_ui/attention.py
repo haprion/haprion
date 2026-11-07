@@ -1011,7 +1011,7 @@ def regeneration_changes(rows: Iterable[Any]) -> frozenset[str]:
 
 
 def from_regeneration(rows: Iterable[Any]) -> list[Item]:
-    """Clusters where publishing again would change what runs, or would be refused (0.99.11).
+    """Clusters where publishing again must change what runs, or would be refused (0.99.11, B493).
 
     Only from a reading that was made: a failed one says nothing, and neither
     does an answer of unchanged or unpublished.
@@ -1023,6 +1023,14 @@ def from_regeneration(rows: Iterable[Any]) -> list[Item]:
         if row.outcome != "done" or not isinstance(result, Mapping):
             continue
         outcome = result.get("outcome")
+        if outcome == "changed" and result.get("required") is False:
+            #
+            # A difference in how the files read, not in what the nodes do
+            # (B493): no row asks for a deploy. The cluster's card still offers
+            # it, and the next publish takes it. A reading without the field is
+            # from an engine before it and asked for the update, as it said.
+            #
+            continue
         if outcome == "changed":
             causes = [
                 said

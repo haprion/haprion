@@ -187,6 +187,35 @@ class RegenerationTests(StatusFixture):
         )
         self.assertNotIn("balance leastconn", shown)
 
+    def test_a_difference_the_nodes_do_not_need_asks_for_no_deploy(self) -> None:
+        """B493: how the files read changed, nothing the nodes do."""
+
+        reading = {**changed_regeneration(), "required": False, "causes": []}
+        _, shown, _ = self.run_status(
+            published=stamp("alpha", 1, self.commit), regeneration=reading
+        )
+
+        self.assertIn(
+            "\n  The installed version writes 1 file differently, nothing the nodes do: "
+            "the next publish takes it\n"
+            "  To publish it now: haprion-publish -c alpha --regenerate\n",
+            shown,
+        )
+        self.assertNotIn("deploy", shown.split("Nothing unsent")[0].lower())
+
+        _, shown, _ = self.run_status(
+            "-c",
+            "alpha",
+            "--json",
+            published=stamp("alpha", 1, self.commit),
+            regeneration=reading,
+        )
+        answer = assert_contract("haprion-config-status", shown)["result"]["regeneration"]
+        self.assertEqual(
+            answer,
+            {"outcome": "changed", "files_changed": 1, "required": False, "objects": ["shop"]},
+        )
+
     def test_diff_prints_the_difference(self) -> None:
         _, shown, _ = self.run_status(
             "-c",

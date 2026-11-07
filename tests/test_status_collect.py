@@ -512,7 +512,9 @@ class WhatEachObjectIsDoingOnTheNodes(unittest.TestCase):
             release = publish / "releases" / commit
             (release / "node").mkdir(parents=True)
             if objects is not None:
-                (release / MANIFEST_FILE).write_bytes(render_manifest(build_manifest(objects)))
+                (release / MANIFEST_FILE).write_bytes(
+                    render_manifest(build_manifest(objects, generator_level=1))
+                )
         (publish / "current").symlink_to(publish / "releases" / self.PUBLISHED)
         return publish
 
@@ -585,7 +587,9 @@ class WhatEachObjectIsDoingOnTheNodes(unittest.TestCase):
             publish = self.tree(raw, published={}, releases={self.PUBLISHED: {"shop": SHOP}})
             secret = Path(raw) / "elsewhere"
             secret.mkdir()
-            (secret / MANIFEST_FILE).write_bytes(render_manifest(build_manifest({"shop": SHOP})))
+            (secret / MANIFEST_FILE).write_bytes(
+                render_manifest(build_manifest({"shop": SHOP}, generator_level=1))
+            )
             states = self.states(publish, hash_a=self.PUBLISHED, hash_b="../../elsewhere")
             self.assertEqual(states["shop"]["state"], "unknown")
             self.assertIsNone(read_manifest(publish, release="../../elsewhere"))

@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "regeneration",
+  "cluster": "alpha",
+  "request_id": "99999999-9999-4999-8999-999999999999",
+  "result": {
+    "fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "published_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "published_version": 7,
+    "installed_version": "0.99.11",
+    "managed": true,
+    "message": null,
+    "causes": [],
+    "required": false,
+    "objects": [
+      {
+        "name": "shop",
+        "change": "changed",
+        "parts": [
+          "backends",
+          "routing"
+        ]
+      }
+    ],
+    "files_changed": 1,
+    "diff": {
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "parent": null,
+      "truncated": false,
+      "files": [
+        {
+          "path": "conf.d/1001-shop.cfg",
+          "status": "modified",
+          "old_path": null,
+          "added": 1,
+          "removed": 1,
+          "binary": false,
+          "lines": [
+            "@@ -3,3 +3,3 @@",
+            " backend shop",
+            "-    balance roundrobin",
+            "+    balance roundrobin  # 0.99.11",
+            " "
+          ]
+        }
+      ]
+    },
+    "outcome": "changed"
+  },
+  "warnings": [],
+  "error": null
+}

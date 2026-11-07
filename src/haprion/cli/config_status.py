@@ -176,8 +176,19 @@ def _regeneration(result: Mapping[str, Any] | None) -> dict[str, Any]:
     return {
         "outcome": "changed",
         "files_changed": int(result.get("files_changed") or 0),
+        "required": required(result),
         "objects": [str(item["name"]) for item in result.get("objects") or []],
     }
+
+
+def required(result: Mapping[str, Any]) -> bool:
+    """Whether a changed reading must reach the nodes (B493).
+
+    A reading without the field is from an engine before it, which called every
+    difference an update to apply: read as that, not as nothing to do.
+    """
+
+    return result.get("required") is not False
 
 
 def _published_state(stamp: str | None) -> dict[str, Any]:
@@ -206,6 +217,12 @@ def regeneration_line(result: Mapping[str, Any] | None, cluster_id: str) -> str 
         return None
     count = int(result.get("files_changed") or 0)
     noun = "file" if count == 1 else "files"
+    if not required(result):
+        return (
+            f"  The installed version writes {count} {noun} differently, nothing the nodes do: "
+            "the next publish takes it\n"
+            f"  To publish it now: haprion-publish -c {cluster_id} --regenerate\n"
+        )
     line = f"  Publish and deploy to apply the update: {count} {noun} differ{'s' if count == 1 else ''}"
     objects = [
         f"{item['name']} ({', '.join(item['parts'])})" if item.get("parts") else str(item["name"])

@@ -28,7 +28,7 @@
       }
     },
     "config_status_result": {
-      "description": "What a cluster's configuration holds that has not been sent, and what is published. `saved_is_published` is null where the published version could not be read or nothing is published. `regeneration` is whether a publish would change what runs: `unchanged`, `changed` (with `files_changed` and the `objects` it concerns), `refused` or `unknown` (not asked, or not readable; `message` says why).",
+      "description": "What a cluster's configuration holds that has not been sent, and what is published. `saved_is_published` is null where the published version could not be read or nothing is published. `regeneration` is whether a publish would change what runs: `unchanged`, `changed` (with `files_changed`, the `objects` it concerns and `required`: whether the difference must reach the nodes, or only changes how the files read), `refused` or `unknown` (not asked, or not readable; `message` says why).",
       "type": "object",
       "required": ["published", "saved", "saved_is_published", "regeneration", "unsent", "interface_owned"],
       "properties": {
@@ -58,6 +58,7 @@
           "properties": {
             "outcome": { "enum": ["unchanged", "changed", "refused", "unknown"] },
             "files_changed": { "type": "integer", "minimum": 0 },
+            "required": { "type": "boolean" },
             "objects": { "type": "array", "items": { "type": "string" } },
             "message": { "type": "string" }
           },

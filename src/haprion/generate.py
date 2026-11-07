@@ -243,6 +243,20 @@ TIMEOUT_TUNNEL = "1h"
 #
 RETRIES = 3
 
+#
+# Whether a change in what this generator writes must reach the nodes (B493).
+# Raised by the release whose generator writes something the nodes would do
+# differently - a directive, a check, a limit; left where it is when only how
+# the files read changes, such as the order of lines HAProxy runs in its own
+# order anyway. Every publish records it in the version's manifest, and a
+# regeneration that finds other files names the difference a required update
+# only when the published version's level is lower. A version without the
+# record was written at level 1. The golden files' digest is held to the level
+# (`tests/test_generator_level.py`): output that changes fails there until the
+# level has been decided.
+#
+GENERATOR_LEVEL = 1
+
 # A second, opt-in stream. The ordinary `option httplog` output is deliberately
 # untouched: this profile applies only to the additional per-frontend log
 # target. `%HPO` is the path alone: no query string, and no scheme or host

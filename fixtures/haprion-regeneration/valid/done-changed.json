@@ -19,6 +19,7 @@
         "installed": "4.25.2"
       }
     ],
+    "required": true,
     "objects": [
       {
         "name": "shop",

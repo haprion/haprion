@@ -13,6 +13,7 @@
     "managed": true,
     "message": null,
     "causes": [],
+    "required": false,
     "objects": [],
     "files_changed": 0,
     "diff": null,

@@ -8,10 +8,12 @@ and the refusals that keep it from inventing an answer it does not have.
 
 from __future__ import annotations
 
+import json
 import unittest
 
 from haprion.object_manifest import (
     ABSENT,
+    BASELINE_LEVEL,
     CHANGED,
     CURRENT,
     Difference,
@@ -34,7 +36,7 @@ INTRANET = {**SHOP, "backends": "backend mgd-intranet-portal\n"}
 
 
 def release(objects: dict[str, dict[str, str]]) -> Manifest:
-    return build(objects)
+    return build(objects, generator_level=1)
 
 
 class WhatTwoReleasesSayAboutOneObject(unittest.TestCase):
@@ -97,6 +99,20 @@ class AManifestReadBack(unittest.TestCase):
     def test_a_rendered_manifest_survives_the_round_trip(self) -> None:
         manifest = release({"shop": SHOP, "intranet": INTRANET})
         self.assertEqual(parse(render(manifest).decode()), manifest)
+
+    def test_the_generator_level_is_written_and_read_back(self) -> None:
+        """B493: the level a version was written at, and the baseline where none is."""
+
+        manifest = build({"shop": SHOP}, generator_level=3)
+        self.assertEqual(parse(render(manifest).decode()), manifest)
+        document = json.loads(render(manifest))
+        del document["generator_level"]
+        read = parse(json.dumps(document))
+        self.assertEqual(read.generator_level if read else None, BASELINE_LEVEL)
+        for level in (0, "2", True, None):
+            with self.subTest(level=level):
+                document["generator_level"] = level
+                self.assertIsNone(parse(json.dumps(document)))
 
     def test_the_rendering_is_stable(self) -> None:
         """Two builds of one release must not produce a diff to review."""

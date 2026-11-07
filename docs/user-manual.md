@@ -142,10 +142,12 @@ networks come back as it ran them, not as installed today.
 **After an upgrade of Haprion.** A newer release can generate other configuration from the same objects, and
 so can a newer WAF rule set. The nodes keep running what was published until the cluster is published
 again. The manager makes each cluster's published version again with the installed release, without
-publishing, and compares the result with what the nodes run. When they differ, *Needs attention* says
-*Publish & deploy to apply the update*, with the cause where one is known, such as *the WAF rule set
-4.25.1 → 4.25.2*. The cluster's card on the dashboard then has an **Apply update** button beside
-**Deploy configuration**. Open it or the row's **Versions** button: the page lists the causes, the proxies
+publishing, and compares the result with what the nodes run. When they differ in what the nodes do, *Needs
+attention* says *Publish & deploy to apply the update*, with the cause where one is known, such as *the WAF
+rule set 4.25.1 → 4.25.2*. That is a release whose generator writes something the nodes would do
+differently, or another WAF rule set. When only how the files read differs, such as the order of lines, no
+row asks for it, and the next publish takes it. Either way the cluster's card on the dashboard has an
+**Apply update** button beside **Deploy configuration**. Open it or the row's **Versions** button: the page lists the causes, the proxies
 that differ and the files, line by line. **Publish & deploy** there publishes only the regenerated
 configuration, with the country networks the published version carries, and deploys it. Nothing happens until you choose it, so the traffic is reloaded when you
 want it. If versions were saved after the published one, publishing carries them too, and the page says
@@ -203,6 +205,13 @@ files a node would run are compared with the ones it runs. When they differ, the
   Publish and deploy to apply the update: 3 files differ; objects: shop (backends, routing), api (listener)
   Publish it with: haprion-publish -c alpha --regenerate (the publish makes its own checks, ...)
   Then deploy it with: haprion-deploy -c alpha
+```
+
+When only how the files read differs, it says so instead, and asks for no deploy:
+
+```
+  The installed version writes 1 file differently, nothing the nodes do: the next publish takes it
+  To publish it now: haprion-publish -c alpha --regenerate
 ```
 
 `haprion-config-status -c alpha --diff` prints the difference, file by file, as `haprion-list --diff`

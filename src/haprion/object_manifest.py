@@ -79,11 +79,19 @@ class ObjectFingerprint:
     parts: Mapping[str, str]
 
 
+#
+# The generator level a manifest without one was written at (B493): every
+# version published before the level was recorded.
+#
+BASELINE_LEVEL = 1
+
+
 @dataclass(frozen=True, slots=True)
 class Manifest:
-    """Every object one release carries."""
+    """Every object one release carries, and the generator level that wrote it."""
 
     objects: Mapping[str, ObjectFingerprint]
+    generator_level: int = BASELINE_LEVEL
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,10 +127,13 @@ def fingerprint(parts: Mapping[str, str]) -> ObjectFingerprint:
     return ObjectFingerprint(fingerprint=_digest(summary), parts=hashed)
 
 
-def build(object_parts: Mapping[str, Mapping[str, str]]) -> Manifest:
-    """The manifest for one generated layer."""
+def build(object_parts: Mapping[str, Mapping[str, str]], *, generator_level: int) -> Manifest:
+    """The manifest for one generated layer, written at `generator_level`."""
 
-    return Manifest(objects={name: fingerprint(parts) for name, parts in object_parts.items()})
+    return Manifest(
+        objects={name: fingerprint(parts) for name, parts in object_parts.items()},
+        generator_level=generator_level,
+    )
 
 
 def render(manifest: Manifest) -> bytes:
@@ -134,6 +145,7 @@ def render(manifest: Manifest) -> bytes:
 
     document = {
         "schema": SCHEMA,
+        "generator_level": manifest.generator_level,
         "objects": {
             name: {
                 "fingerprint": entry.fingerprint,
@@ -165,13 +177,16 @@ def parse(text: str) -> Manifest | None:
     entries = document.get("objects")
     if not isinstance(entries, Mapping):
         return None
+    level = document.get("generator_level", BASELINE_LEVEL)
+    if isinstance(level, bool) or not isinstance(level, int) or level < BASELINE_LEVEL:
+        return None
     objects: dict[str, ObjectFingerprint] = {}
     for name, entry in entries.items():
         parsed = _entry(entry)
         if not isinstance(name, str) or parsed is None:
             return None
         objects[name] = parsed
-    return Manifest(objects=objects)
+    return Manifest(objects=objects, generator_level=level)
 
 
 def _entry(entry: Any) -> ObjectFingerprint | None:

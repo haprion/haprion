@@ -13,6 +13,7 @@
     "managed": true,
     "message": "shop: the generator no longer accepts this document",
     "causes": [],
+    "required": false,
     "objects": [],
     "files_changed": 0,
     "diff": null,

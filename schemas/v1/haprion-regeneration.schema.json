@@ -62,6 +62,7 @@
         "managed",
         "message",
         "causes",
+        "required",
         "objects",
         "files_changed",
         "diff"
@@ -78,20 +79,21 @@
         "managed": { "description": "False for a published version with no generated layer to make again (a cluster written by hand, or nothing published).", "type": "boolean" },
         "message": { "type": ["string", "null"], "maxLength": 1024 },
         "causes": {
-          "description": "What can be said about why, from what the published tree records. The tree does not record which product version made it, so there is no engine cause.",
+          "description": "What can be said about why, from what the published tree records: generator, the installed generator level above the one the published version was written at; rule_set, another WAF rule set. Each is a reason the difference must reach the nodes.",
           "type": "array",
           "maxItems": 16,
           "items": {
             "type": "object",
             "required": ["kind", "published", "installed"],
             "properties": {
-              "kind": { "enum": ["rule_set"] },
+              "kind": { "enum": ["generator", "rule_set"] },
               "published": { "type": "string", "minLength": 1, "maxLength": 64 },
               "installed": { "type": "string", "minLength": 1, "maxLength": 64 }
             },
             "additionalProperties": false
           }
         },
+        "required": { "description": "True when the outcome is changed and a cause says the difference must reach the nodes. False for a difference in how the files read only: the next publish takes it.", "type": "boolean" },
         "objects": {
           "description": "Each object whose generated configuration differs, by the manifests; empty for a published version without one.",
           "type": "array",

@@ -32,7 +32,7 @@ from haprion_ui import compatibility
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "ui/src/haprion_ui/compatibility.json"
-# The release before this one, as it shipped (v0.99.9): the gate's input. Replace it with
+# The release before this one, as it shipped (v1.0.0): the gate's input. Replace it with
 # each release's own file when the next one is made.
 PREVIOUS = ROOT / "ui/tests/previous_release_compatibility.json"
 
@@ -438,15 +438,44 @@ class ADatabaseFromBeforeTheBaseline(unittest.TestCase):
         self.assertNotIn("apt install", before_0100)
 
     def test_the_carrier_of_a_baseline_ran_its_chain_to_it(self) -> None:
-        """The release named for a baseline is the one before it, at that head (B436)."""
+        """The release named for a baseline is the one before it, at that head (B436).
 
-        previous = compatibility.load_requirements(PREVIOUS)
+        Read from that release's tag, not from the previous-release fixture: the
+        fixture moves on with every release, the carrier does not (26-11-07, the
+        version commit of 1.0.1 failed here). Where there are no tags (a CI
+        clone) there is nothing to read.
+        """
+
+        git = shutil.which("git")
+        if git is None:
+            self.skipTest("no git")
+        try:
+            tags = subprocess.run(  # noqa: S603 - fixed program, fixed arguments
+                [git, "-C", str(ROOT), "tag", "--list", "v*"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.split()
+        except (OSError, subprocess.CalledProcessError):
+            self.skipTest("no git checkout here")
         for baseline, (start, release) in compatibility.CHAIN_CARRIERS.items():
             with self.subTest(baseline=baseline):
                 self.assertLess(start, baseline)
-                self.assertEqual(previous.database_head, baseline)
-                self.assertEqual(previous.database_baseline, start)
                 self.assertRegex(release, r"^\d+\.\d+\.\d+$")
+                if f"v{release}" not in tags:
+                    self.skipTest(f"no tag v{release} in this clone")
+                shipped = subprocess.run(  # noqa: S603 - fixed program, a tag git listed
+                    [git, "-C", str(ROOT), "show", f"v{release}:{MANIFEST.relative_to(ROOT)}"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                ).stdout
+                with tempfile.TemporaryDirectory() as raw:
+                    path = Path(raw) / "compatibility.json"
+                    path.write_text(shipped)
+                    carrier = compatibility.load_requirements(path)
+                self.assertEqual(carrier.database_head, baseline)
+                self.assertEqual(carrier.database_baseline, start)
 
     def test_a_baseline_past_the_head_is_refused(self) -> None:
         head = json.loads(MANIFEST.read_text())["requires"]["database_head"]

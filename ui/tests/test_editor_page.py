@@ -1592,6 +1592,86 @@ class AnObjectTheFormCannotOpen(EditorTestCase):
             preview.form_from_document(document)
 
 
+class Duplicating(EditorTestCase):
+    """*Duplicate* (B496, 2): a new proxy that starts from a stored one, tied to nothing after."""
+
+    def opened(self, query: str = "?from=shop") -> str:
+        page = self.editor().get(f"/proxies/alpha/new{query}")
+        self.assertEqual(page.status_code, 200)
+        return str(page.text)
+
+    def test_the_new_form_starts_from_the_stored_proxy_with_what_names_it_emptied(self) -> None:
+        page = self.opened()
+
+        self.assertIn(
+            "Copied from shop as it is stored. Name, host names, description and servers are "
+            "empty. Advanced config and the WAF&#39;s exceptions and large-body paths are not copied.",
+            page,
+        )
+        self.assertRegex(page, r'<input[^>]*name="name"[^>]*value=""')
+        self.assertNotIn("shop.example.com", page)
+        self.assertNotIn("192.0.2.10:8080", page)
+        self.assertIn('action="/proxies/alpha/new"', page)
+        self.assertRegex(page, r'<option value="disabled"[^>]*selected')
+
+    def test_a_draft_of_the_original_is_not_what_is_copied(self) -> None:
+        self.draft = ProxyDraft(
+            cluster="alpha",
+            object_id="shop",
+            yaml=SHOP.replace("type: disabled", "type: tcp"),
+            base_version=12,
+            base_hash=COMMIT,
+            revision=1,
+            updated_by="operator",
+            updated_at=OBSERVED,
+            deleted=False,
+        )
+
+        page = self.opened()
+
+        self.assertRegex(page, r'<option value="disabled"[^>]*selected')
+        self.assertNotRegex(page, r'<option value="tcp"[^>]*selected')
+
+    def test_a_proxy_that_is_not_stored_copies_nothing_and_says_so(self) -> None:
+        page = self.opened("?from=nowhere")
+
+        self.assertIn("nowhere is not stored in alpha, so nothing was copied.", page)
+        self.assertNotIn("Copied from", page)
+
+    def test_advanced_config_and_the_waf_s_allowances_are_left_behind(self) -> None:
+        """The WAF's mode is the pattern; its exceptions were granted to the original (26-11-08)."""
+
+        fields = editor_flow.duplicated(
+            {
+                "name": "shop",
+                "hostnames": "shop.example.com",
+                "description": "the shop",
+                "servers": "192.0.2.10:8080",
+                "advanced": "retries 5\n",
+                "handwritten_pool": True,
+                "balance": "leastconn",
+                "waf_mode": "block",
+                "waf_exceptions": '[{"rule": 942100, "field": "ARGS:q"}]',
+                "waf_large_bodies": "/upload",
+            }
+        )
+
+        for emptied in (
+            "name",
+            "hostnames",
+            "description",
+            "servers",
+            "advanced",
+            "waf_exceptions",
+            "waf_large_bodies",
+        ):
+            with self.subTest(emptied=emptied):
+                self.assertEqual(fields[emptied], "")
+        self.assertIs(fields["handwritten_pool"], False)
+        self.assertEqual(fields["balance"], "leastconn")
+        self.assertEqual(fields["waf_mode"], "block")
+
+
 class WhatEnterDoes(EditorTestCase):
     """A browser submits with the first submit button in tree order.
 

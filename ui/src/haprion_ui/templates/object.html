@@ -59,7 +59,7 @@
       "Stored object", "Edit" reads as a way to edit the stored text, which is
       not what opens.
     #}
-    <div class="cluster-state">{% if editable and object.stored %}{% if not draft %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/edit">Edit</a>{% endif %}{% if advanced_offered %}<button type="button" class="secondary-button" data-advanced-open>Advanced config</button>{% endif %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/remove">Remove</a>{% endif %}{% if object.observed_iso %}<time datetime="{{ object.observed_iso }}" title="{{ object.observed_at | shown_at }}">{{ object.age_label }}</time>{% else %}<span class="observation-age">Never read</span>{% endif %}</div>
+    <div class="cluster-state">{% if editable and object.stored %}{% if not draft %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/edit">Edit</a>{% endif %}{% if advanced_offered %}<button type="button" class="secondary-button" data-advanced-open>Advanced config</button>{% endif %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/new?from={{ object.name | urlencode }}">Duplicate</a><a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/remove">Remove</a>{% endif %}{% if object.observed_iso %}<time datetime="{{ object.observed_iso }}" title="{{ object.observed_at | shown_at }}">{{ object.age_label }}</time>{% else %}<span class="observation-age">Never read</span>{% endif %}</div>
   </header>
 
   {% if object.stored %}

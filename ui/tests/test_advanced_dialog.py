@@ -264,11 +264,16 @@ class TheButtonAndTheDialogOnThePage(DraftReading):
         self.sign_in(client)
         return str(client.get("/proxies/edge-demo/public-web").text)
 
-    def test_the_button_sits_between_edit_and_remove(self) -> None:
+    def test_the_button_sits_between_edit_and_duplicate(self) -> None:
+        """Edit · Advanced config · Duplicate · Remove (B496, 2)."""
+
         body = self.page()
 
         self.assertRegex(
-            body, r">Edit</a><button[^>]*data-advanced-open>Advanced config</button><a[^>]*>Remove<"
+            body,
+            r">Edit</a><button[^>]*data-advanced-open>Advanced config</button>"
+            r'<a class="secondary-button" href="/proxies/edge-demo/new\?from=public-web">Duplicate</a>'
+            r"<a[^>]*>Remove<",
         )
         self.assertIn('<dialog class="advanced-dialog"', body)
 

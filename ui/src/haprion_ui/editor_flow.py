@@ -362,6 +362,45 @@ def check_tls_mismatches(name: str, document: str) -> list[str]:
 # What the editor says after a save when there is no card to say it (B330).
 #
 SAVED_NOTICE = "Saved."
+#
+# *Duplicate* (B496, 2). What names the original goes - its name, the host
+# names it answers for, what it says it is and the servers it sends to - and
+# so does its advanced config, which is the original's own HAProxy text. So do
+# the WAF's exceptions and large-body paths (26-11-08): each eases the
+# engine for traffic somebody looked at on the original, and the copy earns
+# its own. The rest is the pattern being copied, the WAF's mode included.
+# Nothing ties the copy to the original afterwards.
+#
+DUPLICATE_NOTICE = (
+    "Copied from {name} as it is stored. Name, host names, description and servers are empty. "
+    "Advanced config and the WAF's exceptions and large-body paths are not copied."
+)
+DUPLICATE_UNEXPRESSIBLE = (
+    "{name} says something the form has no place for, so it cannot be duplicated here."
+)
+DUPLICATE_EMPTIED = (
+    "name",
+    "hostnames",
+    "description",
+    "servers",
+    "advanced",
+    "waf_exceptions",
+    "waf_large_bodies",
+)
+
+
+def duplicated(fields: Mapping[str, object]) -> dict[str, object]:
+    """A stored object's form fields as the start of a new one: what names the original emptied."""
+
+    copied = dict(fields)
+    for key in DUPLICATE_EMPTIED:
+        copied[key] = ""
+    #
+    # A pool the original's advanced config wrote by hand has no servers in the
+    # form; with the text left behind, the copy's pool is the form's again.
+    #
+    copied["handwritten_pool"] = False
+    return copied
 
 
 def editor_page(
@@ -378,8 +417,12 @@ def editor_page(
     open_group: str = "",
     answered: bool = True,
     object_fingerprint: str | None = None,
+    copy_from: str = "",
 ) -> Response:
     """Draw the editor, whether it was reached by a link or by a submission.
+
+    `copy_from` names a stored object a new one starts from (*Duplicate*,
+    B496 2): its stored document, never a draft, with what names it emptied.
 
     One function for both because the page is the same page: a form, what it
     produces, and what is wrong with it. Splitting it would give a submission
@@ -428,6 +471,20 @@ def editor_page(
         #
         source = draft.yaml if draft is not None and not draft.deleted else None
         source = source or (stored.document if stored is not None else "")
+        original = (
+            next((view for view in state.stored if view.name == copy_from), None)
+            if copy_from and not name
+            else None
+        )
+        if original is not None:
+            #
+            # The stored version, as the button promises: a draft somebody is
+            # still writing on the original is theirs, not a template.
+            #
+            source = original.document
+            notice = DUPLICATE_NOTICE.format(name=original.name)
+        elif copy_from and not name:
+            notice = f"{copy_from} is not stored in {cluster}, so nothing was copied."
         if not source:
             fields = dict(preview_module.DEFAULTS, **preview_module.NEW_POOL_CHECK, name=name)
         else:
@@ -435,7 +492,14 @@ def editor_page(
                 fields = preview_module.form_from_document(source, networks=state.choices.networks)
             except preview_module.Unexpressible as exc:
                 fields = dict(preview_module.DEFAULTS, name=name)
-                unexpressible = str(exc)
+                if original is not None:
+                    fields.update(preview_module.NEW_POOL_CHECK)
+                    notice = DUPLICATE_UNEXPRESSIBLE.format(name=original.name)
+                else:
+                    unexpressible = str(exc)
+            else:
+                if original is not None:
+                    fields = duplicated(fields)
         try:
             form = editor_module.ObjectForm(
                 **_form_defaults(fields),

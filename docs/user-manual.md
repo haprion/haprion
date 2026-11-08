@@ -117,6 +117,13 @@ They are refused while the object has a draft.
 A saved rename remembers the published name it replaces, so the publish that carries it also removes the
 old name.
 
+**Duplicate.** *Duplicate* on a stored proxy's page opens the form for a new proxy in the same cluster,
+filled in from that proxy as it is stored - not from a draft of it. The name, host names, description and
+servers are empty. Its advanced config is not copied, nor are the WAF's exceptions and large-body paths:
+they were granted for the original's traffic, and the new proxy is inspected in full until it is given its
+own. The WAF's mode is copied. The new proxy is saved like any other, and nothing ties it to the one it came
+from.
+
 The network description and a cluster's logs and metrics settings are saved the same way, as one document
 per cluster each. The page shows the saved document, and *Discard the changes* drops it. The object editor
 checks objects against the saved network, so an object may name a VIP that the same unpublished change
@@ -1328,7 +1335,7 @@ reordering the clusters there reorders both. Until the poller has read the clust
 `clusters` in `ui.toml` is used instead. With more than six clusters the first six keep their
 colours and the seventh and later have none. Each card shows the cluster's name either way.
 
-**Advanced config.** On, an object's page has an *Advanced config* button, between *Edit* and *Remove*. It
+**Advanced config.** On, an object's page has an *Advanced config* button, between *Edit* and *Duplicate*. It
 opens a dialog where you paste HAProxy configuration as a layer on top of the object. The object stores
 the text as `advanced` in its YAML.
 
@@ -3907,6 +3914,13 @@ node closed the connection; the export leaves that cell empty. When the WAF matc
 the rule: red when the rule refused the request, amber when it only logged it. Rows can be ticked and
 saved with *Export selected (.csv)*. The file has the row's columns plus *Rule* and *Mode* (`denied` or
 `logged`), empty when no rule matched; from *WAF logs* it is named `waf-logs-…`.
+
+**Where the time went.** The arrow beside a row's tick box opens the request's timings under it, in the order
+the request went through them: *Request received*, *Queue*, *Connect*, *Server response* and *Total*. A step
+the request never reached shows a dash, not zero: a request refused by a rule has no *Connect*, and one that
+waited out the queue has no server response. When the session did not end normally, the line ends with how
+it ended, such as *The server's timeout ran out while waiting for the server's headers*. The same sentence is
+the title of the row's status.
 
 What a client chooses is cut in the log, not left out of it: a method after 16 characters, a host after 253
 bytes and a path (without its query) after 512 bytes. The path is the one the client asked for, as the

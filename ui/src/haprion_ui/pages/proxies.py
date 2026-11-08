@@ -515,7 +515,13 @@ def build_router(config: Config) -> APIRouter:
     #
     @router.get("/proxies/{cluster}/new", response_class=HTMLResponse)
     def new_object_form(request: Request, cluster: str) -> Response:
-        return editor_page(request, config, cluster, "", None)
+        #
+        # `?from=` is *Duplicate* on a stored proxy (B496, 2): the new form
+        # starts from that proxy as it is stored.
+        #
+        return editor_page(
+            request, config, cluster, "", None, copy_from=request.query_params.get("from", "")
+        )
 
     @router.post("/proxies/{cluster}/new", response_class=HTMLResponse)
     def new_object_submit(

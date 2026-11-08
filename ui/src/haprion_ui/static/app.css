@@ -2315,15 +2315,32 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
    text paints over the status badge beside it. Every column is therefore stated
    here, and the request column is the one left to take the slack.
 */
-.log-table { min-width: 1164px; }
+.log-table { min-width: 1192px; }
 .log-table th:nth-child(1), .log-table td:nth-child(1) { width: 44px; }
-.log-table th:nth-child(2), .log-table td:nth-child(2) { width: 150px; }
-.log-table th:nth-child(3), .log-table td:nth-child(3) { width: 190px; }
-.log-table th:nth-child(4), .log-table td:nth-child(4) { width: 132px; }
-.log-table th:nth-child(5), .log-table td:nth-child(5) { width: auto; }
-.log-table th:nth-child(6), .log-table td:nth-child(6) { width: 84px; }
-.log-table th:nth-child(7), .log-table td:nth-child(7) { width: 240px; }
-.log-table th:nth-child(8), .log-table td:nth-child(8) { width: 88px; }
+.log-table th:nth-child(2), .log-table td:nth-child(2) { width: 28px; }
+.log-table th:nth-child(3), .log-table td:nth-child(3) { width: 150px; }
+.log-table th:nth-child(4), .log-table td:nth-child(4) { width: 190px; }
+.log-table th:nth-child(5), .log-table td:nth-child(5) { width: 132px; }
+.log-table th:nth-child(6), .log-table td:nth-child(6) { width: auto; }
+.log-table th:nth-child(7), .log-table td:nth-child(7) { width: 84px; }
+.log-table th:nth-child(8), .log-table td:nth-child(8) { width: 240px; }
+.log-table th:nth-child(9), .log-table td:nth-child(9) { width: 88px; }
+/*
+   A request's timings (B496, 1): an arrow in its own column beside the tick
+   box opens a row under it, so a click on the row itself stays free for
+   selecting and copying its text.
+*/
+.log-table th.log-open, .log-table td.log-open { padding: 0; text-align: center; }
+.log-open-button { display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
+.log-open-button:hover { background: var(--hover-surface); color: var(--text-strong); }
+.log-open-button svg { width: 15px; height: 15px; transition: transform .12s ease; }
+.log-open-button[aria-expanded="true"] svg { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .log-open-button svg { transition: none; } }
+.log-table tr:has(+ .log-timings:not([hidden])) td { border-bottom: 0; }
+.log-table .log-timings td { padding-top: 0; padding-bottom: 10px; white-space: normal; }
+.log-timing-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 22px; color: var(--text-primary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.log-timing-line em { margin-right: 6px; color: var(--muted); font-style: normal; }
+.log-timing-line .log-ended { color: var(--warning); }
 /* Dense rows, as on Versions: one line of text and a status badge no taller than it. */
 .log-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
 .log-table .status-badge { min-height: 0; padding: 1px 8px; }
@@ -2540,8 +2557,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .rule-foot { display: flex; justify-content: flex-end; padding: 4px 0 12px; }
 
 /* The WAF page (Fas 21): the rule where the bytes were, wide enough for its name. */
-.waf-table th:nth-child(7), .waf-table td:nth-child(7) { width: 170px; }
-.waf-table th:nth-child(8), .waf-table td:nth-child(8) { width: 220px; }
+.waf-table th:nth-child(8), .waf-table td:nth-child(8) { width: 170px; }
+.waf-table th:nth-child(9), .waf-table td:nth-child(9) { width: 220px; }
 .log-filters.log-filters-waf { grid-template-columns: minmax(120px, .6fr) minmax(90px, .4fr) minmax(120px, .5fr) minmax(200px, 1.3fr) minmax(175px, .8fr) minmax(175px, .8fr) auto auto; }
 @media (max-width: 1000px) { .log-filters.log-filters-waf { grid-template-columns: 1fr 1fr; } }
 .log-table .log-rule { margin-right: 4px; }

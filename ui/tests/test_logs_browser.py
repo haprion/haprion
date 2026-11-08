@@ -312,6 +312,52 @@ class LogControlsInABrowser(unittest.TestCase):
             self.page.locator("[data-log-select-all]").evaluate("node => node.indeterminate")
         )
 
+    def test_the_arrow_opens_a_request_s_timings_and_a_page_turn_keeps_them_with_it(self) -> None:
+        """B496, 1: the timings follow their row; the select-all and the page count ignore them."""
+
+        rows = "".join(
+            f'<tr data-log-row data-row="{number}"><td><input type="checkbox" data-log-select></td>'
+            f'<td><button type="button" data-log-open aria-expanded="false">Timings</button></td></tr>'
+            f'<tr data-log-timings data-timings="{number}" hidden><td>Total {number} ms</td></tr>'
+            for number in range(30)
+        )
+        self.load(
+            f"""
+            <div data-log-region>
+              <span data-log-selected-count></span>
+              <input type="checkbox" data-log-select-all>
+              <table><tbody>{rows}</tbody></table>
+              <select data-log-page-size><option value="25" selected>25</option></select>
+              <span data-log-page-range></span>
+              <button type="button" data-log-page-previous>Previous</button>
+              <button type="button" data-log-page-next>Next</button>
+            </div>
+            """
+        )
+
+        timings = self.page.locator("[data-log-timings]:visible")
+        self.assertEqual(timings.count(), 0)
+        self.assertEqual(self.page.locator("[data-log-page-range]").inner_text(), "1–25 of 30")
+
+        self.page.click('[data-row="3"] [data-log-open]')
+        self.assertEqual(timings.count(), 1)
+        self.assertEqual(timings.first.get_attribute("data-timings"), "3")
+        self.assertEqual(
+            self.page.locator('[data-row="3"] [data-log-open]').get_attribute("aria-expanded"),
+            "true",
+        )
+
+        self.page.click("[data-log-page-next]")
+        self.assertEqual(timings.count(), 0)
+        self.page.click("[data-log-page-previous]")
+        self.assertEqual(timings.count(), 1)
+
+        self.page.locator("[data-log-select-all]").check()
+        self.assertEqual(self.page.locator("[data-log-selected-count]").inner_text(), "25 selected")
+
+        self.page.click('[data-row="3"] [data-log-open]')
+        self.assertEqual(timings.count(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

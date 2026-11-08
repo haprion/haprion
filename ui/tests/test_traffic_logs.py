@@ -1071,6 +1071,86 @@ class TheTrafficLogPage(LoginTestCase):
             with self.subTest(nothing=nothing):
                 self.assertEqual(said(nothing), "")
 
+    def test_every_ending_haproxy_names_is_said_timeouts_included(self) -> None:
+        """26-11-08: `c` and `s` - a side's timeout ran out - were silently left unsaid.
+
+        The first letters are configuration.txt's, "Session state at
+        disconnection", lowercase included; a timeout is the ending a reader
+        most needs told.
+        """
+
+        said = traffic_logs.ended_in_words
+        for who in "CSPLRIDUKcs":
+            with self.subTest(who=who):
+                self.assertTrue(said(who + "H"), who)
+        self.assertEqual(
+            said("sH"), "The server's timeout ran out while waiting for the server's headers"
+        )
+        self.assertEqual(said("cR"), "The client's timeout ran out while the request came in")
+
+    def test_a_request_s_timings_wait_under_its_row_with_a_dash_for_a_step_not_reached(
+        self,
+    ) -> None:
+        """B496, 1: the five times in HAProxy's order; -1 is a step never reached, not zero."""
+
+        with (self.root / "alpha--node-a.jsonl").open("wb") as mirror:
+            mirror.write(
+                record(
+                    path="/slow",
+                    status=504,
+                    termination="SH",
+                    request_time=4,
+                    queue_time=0,
+                    connect_time=1,
+                    response_time=-1,
+                    total_time=30_002,
+                )
+            )
+        page = self.page()
+
+        row, after = page.split(">/slow<")[1].split("</tr>", 1)
+        self.assertIn('data-log-open aria-expanded="false" aria-controls="log-timings-1"', page)
+        timings = after.split("</tr>")[0]
+        self.assertIn('id="log-timings-1" data-log-timings hidden', timings)
+        for label, value in (
+            ("Request received", "4 ms"),
+            ("Queue", "0 ms"),
+            ("Connect", "1 ms"),
+            ("Server response", "–"),
+            ("Total", "30.0 s"),
+        ):
+            with self.subTest(label=label):
+                self.assertIn(f"<span><em>{label}</em>{value}</span>", timings)
+        self.assertIn(
+            '<span class="log-ended">The server ended it while waiting for the server&#39;s headers</span>',
+            timings,
+        )
+        self.assertNotIn("log-timings", row)
+
+    def test_a_normal_ending_adds_nothing_to_the_timings(self) -> None:
+        (self.root / "alpha--node-a.jsonl").write_bytes(record(path="/fine", termination="--"))
+
+        timings = self.page().split("data-log-timings hidden>")[1].split("</tr>")[0]
+
+        self.assertIn("<span><em>Total</em>3 ms</span>", timings)
+        self.assertNotIn("log-ended", timings)
+
+    def test_a_duration_reads_as_milliseconds_then_seconds(self) -> None:
+        shown = traffic_logs.shown_duration
+        for milliseconds, text in (
+            (-1, "–"),
+            (0, "0 ms"),
+            (999, "999 ms"),
+            (1000, "1.00 s"),
+            (2950, "2.95 s"),
+            (9994, "9.99 s"),
+            (9995, "10.0 s"),
+            (10_000, "10.0 s"),
+            (30_002, "30.0 s"),
+        ):
+            with self.subTest(milliseconds=milliseconds):
+                self.assertEqual(shown(milliseconds), text)
+
     def test_the_normal_page_has_no_live_badge_or_node_status_strip(self) -> None:
         (self.root / "alpha--node-a.jsonl").write_bytes(record())
         self.healthy_meta()

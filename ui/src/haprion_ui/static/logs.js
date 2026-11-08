@@ -24,6 +24,29 @@
     if (!all) return;
     let page = 0;
 
+    //
+    // A request's timings sit in the row after it (B496, 1). They are shown
+    // only while their request is on the page and its arrow is open, so a
+    // page turn takes an opened row's timings away with it and brings them
+    // back with it.
+    //
+    const timingsOf = (row) => {
+      const next = row.nextElementSibling;
+      return next && next.matches("[data-log-timings]") ? next : null;
+    };
+    const showTimings = (row) => {
+      const timings = timingsOf(row);
+      const arrow = row.querySelector("[data-log-open]");
+      if (timings) timings.hidden = row.hidden || arrow?.getAttribute("aria-expanded") !== "true";
+    };
+    rows.forEach((row) =>
+      row.querySelector("[data-log-open]")?.addEventListener("click", (event) => {
+        const arrow = event.currentTarget;
+        arrow.setAttribute("aria-expanded", String(arrow.getAttribute("aria-expanded") !== "true"));
+        showTimings(row);
+      })
+    );
+
     const selectedRows = () =>
       rows.filter((row) => row.querySelector("[data-log-select]")?.checked);
     const visibleRows = () => rows.filter((row) => !row.hidden);
@@ -48,6 +71,7 @@
       const end = Math.min(start + pageSize, rows.length);
       rows.forEach((row, index) => {
         row.hidden = index < start || index >= end;
+        showTimings(row);
       });
       if (range) {
         range.textContent = rows.length === 0 ? "0 of 0" : `${start + 1}–${end} of ${rows.length}`;

@@ -71,6 +71,44 @@ class Entry:
 
         return ended_in_words(self.termination)
 
+    @property
+    def timings(self) -> tuple[tuple[str, str], ...]:
+        """The five times HAProxy measured, in its order, with `–` for a step never reached."""
+
+        return tuple((label, shown_duration(getattr(self, field))) for label, field in TIMINGS)
+
+
+#
+# HAProxy's timers as the log format records them (generate.py,
+# HTTP_TRAFFIC_LOG_FORMAT): %TR, %Tw, %Tc, %Tr and %Ta, in the order a request
+# goes through them. HAProxy writes -1 for a step the request never reached - a
+# queue it did not wait in, a server it never connected to - and that is not
+# zero, so it is shown as a dash rather than as "0 ms" (B496, 1).
+#
+TIMINGS = (
+    ("Request received", "request_time"),
+    ("Queue", "queue_time"),
+    ("Connect", "connect_time"),
+    ("Server response", "response_time"),
+    ("Total", "total_time"),
+)
+
+
+def shown_duration(milliseconds: int) -> str:
+    """Milliseconds as a reader takes them in: `4 ms`, `2.95 s`, `30.0 s`; `–` when not reached."""
+
+    if milliseconds < 0:
+        return "–"
+    if milliseconds < 1000:
+        return f"{milliseconds} ms"
+    #
+    # Two decimals below ten seconds, one above - and the turn where rounding
+    # would otherwise write 9999 ms as "10.00 s".
+    #
+    if milliseconds < 9995:
+        return f"{milliseconds / 1000:.2f} s"
+    return f"{milliseconds / 1000:.1f} s"
+
 
 #
 # HAProxy's termination state (configuration.txt, "Session state at
@@ -86,6 +124,13 @@ _ENDED_BY = {
     "D": "The server was marked down",
     "U": "A backup server took over",
     "K": "An administrator ended it",
+    #
+    # Lowercase: a side's timeout ran out (26-11-08). Left out until then, so
+    # the endings a reader most needed told - `sH`, a server that never sent
+    # its headers in time - said nothing at all.
+    #
+    "c": "The client's timeout ran out",
+    "s": "The server's timeout ran out",
 }
 _ENDED_WHILE = {
     "R": " while the request came in",

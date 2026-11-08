@@ -849,7 +849,7 @@ class Point:
 BUCKET_EPOCH = datetime(2000, 1, 1, tzinfo=UTC)
 
 
-def _bucket_of(at: datetime, bucket: timedelta) -> int:
+def bucket_of(at: datetime, bucket: timedelta) -> int:
     return int((at - BUCKET_EPOCH) / bucket)
 
 
@@ -949,7 +949,7 @@ def bucketed(
     # minute in progress and dipped on every page load.
     #
     first = math.ceil((start - BUCKET_EPOCH) / bucket)
-    last = _bucket_of(end, bucket) - 1
+    last = bucket_of(end, bucket) - 1
     bucket_sec = bucket.total_seconds()
     #
     # The stretch the series could have answered for at all, which is what
@@ -967,7 +967,7 @@ def bucketed(
         if span <= 0:
             continue
         for index in range(
-            _bucket_of(interval.started_at, bucket), _bucket_of(interval.ended_at, bucket) + 1
+            bucket_of(interval.started_at, bucket), bucket_of(interval.ended_at, bucket) + 1
         ):
             edge = BUCKET_EPOCH + bucket * index
             overlap = (
@@ -1115,7 +1115,7 @@ def selection(
             return Selection()
         if not start <= at <= end:
             return Selection()
-        ends.append(BUCKET_EPOCH + bucket * _bucket_of(at, bucket))
+        ends.append(BUCKET_EPOCH + bucket * bucket_of(at, bucket))
     if not ends:
         return Selection()
     if len(ends) == 1:

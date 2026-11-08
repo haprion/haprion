@@ -26,6 +26,7 @@ from haprion.proxy_model import (
 from haprion_ui import (
     auth,
     db,
+    deploy_bands,
     jobs,
     metrics,
     moments,
@@ -351,7 +352,24 @@ def build_router(config: Config) -> APIRouter:
                 keys.append((cluster, "backend", pool_name))
                 reads.extend(pool_reads(cluster, pool_name, figures))
                 spans.append(2)
+        #
+        # Every listed cluster's deploys in the same window, as bands behind its
+        # cards (B496, 8): one query, after the readings in the list.
+        #
+        reads.append(
+            lambda connection: db.deploy_jobs(
+                connection, clusters=[entry[0] for entry in listed], since=since, until=now
+            )
+        )
         answers = read_concurrently(pool, reads)
+        deploys = deploy_bands.by_cluster(
+            answers.pop(),
+            [entry[0] for entry in listed],
+            start=since,
+            end=now,
+            bucket=chosen.bucket,
+            now=now,
+        )
         read_back: dict[tuple[str, str, str], tuple[Any, ...]] = {}
         at = 0
         for key, span in zip(keys, spans, strict=True):
@@ -474,6 +492,7 @@ def build_router(config: Config) -> APIRouter:
                         kinds=pools,
                     ),
                     "redirects": section(cluster, "backend", redirects, label),
+                    "deploys": deploys.get(cluster, ()),
                 }
             )
 

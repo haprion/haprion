@@ -90,11 +90,70 @@
         if (note) note.textContent = "";
       };
 
-      for (const pick of picks) {
-        pick.addEventListener("pointerenter", () => show(pick));
-        pick.addEventListener("focus", () => show(pick));
+      //
+      // A deploy band's box (B496, 8): shown while the pointer is on a bucket
+      // the band covers, beside the band on the side with room. The pointer
+      // has to cross the line to reach its links, so it stays a moment after
+      // leaving the band, and for as long as the pointer is on the box itself.
+      //
+      const bands = Array.from(svg.querySelectorAll(".deploy-band")).map((band) => {
+        const x = Number.parseFloat(band.getAttribute("x"));
+        return { from: x, to: x + Number.parseFloat(band.getAttribute("width")), key: band.dataset.band };
+      });
+      const tips = new Map(Array.from(card.querySelectorAll(".deploy-tip")).map((tip) => [tip.dataset.band, tip]));
+      let shownTip = null;
+      let hiding = 0;
+      const hideTip = () => {
+        window.clearTimeout(hiding);
+        if (shownTip) shownTip.hidden = true;
+        shownTip = null;
+      };
+      const hideSoon = () => {
+        window.clearTimeout(hiding);
+        hiding = window.setTimeout(hideTip, 600);
+      };
+      const showTip = (tip) => {
+        window.clearTimeout(hiding);
+        if (shownTip === tip) return;
+        hideTip();
+        const start = Number.parseFloat(tip.dataset.start);
+        const end = Number.parseFloat(tip.dataset.end);
+        const before = start > 50;
+        tip.style.left = `${before ? start : end}%`;
+        tip.classList.toggle("deploy-tip-before", before);
+        tip.classList.toggle("deploy-tip-after", !before);
+        tip.hidden = false;
+        shownTip = tip;
+      };
+      const bandAt = (pick) => {
+        const hit = pick.querySelector("rect");
+        if (!hit || !bands.length) return null;
+        const middle = Number.parseFloat(hit.getAttribute("x")) + Number.parseFloat(hit.getAttribute("width")) / 2;
+        //
+        // The newest band over the bucket, when two deploys share one.
+        //
+        const found = bands.filter((band) => band.from <= middle && middle <= band.to).pop();
+        return found ? tips.get(found.key) || null : null;
+      };
+      const point = (pick) => {
+        show(pick);
+        const tip = bandAt(pick);
+        if (tip) showTip(tip);
+        else if (shownTip) hideSoon();
+      };
+      for (const tip of tips.values()) {
+        tip.addEventListener("pointerenter", () => window.clearTimeout(hiding));
+        tip.addEventListener("pointerleave", hideSoon);
       }
-      svg.addEventListener("pointerleave", restore);
+
+      for (const pick of picks) {
+        pick.addEventListener("pointerenter", () => point(pick));
+        pick.addEventListener("focus", () => point(pick));
+      }
+      svg.addEventListener("pointerleave", () => {
+        restore();
+        if (shownTip) hideSoon();
+      });
       svg.addEventListener("blur", restore, true);
 
       //

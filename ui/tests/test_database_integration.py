@@ -4591,6 +4591,55 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
             )
             self.assertIsNone(db.job_by_id(web, certificate.id + 1000))
 
+    def ran(self, job: db.Job, *, began: timedelta, took: timedelta, state: str = "done") -> None:
+        """Set a job as having run `began` ago for `took`, ending in `state`."""
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "update job set state = %(state)s, outcome = %(state)s, "
+                "       started_at = now() - %(began)s, "
+                "       finished_at = now() - %(began)s + %(took)s "
+                " where id = %(id)s",
+                {"id": job.id, "state": state, "began": began, "took": took},
+            )
+        self.connection.commit()
+
+    def test_the_traffic_cards_read_the_deploys_that_overlap_their_window(self) -> None:
+        """B496, 8: the deploy jobs of the clusters asked, started and not over before the window."""
+
+        self.addCleanup(self.leave_no_jobs)
+        earlier = self.queue("deploy", "alpha")
+        self.ran(earlier, began=timedelta(hours=3), took=timedelta(minutes=2))
+        across = self.queue("deploy", "alpha")
+        self.ran(across, began=timedelta(minutes=65), took=timedelta(minutes=10), state="failed")
+        published = self.queue("changes_publish", "alpha", deploy=True)
+        self.ran(published, began=timedelta(minutes=30), took=timedelta(minutes=1))
+        only_published = self.queue("changes_publish", "alpha")
+        self.ran(only_published, began=timedelta(minutes=20), took=timedelta(minutes=1))
+        certificates = self.queue("cert_deploy", "alpha")
+        self.ran(certificates, began=timedelta(minutes=15), took=timedelta(minutes=1))
+        other = self.queue("deploy", "beta")
+        self.ran(other, began=timedelta(minutes=10), took=timedelta(minutes=1))
+        waiting = self.queue("deploy", "alpha")
+        self.connection.commit()
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as web:
+            with web.cursor() as cursor:
+                cursor.execute("select now()")
+                row = cursor.fetchone()
+            now = row[0] if row else datetime.now(UTC)
+            found = db.deploy_jobs(
+                web, clusters=["alpha"], since=now - timedelta(hours=1), until=now
+            )
+            both = db.deploy_jobs(
+                web, clusters=["alpha", "beta"], since=now - timedelta(hours=1), until=now
+            )
+            kept = db.kept_job_ids(web, [earlier.id, waiting.id, waiting.id + 1000])
+
+        self.assertEqual([job.id for job in found], [across.id, published.id])
+        self.assertEqual([job.id for job in both], [across.id, published.id, other.id])
+        self.assertEqual(db.deploy_jobs(self.connection, clusters=[], since=now, until=now), [])
+        self.assertEqual(kept, frozenset({earlier.id, waiting.id}))
+
     def test_a_profile_s_evidence_is_found_behind_any_number_of_other_profiles_jobs(
         self,
     ) -> None:

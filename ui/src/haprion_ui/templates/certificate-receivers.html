@@ -22,7 +22,7 @@
 {% endif %}
 
 {% macro job_badge(item) -%}
-<span class="status-badge status-badge-{{ item.tone }} receiver-job-badge"{% if item.busy %} data-busy="{{ item.receiver }}"{% endif %}>{% if item.working %}<span class="badge-spinner" aria-hidden="true"></span>{% endif %}<span>{{ item.badge }}</span><span aria-hidden="true">·</span><a href="/jobs#job-{{ item.job_id }}">Job {{ item.job_id }}</a></span>{% if item.message %} <small class="receiver-job-message">{{ item.message }}</small>{% endif %}
+<span class="status-badge status-badge-{{ item.tone }} receiver-job-badge"{% if item.busy %} data-busy="{{ item.receiver }}"{% endif %}>{% if item.working %}<span class="badge-spinner" aria-hidden="true"></span>{% endif %}<span>{{ item.badge }}</span><span aria-hidden="true">·</span><a href="/jobs?job={{ item.job_id }}#job-{{ item.job_id }}">Job {{ item.job_id }}</a></span>{% if item.message %} <small class="receiver-job-message">{{ item.message }}</small>{% endif %}
 {%- endmacro %}
 
 <section class="cluster-card">

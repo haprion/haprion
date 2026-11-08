@@ -351,6 +351,18 @@ class LoginTestCase(unittest.TestCase):
                     job for job in db.recent_jobs(connection) if job.operation == operation
                 ],
             ),
+            #
+            # The jobs a link may open (`/jobs?job=`): those `recent_jobs` holds.
+            #
+            mock.patch(
+                "haprion_ui.db.kept_job_ids",
+                side_effect=lambda connection, ids: frozenset(
+                    job.id for job in db.recent_jobs(connection) if job.id in ids
+                ),
+            ),
+            mock.patch("haprion_ui.db.job_by_id", return_value=None),
+            # No deploy behind any traffic card (B496, 8) unless a test says so.
+            mock.patch("haprion_ui.db.deploy_jobs", return_value=[]),
         ]
         for patch in self.patches:
             patch.start()

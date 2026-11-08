@@ -273,6 +273,67 @@ def listed_jobs(
         return cursor.fetchall()
 
 
+#
+# A sanity bound, not a window: a cluster deploys a handful of times a day, and
+# the retention removes finished jobs after seven days.
+#
+DEPLOY_JOBS_BOUND = 500
+
+
+def deploy_jobs(
+    connection: Connection[Any],
+    *,
+    clusters: Collection[str],
+    since: datetime,
+    until: datetime,
+) -> list[Job]:
+    """The jobs of these clusters that may have deployed while [since, until] was drawn.
+
+    For the traffic cards' deploy bands (B496, 8): every job that asked for a
+    deploy, started before the window ended and was still running or finished
+    after it began. Which of them actually deployed, and reached a node, is
+    `deploy_bands`' reading of each row - the same `jobs.ending_step` every
+    other page asks - not a second one written here in SQL.
+    """
+
+    if not clusters:
+        return []
+    with connection.cursor(row_factory=class_row(Job)) as cursor:
+        cursor.execute(
+            "select id, request_id, operation, cluster, payload, state, created_at, "
+            "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
+            "       idempotency_key, attempts "
+            "  from job "
+            " where cluster = any(%(clusters)s) "
+            "   and created_at < %(until)s "
+            "   and started_at is not null "
+            "   and started_at < %(until)s "
+            "   and (finished_at is null or finished_at >= %(since)s) "
+            "   and (operation = 'deploy' "
+            "        or (operation in ('changes_publish', 'cluster_node') "
+            "            and payload->>'deploy' = 'true')) "
+            " order by started_at, id "
+            " limit %(limit)s",
+            {
+                "clusters": sorted(clusters),
+                "since": since,
+                "until": until,
+                "limit": DEPLOY_JOBS_BOUND,
+            },
+        )
+        return cursor.fetchall()
+
+
+def kept_job_ids(connection: Connection[Any], ids: Collection[int]) -> frozenset[int]:
+    """Which of these jobs are still kept, so a link to one has a row to open."""
+
+    if not ids:
+        return frozenset()
+    with connection.cursor() as cursor:
+        cursor.execute("select id from job where id = any(%(ids)s)", {"ids": sorted(set(ids))})
+        return frozenset(int(row[0]) for row in cursor.fetchall())
+
+
 def job_by_id(connection: Connection[Any], job_id: int) -> Job | None:
     """One job as the Jobs page reads it, or None when there is no such job."""
 

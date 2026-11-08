@@ -1303,12 +1303,12 @@ class NeedReviewCountsWhatNeedsAttentionLists(LoginTestCase):
     def test_a_failure_twenty_jobs_back_is_counted_and_in_the_deploy_cell(self) -> None:
         listing, events, network = self.pages([*self.later, self.failed], "/", "/jobs", "/network")
 
-        self.assertIn("/jobs#job-1", listing)
+        self.assertIn("/jobs?job=1#job-1", listing)
         self.assertIn("<strong>1</strong><span>Need review</span>", events)
         self.assertIn("deploy_refused · view jobs for details", network)
 
     def test_a_removed_cluster_s_failure_is_neither_listed_nor_counted(self) -> None:
         listing, events = self.pages([self.gone, *self.later], "/", "/jobs")
 
-        self.assertNotIn("/jobs#job-22", listing)
+        self.assertNotIn("/jobs?job=22#job-22", listing)
         self.assertIn("<strong>0</strong><span>Need review</span>", events)

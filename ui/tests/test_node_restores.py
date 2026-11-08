@@ -734,7 +734,7 @@ class FollowingARun(RestoreRouteTestCase):
         ]
         page = self.writing_client().get(f"/backups/restore/{RUN}").text
         self.assertIn(
-            'Held until an admin answers on <a href="/jobs#job-4">Events → Jobs</a>.', page
+            'Held until an admin answers on <a href="/jobs?job=4#job-4">Events → Jobs</a>.', page
         )
         self.assertNotIn("Preparing restore.", page)
 
@@ -754,7 +754,7 @@ class FollowingARun(RestoreRouteTestCase):
                 ]
                 page = self.writing_client().get(f"/backups/restore/{RUN}").text
                 self.assertEqual(
-                    'No worker has taken this job; see <a href="/jobs#job-5">Events → Jobs</a>.'
+                    'No worker has taken this job; see <a href="/jobs?job=5#job-5">Events → Jobs</a>.'
                     in page,
                     said,
                 )
@@ -771,7 +771,7 @@ class FollowingARun(RestoreRouteTestCase):
         ]
         page = self.writing_client().get(f"/backups/restore/{RUN}").text
         self.assertIn(
-            'No worker holds this job; see <a href="/jobs#job-4">Events → Jobs</a>.', page
+            'No worker holds this job; see <a href="/jobs?job=4#job-4">Events → Jobs</a>.', page
         )
         self.assertNotIn("Preparing restore.", page)
 

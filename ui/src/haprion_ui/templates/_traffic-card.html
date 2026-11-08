@@ -9,7 +9,8 @@
 
   Expects `backend` in context, plus `traffic_named`, `spark_width`,
   `spark_height`, `traffic_bucket`, `traffic_window`, and the marked range:
-  `traffic_marked`, `traffic_range`, `traffic_link` and `traffic_clear`.
+  `traffic_marked`, `traffic_range`, `traffic_link` and `traffic_clear`;
+  and `deploy_bands`, the cluster's deploys in the window (`deploy_bands.py`).
 #}
 {% if traffic_named %}<div class="traffic-head"><code class="traffic-backend">{{ backend.series }}</code>{% if owner is defined and owner and traffic_logs_enabled %}<span class="traffic-links"><a href="/logs?{{ {'cluster': view.cluster, 'object': owner} | urlencode }}">Traffic log</a> · <a href="/waf?{{ {'view': 'requests', 'cluster': view.cluster, 'object': owner} | urlencode }}">WAF logs</a></span>{% endif %}{% if backend.note %}<span class="traffic-describes">{{ backend.note }}</span>{% endif %}<span class="traffic-rate">{{ backend.rate }} / {{ traffic_rate_unit }}</span></div>{% endif %}
 <div class="traffic-card">
@@ -56,6 +57,14 @@
         #}
         {% for point in backend.points %}{% if point.selected %}<rect class="traffic-marked" x="{{ '%.1f'|format(point.x - backend.hit_width / 2) }}" y="0" width="{{ '%.1f'|format(backend.hit_width) }}" height="{{ spark_height }}"></rect>{% endif %}{% endfor %}
         {% for level in backend.levels %}<line class="traffic-level" x1="0" y1="{{ level.y }}" x2="{{ spark_width }}" y2="{{ level.y }}" stroke="var(--line-strong)" stroke-width="1" vector-effect="non-scaling-stroke"></line>{% endfor %}
+        {#
+          The cluster's deploys (B496, 8), above the guides and behind the
+          line, so the line is read over them rather than through them. A band
+          is the job's time snapped to the buckets it touched, and the strip
+          along its top keeps a band that sits under a busy line visible.
+          `stroke` named as `none`, or the base `svg` rule draws an edge.
+        #}
+        {% for band in deploy_bands or () %}<rect class="deploy-band deploy-band-{{ band.tone }}" x="{{ '%.1f'|format(band.x) }}" y="0" width="{{ '%.1f'|format(band.width) }}" height="{{ spark_height }}" stroke="none" data-band="{{ loop.index0 }}"><title>{{ band.heading }} · {{ band.detail }}</title></rect><rect class="deploy-cap deploy-cap-{{ band.tone }}" x="{{ '%.1f'|format(band.x) }}" y="0" width="{{ '%.1f'|format(band.width) }}" height="3" stroke="none"></rect>{% endfor %}
         {% for path in backend.paths %}<path d="{{ path }}" fill="none" stroke="var(--info)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>{% endfor %}
         {#
           One hover target per reading, as wide as the bucket it stands for
@@ -72,6 +81,14 @@
         #}
         {% for point in backend.points %}<a class="traffic-pick" href="{{ traffic_link(point.stamp) }}"{% if point.selected %} data-selected="1"{% endif %} data-when="{{ point.moment }}" data-note="{{ point.note }}" data-figures='{{ point.figures|tojson }}'><rect class="traffic-hit" x="{{ '%.1f'|format(point.x - backend.hit_width / 2) }}" y="0" width="{{ '%.1f'|format(backend.hit_width) }}" height="{{ spark_height }}"><title>{{ point.reading }}</title></rect></a>{% endfor %}
       </svg>
+      {#
+        What pointing at a band shows: the deploy, and the job and version it
+        was. Beside the band rather than over it, on whichever side has room,
+        and kept a moment after the pointer leaves so it can be reached.
+        Hidden until `traffic.js` shows it; the band's own `<title>` says the
+        same where the script does not run.
+      #}
+      {% for band in deploy_bands or () %}<div class="deploy-tip" data-band="{{ loop.index0 }}" data-start="{{ band.left }}" data-end="{{ band.right }}" hidden><strong>{{ band.heading }}</strong> · {{ band.detail }} · <a href="{{ band.job_link }}">Job</a>{% if band.version_link %} · <a href="{{ band.version_link }}">Version</a>{% endif %}</div>{% endfor %}
       {#
         The labels are what make the shape locatable. Placed as percentages
         because the drawing is stretched, and the first and last are pulled

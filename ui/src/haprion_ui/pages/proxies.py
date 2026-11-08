@@ -29,6 +29,7 @@ from haprion_ui import (
     auth,
     blocked,
     db,
+    deploy_bands,
     features,
     health,
     job_payloads,
@@ -886,6 +887,7 @@ def build_router(config: Config) -> APIRouter:
         # nothing here holds a second opinion about what the file says.
         #
         traffic: list[metrics.BackendTraffic] = []
+        bands: tuple[deploy_bands.DeployBand, ...] = ()
         chosen = metrics.window(request.query_params.get("traffic"))
         #
         # One moment for every backend on the page, so the cards share an axis and
@@ -1039,7 +1041,19 @@ def build_router(config: Config) -> APIRouter:
             reads: list[Callable[[Any], Any]] = [
                 read for backend in served for read in (samples(backend), totals(backend))
             ]
+            #
+            # The cluster's deploys in the same window, as bands behind every
+            # card (B496, 8): asked beside the readings, after them in the list.
+            #
+            reads.append(
+                lambda connection: db.deploy_jobs(
+                    connection, clusters=[cluster], since=since, until=now
+                )
+            )
             answers = read_concurrently(request.app.state.pool, reads)
+            bands = deploy_bands.bands(
+                answers[-1], start=since, end=now, bucket=chosen.bucket, now=now
+            )
             traffic = [
                 metrics.backend_traffic(
                     metrics.backend_label(backend, targets),
@@ -1240,6 +1254,7 @@ def build_router(config: Config) -> APIRouter:
                 "saved": request.query_params.get("saved") == "1",
                 "discarded": request.query_params.get("discarded") == "1",
                 "traffic": traffic,
+                "deploy_bands": bands,
                 "traffic_window": chosen.label,
                 "traffic_bucket": chosen.bucket_label,
                 "traffic_rate_unit": chosen.rate_unit,

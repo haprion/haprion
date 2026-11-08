@@ -365,3 +365,78 @@ class OnAPhone(TheChartInABrowser):
             self.assertLessEqual(
                 page.evaluate("document.documentElement.scrollWidth"), 390, "no sideways scroll"
             )
+
+
+class ADeployBehindTheLine(TheChartInABrowser):
+    """B496, 8: pointing at a deploy band shows what it was and leads to it."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        from datetime import UTC, datetime, timedelta
+
+        from tests.test_deploy_bands import deploy_job, deployed
+
+        failed = deploy_job(
+            began=datetime.now(UTC) - timedelta(minutes=50),
+            state="failed",
+            result=deployed(("node-a", "updated"), ("node-b", "failed")),
+            cluster="edge-demo",
+        )
+        patch = mock.patch(
+            "haprion_ui.db.deploy_jobs",
+            side_effect=lambda _c, *, clusters, **_k: [failed] if "edge-demo" in clusters else [],
+        )
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    @staticmethod
+    def wired(page: Any) -> None:
+        """`traffic.js` is deferred: a pointer moved before it wires the card meets no listener."""
+
+        page.wait_for_function("() => document.querySelector('.traffic-card[data-wired]')")
+
+    @staticmethod
+    def shown(page: Any) -> int:
+        return int(page.eval_on_selector_all(".deploy-tip:not([hidden])", "tips => tips.length"))
+
+    def test_the_box_shows_on_the_band_stays_on_the_way_to_it_and_leads_to_the_job(self) -> None:
+        with self.signed_in() as page:
+            page.set_viewport_size({"width": 1280, "height": 900})
+            self.wired(page)
+            card = self.card(page)
+            card.scroll_into_view_if_needed()
+            band = card.query_selector(".deploy-band").bounding_box()
+            page.mouse.move(band["x"] + band["width"] / 2, band["y"] + band["height"] / 2)
+            page.wait_for_function("() => document.querySelector('.deploy-tip:not([hidden])')")
+            tip = card.query_selector(".deploy-tip:not([hidden])")
+            self.assertIn("Deploy v25", tip.text_content() or "")
+            self.assertIn("failed on node-b", tip.text_content() or "")
+            #
+            # Right of the middle, so the box stands to the band's left, inside the card.
+            #
+            box = tip.bounding_box()
+            plot = card.query_selector(".traffic-plot").bounding_box()
+            self.assertLessEqual(box["x"] + box["width"], band["x"])
+            self.assertGreaterEqual(box["x"], plot["x"])
+            #
+            # Across the line to the box's link: it stays, and the link opens the job.
+            #
+            page.mouse.move(box["x"] + box["width"] - 12, box["y"] + box["height"] / 2, steps=10)
+            page.wait_for_timeout(700)
+            self.assertEqual(self.shown(page), 1)
+            with page.expect_navigation():
+                tip.query_selector("a").click()
+            self.assertIn("/jobs?job=41", page.url)
+
+    def test_the_box_goes_when_the_pointer_leaves_the_card(self) -> None:
+        with self.signed_in() as page:
+            page.set_viewport_size({"width": 1280, "height": 900})
+            self.wired(page)
+            card = self.card(page)
+            card.scroll_into_view_if_needed()
+            band = card.query_selector(".deploy-band").bounding_box()
+            page.mouse.move(band["x"] + band["width"] / 2, band["y"] + 10)
+            page.wait_for_function("() => document.querySelector('.deploy-tip:not([hidden])')")
+            page.mouse.move(2, 2)
+            page.wait_for_function("() => !document.querySelector('.deploy-tip:not([hidden])')")
+            self.assertEqual(self.shown(page), 0)

@@ -1429,7 +1429,7 @@ class TheManagersOwnServices(unittest.TestCase):
         item = listed["job 12"]
         self.assertEqual(
             (item.kind, item.severity, item.cluster, item.link, item.since),
-            ("manager", "critical", "alpha", "/jobs#job-12", gone.lease_lapsed_since),
+            ("manager", "critical", "alpha", "/jobs?job=12#job-12", gone.lease_lapsed_since),
         )
         self.assertEqual(item.message, "running, but no worker has held it since")
         # Its row goes to Events, not to the Dashboard its kind names (rig 26-10-29).
@@ -1540,7 +1540,7 @@ class TheManagersOwnServices(unittest.TestCase):
 class TheDashboardBox(LoginTestCase):
     def test_it_is_drawn_only_when_something_needs_doing(self) -> None:
         item = attention.Item(
-            "job", "critical", "alpha", "job 7", "Deploy failed", NOW, "/jobs#job-7"
+            "job", "critical", "alpha", "job 7", "Deploy failed", NOW, "/jobs?job=7#job-7"
         )
         some = attention.build_attention([item], status_age={}, stale_after_seconds=40, now=NOW)
         none = attention.build_attention([], status_age={}, stale_after_seconds=40, now=NOW)
@@ -1553,7 +1553,7 @@ class TheDashboardBox(LoginTestCase):
             empty = client.get("/").text
 
         self.assertIn("Needs attention", drawn)
-        self.assertIn('<a class="secondary-button" href="/jobs#job-7">Events</a>', drawn)
+        self.assertIn('<a class="secondary-button" href="/jobs?job=7#job-7">Events</a>', drawn)
         self.assertIn("Deploy failed", drawn)
         self.assertNotIn("Needs attention", empty)
 
@@ -1827,7 +1827,7 @@ class ARemovedCluster_sFailures(LoginTestCase):
                 replace(configuration(), management_writes=True, clusters=("alpha",))
             )
             self.sign_in(client)
-            return "/jobs#job-7" in client.get("/").text
+            return "/jobs?job=7#job-7" in client.get("/").text
 
     def test_are_left_out_and_a_listed_cluster_s_are_not(self) -> None:
         self.assertTrue(self.failures_shown("alpha"))

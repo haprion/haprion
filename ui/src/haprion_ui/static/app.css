@@ -2206,6 +2206,41 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .traffic-pick:focus-visible rect.traffic-hit { fill: color-mix(in srgb, var(--info) 30%, transparent); }
 
 /*
+ * A deploy behind the line (B496, 8): grey when it finished, amber when it
+ * left gaps, red when it failed, blue while it runs. Shaded rather than
+ * outlined - it is the ground the line is read against, like a marked range -
+ * with a solid strip along the top, so a band under a busy line still shows.
+ * `stroke: none` for the reason the hit targets give.
+ */
+.deploy-band, .deploy-cap { stroke: none; pointer-events: none; }
+.deploy-band-done { fill: color-mix(in srgb, var(--unknown) 28%, transparent); }
+.deploy-band-warning { fill: color-mix(in srgb, var(--warning) 24%, transparent); }
+.deploy-band-failed { fill: color-mix(in srgb, var(--critical) 22%, transparent); }
+.deploy-band-running { fill: color-mix(in srgb, var(--info) 18%, transparent); }
+.deploy-cap-done { fill: var(--unknown); }
+.deploy-cap-warning { fill: var(--warning); }
+.deploy-cap-failed { fill: var(--critical); }
+.deploy-cap-running { fill: var(--info); }
+/* What pointing at a band shows, beside it on the side with room. */
+.deploy-tip {
+  position: absolute;
+  top: 2px;
+  z-index: 2;
+  padding: 3px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel-raised);
+  color: var(--text-primary);
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: var(--shadow-menu);
+}
+.deploy-tip[hidden] { display: none; }
+.deploy-tip-before { transform: translateX(calc(-100% - 8px)); }
+.deploy-tip-after { transform: translateX(8px); }
+.deploy-tip a { color: var(--text-secondary); }
+
+/*
  * What the figures beneath the line answer for: the window, a marked range, or
  * the bucket under the pointer. Sized as a caption rather than as a heading -
  * it qualifies the numbers under it and the numbers are what is being read.

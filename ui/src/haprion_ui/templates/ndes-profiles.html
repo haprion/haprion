@@ -61,7 +61,7 @@
     <tr>
       <td data-label="Profile"><code>{{ profile.id }}</code></td>
       <td data-label="Endpoint">{% if profile.endpoint %}<span class="certificate-sans" title="{{ profile.endpoint }}">{{ profile.endpoint }}</span>{% else %}<span class="optional">Sealed; shown after the next replace</span>{% endif %}</td>
-      <td data-label="Status"><span class="backend-health"><span class="status-dot status-{{ 'unknown' if statuses[profile.id].tone == 'muted' else statuses[profile.id].tone }}"></span>{{ statuses[profile.id].label }}</span> <span class="optional">rev {{ profile.revision }}</span>{% if statuses[profile.id].attention_job %} <a class="warning-text" href="/jobs#job-{{ statuses[profile.id].attention_job }}">· {{ statuses[profile.id].attention_label }}</a>{% endif %}</td>
+      <td data-label="Status"><span class="backend-health"><span class="status-dot status-{{ 'unknown' if statuses[profile.id].tone == 'muted' else statuses[profile.id].tone }}"></span>{{ statuses[profile.id].label }}</span> <span class="optional">rev {{ profile.revision }}</span>{% if statuses[profile.id].attention_job %} <a class="warning-text" href="/jobs?job={{ statuses[profile.id].attention_job }}#job-{{ statuses[profile.id].attention_job }}">· {{ statuses[profile.id].attention_label }}</a>{% endif %}</td>
       {% if can_change %}<td data-label="Actions">{% if public_key %}<a href="/ndes-profiles/{{ profile.id }}/replace">Replace</a> · {% endif %}<a href="/ndes-profiles/{{ profile.id }}/remove">Remove</a></td>{% endif %}
     </tr>
     {% else %}

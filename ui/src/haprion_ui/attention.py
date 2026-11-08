@@ -335,7 +335,7 @@ def from_jobs(rows: Sequence[Job]) -> list[Item]:
                 subject=f"job {job.id}",
                 message=label,
                 since=when,
-                link=f"/jobs#job-{job.id}",
+                link=f"/jobs?job={job.id}#job-{job.id}",
             )
         )
     return items
@@ -1175,7 +1175,7 @@ def from_manager(
                     subject=f"job {job.id}",
                     message="running, but no worker has held it since",
                     since=job.lease_lapsed_since,
-                    link=f"/jobs#job-{job.id}",
+                    link=f"/jobs?job={job.id}#job-{job.id}",
                 )
             )
     #

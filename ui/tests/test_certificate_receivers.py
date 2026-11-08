@@ -989,7 +989,7 @@ class TheJobs(ReceiverRouteTestCase):
         self.assertIn('data-receiver-dismiss="7"', page)
         self.assertIn(
             '<span>Registration failed</span><span aria-hidden="true">·</span>'
-            '<a href="/jobs#job-7">Job 7</a></span> '
+            '<a href="/jobs?job=7#job-7">Job 7</a></span> '
             '<small class="receiver-job-message">does not resolve</small>',
             page,
         )
@@ -1006,7 +1006,7 @@ class TheJobs(ReceiverRouteTestCase):
         page = self.writing_client().get("/certificates/receivers").text
         self.assertIn('data-busy="lb-02.example.net"><span class="badge-spinner"', page)
         self.assertIn(
-            '<span>Removing</span><span aria-hidden="true">·</span><a href="/jobs#job-8">Job 8</a>',
+            '<span>Removing</span><span aria-hidden="true">·</span><a href="/jobs?job=8#job-8">Job 8</a>',
             page,
         )
         self.assertNotIn("receiver-ghost", page)
@@ -1014,7 +1014,7 @@ class TheJobs(ReceiverRouteTestCase):
         self.activity = [self.failed("lb-02.example.net", "remove", job_id=9)]
         page = self.writing_client().get("/certificates/receivers").text
         self.assertIn(
-            '<span>Removal failed</span><span aria-hidden="true">·</span><a href="/jobs#job-9">Job 9</a>',
+            '<span>Removal failed</span><span aria-hidden="true">·</span><a href="/jobs?job=9#job-9">Job 9</a>',
             page,
         )
         self.assertNotIn("receiver-ghost", page)

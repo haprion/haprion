@@ -3960,6 +3960,20 @@ minute. Until they have arrived, the page's warning says *catching up*. How many
 and from where, over time, is the work of the [exporter](#sending-the-traffic-log-elsewhere-and-metrics)
 and a log platform. Set them up before they are needed.
 
+### Deploys on the traffic line
+
+Every traffic line, on an object's *Metrics* card and on the cluster's *Metrics* page, shows the cluster's
+deploys as shaded bands behind it. Grey is a deploy that finished, amber one that left gaps or stopped part-way,
+red one that failed, and blue one that is still running. Point at a band to see the version, how it ended and
+when, with links to the job and to the version's changes.
+
+A band covers the job's whole run, from its first reading of the nodes to the last node's check, widened to the
+buckets the line is drawn in. It shows when the cluster was being changed, not the second a node switched. A
+dip beside a band is a correlation to look into, not proof of a cause. A deploy that changed no node - every
+node already ran the version, or the deploy was refused before the first node - has no band. Finished jobs
+are removed after seven days, with the exceptions in [What it removes](#what-it-removes-and-what-it-will-not),
+so a 30-day window shows bands mostly in its last week.
+
 ### Sending the traffic log elsewhere, and metrics
 
 Each cluster has three optional settings:

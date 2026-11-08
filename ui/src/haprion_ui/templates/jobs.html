@@ -55,7 +55,7 @@
       <tr{% if event.facts %} class="audit-row{% if open %} audit-open{% endif %}" data-href="{{ href }}"{% endif %}>
         <td data-label="Time"><time datetime="{{ event.at.isoformat() }}">{{ event.shown_at }}</time></td>
         <td data-label="Who">{{ event.who }}</td>
-        <td data-label="What" title="{{ event.what }}">{% if event.job and event.job in recent_jobs %}<a href="/jobs#job-{{ event.job }}">{{ event.what }}</a>{% else %}{{ event.what }}{% endif %}</td>
+        <td data-label="What" title="{{ event.what }}">{% if event.job and event.job in recent_jobs %}<a href="/jobs?job={{ event.job }}#job-{{ event.job }}">{{ event.what }}</a>{% else %}{{ event.what }}{% endif %}</td>
         <td data-label="Where">{{ event.where }}</td>
       </tr>
       {% if open %}

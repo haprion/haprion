@@ -382,13 +382,13 @@ class ThePages(ProfileRouteTestCase):
             other = client.get("/dns-profiles?removed=<b>x").text
 
         self.assertIn("In effect", page)
-        self.assertIn('href="/jobs#job-41">· Removal refused</a>', page)
+        self.assertIn('href="/jobs?job=41#job-41">· Removal refused</a>', page)
         # The helper's reason is on the page the removal lands on, not one
         # click away - and only there. A later visit has the column's link.
         self.assertIn("Removal of <code>cf-main</code> was refused.", page)
         self.assertIn("referenced by certificate: shop", page)
         self.assertNotIn("was refused", later)
-        self.assertIn('href="/jobs#job-41">· Removal refused</a>', later)
+        self.assertIn('href="/jobs?job=41#job-41">· Removal refused</a>', later)
         self.assertNotIn("was refused", other)
         self.assertNotIn("<b>x", other)
 

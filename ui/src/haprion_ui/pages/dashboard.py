@@ -810,8 +810,24 @@ def build_router(config: Config) -> APIRouter:
         if request.query_params.get("view") == "nodes":
             return _node_events_page(request, session, token)
         clusters = listed_clusters(request, config)
+        #
+        # A link to one job (`/jobs?job=N#job-N`): from a deploy band, Needs
+        # attention, a profile, a receiver or the record. The page lists the
+        # newest twenty, and a link to an older job landed on a page without
+        # its row; the asked job is listed among them in its place.
+        #
+        asked_raw = request.query_params.get("job", "")
+        asked = int(asked_raw) if is_digits(asked_raw) and len(asked_raw) < 19 else None
         with request.app.state.pool.connection() as connection:
             listed = db.recent_jobs(connection)
+            if asked is not None and all(row.id != asked for row in listed):
+                found = db.job_by_id(connection, asked)
+                if found is not None:
+                    listed = sorted(
+                        [*listed, found],
+                        key=lambda row: (row.created_at, row.id),
+                        reverse=True,
+                    )
             _, judged = attention_jobs(connection, clusters)
             queued_by = db.requested_by(connection, [row.request_id for row in listed])
             #
@@ -913,8 +929,13 @@ def build_router(config: Config) -> APIRouter:
                 until=until,
             )
             accounts = db.account_names(connection)
-            recent = {job.id for job in db.recent_jobs(connection, limit=200)}
-        shown = audit.rows(events, accounts)
+            shown = audit.rows(events, accounts)
+            #
+            # The jobs the record names that are still kept: any of them opens
+            # on the Jobs page (`?job=`), and one the retention removed has no
+            # row to open. It was the newest 200, of which the page shows 20.
+            #
+            recent = db.kept_job_ids(connection, [row.job for row in shown if row.job is not None])
         kept = {
             "view": "audit",
             "cluster": cluster,

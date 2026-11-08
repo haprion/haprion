@@ -2348,7 +2348,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .log-table .log-timings td { padding-top: 0; padding-bottom: 10px; white-space: normal; }
 .log-timing-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 22px; color: var(--text-primary); font-size: 12px; font-variant-numeric: tabular-nums; }
 .log-timing-line em { margin-right: 6px; color: var(--muted); font-style: normal; }
-.log-timing-line .log-ended { color: var(--warning); }
+.log-timing-line .log-ended { color: var(--warning-text); }
 /* Dense rows, as on Versions: one line of text and a status badge no taller than it. */
 .log-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
 .log-table .status-badge { min-height: 0; padding: 1px 8px; }

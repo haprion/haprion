@@ -942,6 +942,49 @@ def from_log_forwarding(
     return items
 
 
+#
+# How long a receiver may leave a newly written copy unfetched before it is a
+# row (B496, 10): a week, so a receiver that fetches weekly is never one.
+#
+UNFETCHED_AFTER = timedelta(days=7)
+
+
+def from_receiver_fetches(registry: Any, *, now: datetime) -> list[Item]:
+    """Receivers that have not fetched a copy written for them a week ago (B498).
+
+    Read from the registry view's receiver targets, which carry the time the
+    copy was written and the receiver's newest fetch. Nothing where the fetches
+    were not read. The copy's time is in the variant, so an acknowledged row
+    comes back when the next renewal is not fetched either.
+    """
+
+    items: list[Item] = []
+    for certificate in getattr(registry, "certificates", ()) or ():
+        for target in certificate.targets:
+            if (
+                target.kind != "receiver"
+                or not target.fetches_known
+                or target.published_at is None
+                or now - target.published_at < UNFETCHED_AFTER
+                or target.fetched_since_published
+            ):
+                continue
+            items.append(
+                Item(
+                    kind="certificate",
+                    severity="warning",
+                    cluster=None,
+                    subject=target.name,
+                    message=f"has not fetched {certificate.identifier}, written for it "
+                    f"{moments.day(target.published_at)}",
+                    since=target.published_at,
+                    link="/certificates/receivers",
+                    variant=target.published_at.astimezone(UTC).isoformat(),
+                )
+            )
+    return items
+
+
 def from_packages(rows: Sequence[PackageWaiting]) -> list[Item]:
     """The manager's packages with a newer version waiting in the repository (0088, B357).
 

@@ -18,8 +18,9 @@ code. A reading that fails is that reading's answer; the others still come.
 The caller names a cluster and, per reading, the parameters that reading's
 helper takes - the diffs the version listing is asked for, the fingerprint the
 object listing may be unchanged since. Which readings exist is fixed here. A
-null cluster asks for the manager's own readings, of which `cert_list` is the
-one (B304): every pass makes it, whether or not a cluster exists yet.
+null cluster asks for the manager's own readings: `cert_list` (B304), which
+every pass makes whether or not a cluster exists yet, and `receiver_fetches`
+(B498), when each certificate receiver last fetched.
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ from haprion.cli import (
     list_helper,
     network_helper,
     objects_helper,
+    receiver_fetches_helper,
     regeneration_helper,
 )
 from haprion.config import DEFAULT_POLICY_PATH
@@ -81,13 +83,16 @@ READINGS: Mapping[str, Helper] = {
     cluster_settings_helper.OPERATION: cluster_settings_helper.main,
     objects_helper.OPERATION: objects_helper.main,
     regeneration_helper.OPERATION: regeneration_helper.main,
+    receiver_fetches_helper.OPERATION: receiver_fetches_helper.main,
 }
 #
 # The readings that answer for the manager when the cluster is null. Each of
 # their helpers takes either form; the others would refuse a null cluster, and
 # are refused here first so the answer names the reading.
 #
-MANAGER_READINGS: frozenset[str] = frozenset({cert_list_helper.OPERATION})
+MANAGER_READINGS: frozenset[str] = frozenset(
+    {cert_list_helper.OPERATION, receiver_fetches_helper.OPERATION}
+)
 
 
 def build_request(

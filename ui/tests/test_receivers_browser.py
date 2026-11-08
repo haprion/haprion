@@ -105,7 +105,11 @@ class TheTableFitsInABrowser(ReceiverRouteTestCase):
             # must fit, and so must each cell's content - a cell can run past
             # its own edge without the table scrolling (26-10-14).
             #
-            for width in (1920, 1440, 1280, 1024, 390):
+            #
+            # 1050 and 1100 too (26-11-08): between the cards and 1150 px the table ran
+            # past its edge, and no width here was in that stretch.
+            #
+            for width in (1920, 1440, 1280, 1100, 1050, 1024, 390):
                 with self.subTest(width=width):
                     page.set_viewport_size({"width": width, "height": 900})
                     overflow = page.evaluate(

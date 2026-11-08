@@ -234,6 +234,15 @@ def read_manager_certificates(request: Request, config: Config) -> db.ManagerCer
         return db.manager_certificates(connection)
 
 
+def read_receiver_fetches(request: Request, config: Config) -> dict[str, datetime]:
+    """When each certificate receiver last fetched (B498), as the poller recorded it."""
+
+    if config.demo_fixture:
+        return demo.receiver_fetches()
+    with request.app.state.pool.connection() as connection:
+        return db.receiver_fetches(connection)
+
+
 def read_certificate_takeouts(request: Request, config: Config) -> dict[str, db.TakenOut] | None:
     """The newest download per external certificate (26-10-18); None in the demo,
     which has no audit trail and keeps the rows it always had."""

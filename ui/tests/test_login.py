@@ -363,6 +363,8 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haprion_ui.db.job_by_id", return_value=None),
             # No deploy behind any traffic card (B496, 8) unless a test says so.
             mock.patch("haprion_ui.db.deploy_jobs", return_value=[]),
+            # No receiver has been seen fetching (B498) unless a test says so.
+            mock.patch("haprion_ui.db.receiver_fetches", return_value={}),
         ]
         for patch in self.patches:
             patch.start()

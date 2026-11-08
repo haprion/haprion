@@ -22,7 +22,10 @@
 # password hashes and private SSH keys), the certificate list (metadata about
 # the distribution root and certbot's renewals; private key material never
 # reaches its output, because it parses the leaf certificate alone), the
-# network description, the cluster settings and the stored objects. So the
+# network description, the cluster settings and the stored objects; and, with
+# the certificates, when each certificate receiver last fetched (B498): sshd's
+# accepted logins in the journal and nginx's receivers log, of which only one
+# time per receiver reaches its output. So the
 # poller cannot choose what the interface is told is current, cannot show an
 # unpublished draft as live, and cannot block a deploy.
 #

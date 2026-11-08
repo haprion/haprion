@@ -424,6 +424,17 @@ def certificate_rows(now: datetime | None = None) -> tuple[ClusterCertificates, 
     return _catalogue(now)[0]
 
 
+def receiver_fetches(now: datetime | None = None) -> dict[str, datetime]:
+    """The demo receivers' fetches (B498): the https one after its copy was
+    written, the sftp one before it, and the rsync one never."""
+
+    moment = now or datetime.now(UTC)
+    return {
+        "192.0.2.40": moment - timedelta(hours=1, minutes=12),
+        "backup-demo.example": moment - timedelta(days=2, hours=3),
+    }
+
+
 def manager_certificates(now: datetime | None = None) -> ManagerCertificates:
     """The registry both clusters' certificates come from, read for the manager."""
 

@@ -4604,6 +4604,31 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
             )
         self.connection.commit()
 
+    def test_a_receiver_s_fetch_moves_only_forward_and_the_web_reads_it(self) -> None:
+        """B498, 0118: the poller writes the newest fetch; an older one changes only seen_at."""
+
+        def clear() -> None:
+            with self.connection.cursor() as cursor:
+                cursor.execute("delete from receiver_fetch")
+            self.connection.commit()
+
+        self.addCleanup(clear)
+        early = datetime(2026, 11, 8, 6, 0, tzinfo=UTC)
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as poller_connection:
+            db.record_receiver_fetches(
+                poller_connection, {"lb-02.example.net": early}, seen_at=early
+            )
+            db.record_receiver_fetches(
+                poller_connection,
+                {"lb-02.example.net": early - timedelta(days=1), "192.0.2.40": early},
+                seen_at=early + timedelta(minutes=1),
+            )
+            poller_connection.commit()
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as web:
+            found = db.receiver_fetches(web)
+
+        self.assertEqual(found, {"lb-02.example.net": early, "192.0.2.40": early})
+
     def test_the_traffic_cards_read_the_deploys_that_overlap_their_window(self) -> None:
         """B496, 8: the deploy jobs of the clusters asked, started and not over before the window."""
 
@@ -11632,11 +11657,14 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
     def test_a_dump_at_0116_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
         self.restored_from("0116", grants_differ="0116 still grants the web SELECT on the rollup")
 
+    def test_a_dump_at_0117_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
+        self.restored_from("0117", grants_differ="0117 has no receiver_fetch to grant on")
+
 
 class EveryRevisionADumpCanBeAtIsRestored(unittest.TestCase):
     """A restore migrates a dump from any revision from the baseline to the head (B436).
 
-    A dump at 0115 or 0116 restored under the head must be migrated, proved and held, and
+    A dump at 0115, 0116 or 0117 restored under the head must be migrated, proved and held, and
     this fails until `ADumpFromBeforeTheHead` says so with `restored_from` for
     every revision between the baseline and the head.
     """

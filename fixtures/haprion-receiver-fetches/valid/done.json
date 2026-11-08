@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "operation": "receiver_fetches",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "result": {
+    "since": "2026-11-08T06:00:00Z",
+    "receivers": [
+      { "id": "192.0.2.40", "transport": "https", "fetched_at": "2026-11-08T06:02:11Z" },
+      { "id": "lb-02.example.net", "transport": "rsync", "fetched_at": "2026-11-08T06:00:04Z" },
+      { "id": "lb-03.example.net", "transport": "sftp", "fetched_at": null }
+    ],
+    "unread": []
+  },
+  "error": null
+}

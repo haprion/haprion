@@ -61,7 +61,7 @@
           {% if not certificate.exportable %}
           <div class="registry-detail-targets"><strong>Published to</strong>
             {% for target in certificate.targets %}
-            <span>{{ target.name }}{% if target.kind == 'receiver' %} <span class="target-kind">receiver</span> · {{ target.published_label }}{% if target.current is false %} <span class="warning-text">(older version)</span>{% endif %}{% else %} <span class="target-kind">cluster</span>{% endif %}</span>
+            <span>{{ target.name }}{% if target.kind == 'receiver' %} <span class="target-kind">receiver</span> · {{ target.published_label }}{% if target.current is false %} <span class="warning-text">(older version)</span>{% endif %}{% if target.fetched_at %} · <span{% if target.published_at and not target.fetched_since_published %} class="warning-text" title="Before this copy was published"{% endif %}>{{ target.fetched_label }}</span>{% endif %}{% else %} <span class="target-kind">cluster</span>{% endif %}</span>
             {% else %}
             <span class="warning-text">No target is registered for this certificate.</span>
             {% endfor %}

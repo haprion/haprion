@@ -67,6 +67,7 @@ from haprion_ui.reading import (
     listed_clusters,
     read_certificate_takeouts,
     read_manager_certificates,
+    read_receiver_fetches,
     read_source,
 )
 from haprion_ui.saved_work import saved_network_rows
@@ -237,6 +238,7 @@ def registry_overview(config: Config, request: Request) -> certificates.Registry
         certificate_rows,
         manager=read_manager_certificates(request, config),
         stale_after=config.poller.stale_after,
+        fetched=read_receiver_fetches(request, config),
     )
     return overview.registry
 
@@ -271,6 +273,7 @@ def read_certificate_overview(
         status_readings=status_rows,
         stale_after=config.poller.stale_after,
         taken_out=read_certificate_takeouts(request, config),
+        fetched=read_receiver_fetches(request, config),
     )
     with request.app.state.pool.connection() as connection:
         recent = db.recent_jobs(connection, limit=100)
@@ -777,6 +780,7 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
         stale_after=stale_after,
         status_readings=status_rows,
         taken_out=read_certificate_takeouts(request, config),
+        fetched=read_receiver_fetches(request, config),
     )
     items: list[attention.Item] = []
     #
@@ -831,6 +835,7 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
         registry_unreadable=certificate_view.registry_state == "unreadable"
         and certificate_view.registry_observed_at is not None,
     )
+    items += attention.from_receiver_fetches(certificate_view.registry, now=now)
     backup_clusters, backup_rows = read_source(request, config, BACKUP_SOURCE)
     backup_rows = list(backup_rows)
     items += attention.from_database_jobs(_database_jobs(backup_rows))

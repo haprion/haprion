@@ -53,6 +53,15 @@ limit_req_zone $haprion_sign_in zone=haprion_sign_in:1m rate=10r/m;
 limit_req_zone $haprion_source zone=haprion_api:1m rate=10r/s;
 
 #
+# A certificate receiver's fetch (B496, 10; B498): any request under a
+# receiver's own `/certdist/<receiver>/`, written to a log of its own as well,
+# from which the manager reads when each receiver last fetched. The interface's
+# own certificate (`/certdist/manager-ui.pem`) is not a receiver's fetch.
+map $uri $haprion_receiver_fetch {
+    default             0;
+    "~^/certdist/[^/]+/" 1;
+}
+
 # nginx's own answers on /api/ carry a request id in the envelope, as the
 # application's do, and in the same shape: nginx's 32 hex characters written
 # as a UUID, so one schema describes every answer a script can get.
@@ -120,6 +129,7 @@ server {
     include /etc/nginx/snippets/haprion-real-ip.conf;
 
     access_log /var/log/nginx/haprion.access.log;
+    access_log /var/log/nginx/haprion-receivers.access.log combined if=$haprion_receiver_fetch;
     error_log  /var/log/nginx/haprion.error.log;
 
     #

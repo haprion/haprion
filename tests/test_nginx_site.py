@@ -272,5 +272,82 @@ class AReceiversSecretIsWhatNginxChecks(unittest.TestCase):
         self.fail("nginx did not listen")
 
 
+class AReceiversFetchIsLoggedForTheManagerToRead(unittest.TestCase):
+    """B498: the site's own lines write a receiver's fetches to a log of their
+    own, and `receiver_fetches` reads a 200 there as the fetch - asked of a
+    running nginx, with the receiver's password, as a receiver fetches."""
+
+    def setUp(self) -> None:
+        if not Path(NGINX).exists():
+            self.skipTest("nginx is not installed here")
+
+    def test_a_fetch_is_logged_and_read_and_nothing_else_is(self) -> None:
+        from haprion import receiver_fetches
+
+        site = (TEMPLATE / "haprion.nginx.example").read_text()
+        mapped = re.search(r"^map \$uri \$haprion_receiver_fetch \{.*?^\}", site, re.M | re.S)
+        logged = re.search(r"^\s*(access_log \S*haprion-receivers\S* .*;)$", site, re.M)
+        self.assertIsNotNone(mapped)
+        self.assertIsNotNone(logged)
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "files").mkdir()
+            (root / "files" / "fullchain.pem").write_text("material\n")
+            (root / "manager-ui.pem").write_text("public\n")
+            hashed = cert_receiver.secret_hash("receiver password")
+            (root / "receiver.htpasswd").write_text(f"192.0.2.9:{hashed}\n")
+            port = free_port()
+            access = (logged.group(1) if logged else "").replace("/var/log/nginx/", f"{root}/")
+            (root / "nginx.conf").write_text(
+                f"pid {root}/nginx.pid;\nerror_log {root}/error.log;\nevents {{}}\n"
+                f"http {{\n{mapped.group(0) if mapped else ''}\n"
+                f"  server {{\n    listen 127.0.0.1:{port};\n    {access}\n"
+                f"    location {cert_receiver.HTTPS_PREFIX}/192.0.2.9/ {{\n      alias {root}/files/;\n"
+                '      auth_basic "192.0.2.9";\n'
+                f"      auth_basic_user_file {root}/receiver.htpasswd;\n    }}\n"
+                f"    location = {cert_receiver.HTTPS_PREFIX}/manager-ui.pem {{\n"
+                f"      alias {root}/manager-ui.pem;\n    }}\n  }}\n}}\n"
+            )
+            server = subprocess.Popen(  # fixed binary, a file made above
+                [NGINX, "-p", raw, "-c", str(root / "nginx.conf"), "-g", "daemon off;"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            try:
+                self.assertEqual(self.get(port, "/certdist/192.0.2.9/fullchain.pem", "wrong"), 401)
+                self.assertEqual(self.get(port, "/certdist/manager-ui.pem", None), 200)
+                self.assertEqual(
+                    self.get(port, "/certdist/192.0.2.9/fullchain.pem", "receiver password"), 200
+                )
+            finally:
+                server.terminate()
+                server.wait(timeout=5)
+            lines = receiver_fetches.log_lines(root / "haprion-receivers.access.log")
+
+        self.assertEqual(len(lines), 2, lines)
+        found = receiver_fetches.https_fetches(lines, ["192.0.2.9"], cert_receiver.HTTPS_PREFIX)
+        self.assertEqual(list(found), ["192.0.2.9"])
+        self.assertEqual(
+            receiver_fetches.ACCESS_LOG.name,
+            (logged.group(1) if logged else "").split()[1].rsplit("/", 1)[1],
+        )
+
+    def get(self, port: int, path: str, password: str | None) -> int:
+        headers = {}
+        if password is not None:
+            token = base64.b64encode(f"192.0.2.9:{password}".encode()).decode()
+            headers["Authorization"] = f"Basic {token}"
+        for _ in range(50):
+            try:
+                connection = HTTPConnection("127.0.0.1", port, timeout=5)
+                connection.request("GET", path, headers=headers)
+                status = connection.getresponse().status
+                connection.close()
+                return status
+            except ConnectionRefusedError:
+                time.sleep(0.1)
+        self.fail("nginx did not listen")
+
+
 if __name__ == "__main__":
     unittest.main()

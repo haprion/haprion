@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-receiver-fetches.schema.json",
+  "title": "haprion-readings-helper receiver_fetches reading",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "receiver_fetches" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/fetches" },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "fetches": {
+      "description": "Every registered receiver with the newest fetch the manager's logs show since `since`, or null (B496, 10; B498). rsync and sftp: sshd's accepted login of the receiver's account; https: a 200 under the receiver's /certdist/ location. A witness that could not be read is named in `unread` and leaves the receivers it covers null.",
+      "type": "object",
+      "required": ["since", "receivers", "unread"],
+      "properties": {
+        "since": { "type": "string", "format": "date-time" },
+        "receivers": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "required": ["id", "transport", "fetched_at"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 253 },
+              "transport": { "enum": ["rsync", "sftp", "https"] },
+              "fetched_at": { "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
+            },
+            "additionalProperties": false
+          }
+        },
+        "unread": {
+          "type": "array",
+          "maxItems": 2,
+          "items": {
+            "type": "object",
+            "required": ["source", "reason"],
+            "properties": {
+              "source": { "enum": ["journal", "access_log"] },
+              "reason": { "type": "string", "minLength": 1, "maxLength": 1024 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

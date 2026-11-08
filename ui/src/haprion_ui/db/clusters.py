@@ -663,6 +663,36 @@ def cluster_certificates(
         return cursor.fetchall()
 
 
+def record_receiver_fetches(
+    connection: Connection[Any], fetched: Mapping[str, datetime], *, seen_at: datetime
+) -> None:
+    """Each receiver's newest fetch, moved forward and never back (B498, 0118).
+
+    The logs it was read from rotate; a fetch learnt once stays known after its
+    line is gone, so an older time than the stored one changes nothing but
+    `seen_at`.
+    """
+
+    with connection.cursor() as cursor:
+        for receiver, at in sorted(fetched.items()):
+            cursor.execute(
+                "insert into receiver_fetch (receiver, fetched_at, seen_at) "
+                "values (%(receiver)s, %(at)s, %(seen)s) "
+                "on conflict (receiver) do update "
+                "set fetched_at = greatest(receiver_fetch.fetched_at, excluded.fetched_at), "
+                "    seen_at = excluded.seen_at",
+                {"receiver": receiver, "at": at, "seen": seen_at},
+            )
+
+
+def receiver_fetches(connection: Connection[Any]) -> dict[str, datetime]:
+    """When each receiver last fetched, as far as the manager's logs have shown."""
+
+    with connection.cursor() as cursor:
+        cursor.execute("select receiver, fetched_at from receiver_fetch")
+        return {str(row[0]): row[1] for row in cursor.fetchall()}
+
+
 def record_manager_certificates(
     connection: Connection[Any],
     *,

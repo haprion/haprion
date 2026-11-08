@@ -31,12 +31,12 @@
   <p class="table-note">This installation declares no certificate registry, so there are no receivers to list.</p>
   {% else %}
   <div class="table-scroll"><table class="node-table receiver-table">
-    <thead><tr><th scope="col">Receiver</th><th scope="col">Transport</th><th scope="col">Account</th><th scope="col">Holds</th><th scope="col"></th></tr></thead>
+    <thead><tr><th scope="col">Receiver</th><th scope="col">Transport</th><th scope="col">Account</th><th scope="col">Holds</th><th scope="col">Last fetched</th><th scope="col"></th></tr></thead>
     <tbody>
     {% for item in ghosts %}
     <tr class="receiver-row receiver-ghost" data-receiver-ghost="{{ item.job_id }}">
       <td data-label="Receiver"><strong>{{ item.receiver }}</strong></td>
-      <td data-label="Transport" colspan="3">{{ job_badge(item) }}</td>
+      <td data-label="Transport" colspan="4">{{ job_badge(item) }}</td>
       <td data-label="Actions">{% if can_change and not item.busy %}<button type="button" class="link-button" data-receiver-dismiss="{{ item.job_id }}" title="Hide this row here; the job stays on the jobs page">Dismiss</button>{% endif %}</td>
     </tr>
     {% endfor %}
@@ -46,6 +46,12 @@
       <td data-label="Transport">{{ row.transport_label }}{% if row.allow %} <span class="optional">· {{ row.allow | join(', ') }}</span>{% endif %}</td>
       <td data-label="Account"><code>{{ row.owner }}</code></td>
       <td data-label="Holds">{% if item %}{{ job_badge(item) }}{% elif row.holds %}{% for held in row.holds %}{% if not loop.first %}, {% endif %}{{ held.certificate_id }}{% if held.format == 'pkcs12' %} <span class="target-kind">pkcs12</span>{% endif %}{% endfor %}{% else %}<span class="optional">nothing yet</span>{% endif %}</td>
+      {#
+        When the manager's logs last showed this receiver fetch (B496, 10): a
+        login with its key, or a 200 under its location. Amber when that was
+        before the newest copy written for it - it still has the one before.
+      #}
+      <td data-label="Last fetched">{% if not row.fetches_known %}<span class="optional">—</span>{% elif row.fetched_at %}<span{% if row.fetched_before_publish %} class="warning-text" title="Before the newest copy was published"{% endif %}>{{ row.fetched_label }}</span>{% else %}<span class="optional">Never</span>{% endif %}</td>
       {% if can_change %}<td data-label="Actions">
         <button type="button" class="link-button" data-receiver-commands="{{ row.identifier }}" aria-expanded="false">Fetch commands</button>
         {% if row.transport == 'https' %} · <form method="post" action="/certificates/receivers/secret" class="inline-form">
@@ -63,7 +69,7 @@
       </td>{% else %}<td data-label="Actions"><button type="button" class="link-button" data-receiver-commands="{{ row.identifier }}" aria-expanded="false">Fetch commands</button></td>{% endif %}
     </tr>
     <tr class="receiver-commands" id="receiver-commands-{{ row.identifier }}" hidden>
-      <td colspan="5">
+      <td colspan="6">
         <p class="table-note">What <code>{{ row.identifier }}</code> runs to fetch{% if not row.holds %} — once a certificate is published to it; <code>&lt;certificate&gt;</code> stands for its name{% endif %}. The fetch is safe to run again and again: run it from a timer.</p>
         <ol class="receiver-steps">
           {% for step in steps %}
@@ -76,7 +82,7 @@
       </td>
     </tr>
     {% else %}
-    {% if not ghosts %}<tr><td colspan="5"><span class="optional">No receiver is registered.{% if can_change %} <a href="/certificates/receivers/new">Register one</a>; then publish a certificate to it from the registry.{% endif %}</span></td></tr>{% endif %}
+    {% if not ghosts %}<tr><td colspan="6"><span class="optional">No receiver is registered.{% if can_change %} <a href="/certificates/receivers/new">Register one</a>; then publish a certificate to it from the registry.{% endif %}</span></td></tr>{% endif %}
     {% endfor %}
     </tbody>
   </table></div>

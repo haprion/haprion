@@ -32,7 +32,7 @@ import sys
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -198,6 +198,10 @@ def _every_backup(_extra: Mapping[str, Any]) -> dict[str, Any]:
 
 def _nothing(_extra: Mapping[str, Any]) -> dict[str, Any]:
     return {}
+
+
+def _record_nothing(*_args: Any, **_kwargs: Any) -> None:
+    """A reading recorded by its own code rather than as a `Source` row."""
 
 
 #
@@ -1050,10 +1054,88 @@ class PackageWatch:
         self.kept = found
 
 
-def poll_manager(pool: Any, readings: ReadingsHelper = run_readings_helper) -> bool:
-    """The manager's own certificate reading; True when it was done. Never raises."""
+class ReceiverFetchWatch:
+    """When each certificate receiver last fetched (B496, 10; B498), read with the manager's certificates.
 
-    asked, answered = _local_readings(pool, None, (MANAGER_CERTIFICATES,), readings)
+    The `receiver_fetches` reading goes in the same readings call as
+    `cert_list`, so it costs no sudo call of its own. It is asked from where
+    the last complete reading left off, less a margin for a log line written a
+    moment late; the first reading of a process asks the helper's default, a
+    week and a day back. A reading with a witness it could not read keeps the
+    old starting point, so nothing that witness held is skipped when it can be
+    read again.
+    """
+
+    MARGIN = timedelta(minutes=10)
+
+    def __init__(self) -> None:
+        self.since: datetime | None = None
+
+    def parameters(self) -> dict[str, Any]:
+        if self.since is None:
+            return {}
+        return {"since": self.since.isoformat().replace("+00:00", "Z")}
+
+    def record(self, pool: Any, completed: Any, *, asked: str, at: datetime) -> None:
+        """Never raises: a receiver's fetch is never worth a failed pass."""
+
+        reading = _judge(
+            completed, cluster=None, operation="receiver_fetches", accept_partial=False, asked=asked
+        )
+        if reading["outcome"] != "done":
+            logger.warning(
+                "receiver fetches: %s%s",
+                reading["outcome"],
+                f" ({reading['poll_error']})" if reading.get("poll_error") else "",
+            )
+            return
+        result = reading["result"]
+        fetched: dict[str, datetime] = {}
+        for entry in result.get("receivers") or ():
+            stamp = entry.get("fetched_at") if isinstance(entry, Mapping) else None
+            if isinstance(stamp, str) and isinstance(entry.get("id"), str):
+                try:
+                    fetched[entry["id"]] = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+        try:
+            with pool.connection() as connection:
+                db.record_receiver_fetches(connection, fetched, seen_at=at)
+                connection.commit()
+        except Exception as exc:  # noqa: BLE001 - asked again from the same point next cycle
+            logger.warning("receiver fetches were not recorded: %s", exc)
+            return
+        unread = [entry for entry in result.get("unread") or () if isinstance(entry, Mapping)]
+        for entry in unread:
+            logger.warning("receiver fetches: %s", entry.get("reason"))
+        if not unread:
+            self.since = at - self.MARGIN
+
+
+def poll_manager(
+    pool: Any,
+    readings: ReadingsHelper = run_readings_helper,
+    fetches: ReceiverFetchWatch | None = None,
+) -> bool:
+    """The manager's own certificate reading; True when it was done. Never raises.
+
+    With `fetches`, the receivers' fetches are asked in the same call and
+    recorded on their own (`ReceiverFetchWatch`).
+    """
+
+    sources: tuple[Source, ...] = (MANAGER_CERTIFICATES,)
+    if fetches is not None:
+        wanted = fetches.parameters()
+        sources += (
+            Source("receiver_fetches", None, _record_nothing, reading=lambda _extra: dict(wanted)),
+        )
+    at = datetime.now(UTC)
+    asked, answered = _local_readings(pool, None, sources, readings)
+    if fetches is not None:
+        try:
+            fetches.record(pool, answered["receiver_fetches"](None, asked), asked=asked, at=at)
+        except Exception as exc:  # noqa: BLE001 - one failure is one log line
+            logger.warning("receiver fetches: the readings helper gave no answer: %s", exc)
     try:
         completed = answered[MANAGER_CERTIFICATES.operation](None, asked)
     except Exception as exc:  # noqa: BLE001 - one failure is one row, as for a cluster
@@ -1287,6 +1369,7 @@ def main(argv: list[str] | None = None) -> int:
             stopping = StopRequest(what="after the readings in flight")
             asker = update_check.Asker()
             packages = PackageWatch()
+            fetches = ReceiverFetchWatch()
             readers = ClusterReaders(
                 pool,
                 interval_seconds=config.poller.interval_seconds,
@@ -1353,7 +1436,7 @@ def main(argv: list[str] | None = None) -> int:
                         logger.info("no cluster yet; Settings - Create cluster makes the first")
                     if not lock_held():
                         return exit_codes.BLOCKED
-                    poll_manager(pool)
+                    poll_manager(pool, fetches=fetches)
                     if not lock_held():
                         return exit_codes.BLOCKED
                     packages.poll(pool)

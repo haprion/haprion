@@ -1111,6 +1111,29 @@ def check_resolve_semantics(document: dict[str, object], path: Path) -> None:
                 raise AssertionError(f"{path}: {entry['name']} needs an address or a problem")
 
 
+def check_receiver_fetches_semantics(document: dict[str, object], path: Path) -> None:
+    # Each receiver once, sorted by ID; a fetch is never later than the reading
+    # and never before the moment it was asked from. A witness is unread at most
+    # once.
+    result = document["result"]
+    if document["outcome"] == "done" and result is None:
+        raise AssertionError(f"{path}: a done receiver_fetches carries no result")
+    if document["outcome"] != "done" and result is not None:
+        raise AssertionError(f"{path}: a {document['outcome']} receiver_fetches carries a result")
+    if isinstance(result, dict):
+        receivers = result["receivers"]
+        assert isinstance(receivers, list)
+        names = [entry["id"] for entry in receivers]
+        if names != sorted(set(names)):
+            raise AssertionError(f"{path}: receivers are listed once each, by ID")
+        for entry in receivers:
+            if entry["fetched_at"] is not None and entry["fetched_at"] < result["since"]:
+                raise AssertionError(f"{path}: {entry['id']} fetched before the reading's since")
+        sources = [entry["source"] for entry in result["unread"]]
+        if len(set(sources)) != len(sources):
+            raise AssertionError(f"{path}: a witness is unread once")
+
+
 def check_ndes_server_semantics(document: dict[str, object], path: Path) -> None:
     # A result only on success; the CA that issues the server's RA certificate
     # is the first shown, since it is the one the server enrolls for.
@@ -1449,6 +1472,7 @@ SEMANTIC_CHECKS = {
     "ui_tls_install": check_ui_tls_install_semantics,
     "oidc": check_oidc_semantics,
     "resolve": check_resolve_semantics,
+    "receiver_fetches": check_receiver_fetches_semantics,
     "ndes_server": check_ndes_server_semantics,
     "probe": check_probe_semantics,
     "cert_export": check_cert_export_semantics,
@@ -1584,6 +1608,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         invalid["outcome"] = "failed"
     elif operation == "resolve":
         result["names"][0]["problem"] = "said beside an address"
+    elif operation == "receiver_fetches":
+        result["receivers"].append(dict(result["receivers"][0]))
     elif operation == "ndes_server":
         if "authorities" in result:
             result["authorities"][0]["issues_ra"] = False

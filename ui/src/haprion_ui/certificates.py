@@ -115,6 +115,31 @@ class TargetView:
     published_at: datetime | None
     published_label: str
     current: bool | None
+    #
+    # A receiver's newest fetch the manager's logs have shown (B496, 10; B498),
+    # for any certificate: a receiver fetches its whole directory. None where
+    # none was seen, and for a cluster.
+    #
+    fetched_at: datetime | None = None
+    #
+    # Whether the fetches were read at all: a page that did not read them says
+    # nothing about fetching, rather than "not fetched".
+    #
+    fetches_known: bool = False
+
+    @property
+    def fetched_label(self) -> str:
+        return f"Fetched {moments.moment(self.fetched_at)}" if self.fetched_at else ""
+
+    @property
+    def fetched_since_published(self) -> bool:
+        """Whether the receiver fetched after this copy was written."""
+
+        return (
+            self.fetched_at is not None
+            and self.published_at is not None
+            and self.fetched_at >= self.published_at
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1074,7 +1099,9 @@ def _published_label(published_at: datetime | None) -> str:
     return f"Published {moments.day(published_at)}"
 
 
-def _target_views(entry: Mapping[str, Any]) -> tuple[TargetView, ...]:
+def _target_views(
+    entry: Mapping[str, Any], fetched: Mapping[str, datetime] | None = None
+) -> tuple[TargetView, ...]:
     targets = _mapping(entry.get("targets"))
     #
     # Each cluster's own copy time, where the engine says it (26-11-05, XX06).
@@ -1115,6 +1142,8 @@ def _target_views(entry: Mapping[str, Any]) -> tuple[TargetView, ...]:
                 published_at=published_at,
                 published_label=_published_label(published_at),
                 current=current if isinstance(current, bool) else None,
+                fetched_at=(fetched or {}).get(name),
+                fetches_known=fetched is not None,
             )
         )
     return tuple(views)
@@ -1274,9 +1303,21 @@ def _registry_state(
     if stale:
         return "Older version published", stale, "warning"
     newest = max(target.published_at for target in receivers if target.published_at is not None)
+    #
+    # What the receivers' fetches say (B496, 10), and no more: fetched is not
+    # installed, and the sentence says so.
+    #
+    if not all(target.fetches_known for target in receivers):
+        return _published_label(newest), "Whether it was fetched is not reported", "healthy"
+    behind = _receiver_count(
+        [target for target in receivers if not target.fetched_since_published],
+        len(receivers),
+        "has not fetched it",
+        "have not fetched it",
+    )
     return (
         _published_label(newest),
-        "Whether it was fetched is not reported",
+        behind or "Fetched; installing it is not reported",
         "healthy",
     )
 
@@ -1343,6 +1384,7 @@ def _registry_certificate(
     now: datetime,
     carriage: Mapping[str, NodeCarriage],
     taken_out: Mapping[str, TakenOut] | None = None,
+    fetched: Mapping[str, datetime] | None = None,
 ) -> RegistryCertificateView | None:
     entry = _mapping(value)
     identifier = _text(entry.get("id"), "")
@@ -1372,7 +1414,7 @@ def _registry_certificate(
         # row is compared by the same.
         #
         fingerprint = _text(entry.get("bundle_sha256"), "")
-    targets = _target_views(entry)
+    targets = _target_views(entry, fetched)
 
     expires_at = _expiry(entry.get("not_after")) if readable else None
     if readable:
@@ -1576,6 +1618,7 @@ def _registry_view(
     now: datetime,
     stale_after: timedelta | None = None,
     taken_out: Mapping[str, TakenOut] | None = None,
+    fetched: Mapping[str, datetime] | None = None,
 ) -> RegistryView | None:
     """The registry as one list, from the manager's own reading (B304).
 
@@ -1594,7 +1637,7 @@ def _registry_view(
     if isinstance(entries, list):
         for value in entries:
             certificate = _registry_certificate(
-                value, now=now, carriage=carriage, taken_out=taken_out
+                value, now=now, carriage=carriage, taken_out=taken_out, fetched=fetched
             )
             if certificate is not None:
                 parsed.append(certificate)
@@ -1611,7 +1654,7 @@ def _registry_view(
         key=lambda e: e.identifier,
     )
     receivers = block.get("receivers")
-    manager, receiver_rows = certificate_receivers.parse_receiver_rows(block)
+    manager, receiver_rows = certificate_receivers.parse_receiver_rows(block, fetched)
     attention_count = sum(
         entry.tone in {"critical", "warning"} or entry.state_tone in {"critical", "warning"}
         for entry in certificates
@@ -1663,6 +1706,11 @@ def build_certificate_overview(
     # caller did not read it: those rows say what they always said.
     #
     taken_out: Mapping[str, TakenOut] | None = None,
+    #
+    # When each receiver last fetched (B498). None where the caller did not
+    # read it: receivers then say nothing about fetching.
+    #
+    fetched: Mapping[str, datetime] | None = None,
 ) -> CertificateOverview:
     """Combine configured clusters and their newest cached certificate listing.
 
@@ -1681,7 +1729,12 @@ def build_certificate_overview(
     # registry's columns, and their state is read from the same carriage.
     #
     registry = _registry_view(
-        manager, status_readings, now=now, stale_after=stale_after, taken_out=taken_out
+        manager,
+        status_readings,
+        now=now,
+        stale_after=stale_after,
+        taken_out=taken_out,
+        fetched=fetched,
     )
     carriage = _carriage(status_readings)
     targets = registry.targets if registry is not None else None

@@ -2740,6 +2740,17 @@ certificate it holds are filled in. The fetch is safe to run again and again, fr
 publish a certificate to the receiver from the registry with *Publish to…*, or choose the receiver on
 *New certificate*.
 
+**Last fetched** says when the manager last saw the receiver fetch. For rsync and sftp that is a login with the
+receiver's key, which can do nothing but read its own directory. For https it is a successful request under the
+receiver's address, which nginx writes to `/var/log/nginx/haprion-receivers.access.log`. The time is amber when
+it is older than the newest copy written for the receiver: it still holds the one before. The certificate's
+row says the same beside each receiver's *Published*. A copy that the receiver has not fetched seven days after
+it was written is listed under *Needs attention*.
+
+Fetched is not installed. Nothing here sees what the receiving host did with the files; whether the service
+there uses the new certificate is still yours to check. *Never* means no fetch since the manager began to look: from
+eight days before the poller first read the logs (for https, from the day the interface began writing its log).
+
 On a receiver's row:
 
 - *Replace SSH key* (rsync and sftp) takes a new public key, for a host that was installed again.
@@ -8858,7 +8869,9 @@ command line runs, through exact sudoers rules:
 Only the status reading reaches the nodes; inventory reads the published commit. `haprion-readings-helper` answers, in one call, the six
 readings that touch only the management host: versions, backup archives, certificates, the network
 description, the cluster settings and the stored objects. It runs their own helpers, so a cluster's reading is
-one sudo call rather than six lines in the host's journal.
+one sudo call rather than six lines in the host's journal. With the manager's certificates it also reads when
+each certificate receiver last fetched: sshd's accepted logins in the journal and the receivers' nginx log, read
+as root because the poller's account may read neither. Only one time per receiver leaves the helper.
 
 For the polling interval and refresh behaviour, see
 [Jobs and status freshness](#jobs-and-status-freshness).

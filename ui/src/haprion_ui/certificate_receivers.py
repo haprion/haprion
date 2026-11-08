@@ -35,6 +35,7 @@ from haprion.cert_receiver import HTTPS_PREFIX
 from haprion.config import RECEIVER_ID, RECEIVER_TRANSPORTS, check_allow_entries
 
 from haprion_ui import jobs as queue
+from haprion_ui import moments
 
 # The key file the instructions name on the receiving host. A name, not a
 # path the manager decides: the host's operator may keep it elsewhere and
@@ -123,6 +124,26 @@ class ReceiverRow:
     path: str
     allow: tuple[str, ...]
     holds: tuple[Held, ...]
+    #
+    # *Last fetched* (B496, 10; B498): the newest fetch the manager's logs
+    # showed, and the newest copy written for this receiver. A fetch before
+    # that copy was written is a fetch of the copy before it.
+    #
+    fetched_at: datetime | None = None
+    published_at: datetime | None = None
+    fetches_known: bool = False
+
+    @property
+    def fetched_label(self) -> str:
+        return moments.moment(self.fetched_at) if self.fetched_at else "Never"
+
+    @property
+    def fetched_before_publish(self) -> bool:
+        return (
+            self.fetched_at is not None
+            and self.published_at is not None
+            and self.fetched_at < self.published_at
+        )
 
     @property
     def transport_label(self) -> str:
@@ -156,7 +177,19 @@ def _text(value: object) -> str:
     return value if isinstance(value, str) else ""
 
 
-def parse_receiver_rows(block: Mapping[str, Any]) -> tuple[str | None, tuple[ReceiverRow, ...]]:
+def _moment(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def parse_receiver_rows(
+    block: Mapping[str, Any], fetched: Mapping[str, datetime] | None = None
+) -> tuple[str | None, tuple[ReceiverRow, ...]]:
     """The manager's name and one row per registered receiver, out of the registry block.
 
     The format a receiver holds a certificate in lives on the certificate's
@@ -166,6 +199,7 @@ def parse_receiver_rows(block: Mapping[str, Any]) -> tuple[str | None, tuple[Rec
 
     manager = block.get("manager")
     formats: dict[tuple[str, str], str] = {}
+    published: dict[str, datetime] = {}
     entries = block.get("certificates")
     for entry in entries if isinstance(entries, list) else []:
         certificate = _mapping(entry)
@@ -176,6 +210,9 @@ def parse_receiver_rows(block: Mapping[str, Any]) -> tuple[str | None, tuple[Rec
             receiver_id = _text(receiver.get("id"))
             if certificate_id and receiver_id:
                 formats[(receiver_id, certificate_id)] = _text(receiver.get("format")) or "pem"
+                at = _moment(receiver.get("published_at"))
+                if at is not None and (receiver_id not in published or at > published[receiver_id]):
+                    published[receiver_id] = at
 
     rows: list[ReceiverRow] = []
     records = block.get("receiver_records")
@@ -203,6 +240,9 @@ def parse_receiver_rows(block: Mapping[str, Any]) -> tuple[str | None, tuple[Rec
                 )
                 if isinstance(held, list)
                 else (),
+                fetched_at=(fetched or {}).get(identifier),
+                published_at=published.get(identifier),
+                fetches_known=fetched is not None,
             )
         )
     return (manager if isinstance(manager, str) and manager else None), tuple(rows)

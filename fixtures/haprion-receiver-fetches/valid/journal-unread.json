@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "operation": "receiver_fetches",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "result": {
+    "since": "2026-11-08T06:00:00Z",
+    "receivers": [
+      { "id": "192.0.2.40", "transport": "https", "fetched_at": "2026-11-08T06:02:11Z" },
+      { "id": "lb-02.example.net", "transport": "rsync", "fetched_at": null }
+    ],
+    "unread": [
+      { "source": "journal", "reason": "the journal could not be read: journalctl exited 1: Failed to open files" }
+    ]
+  },
+  "error": null
+}

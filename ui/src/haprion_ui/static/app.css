@@ -1692,6 +1692,16 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .receiver-table td { white-space: nowrap; }
 .receiver-table th:not(:nth-child(4)), .receiver-table td:not(:nth-child(4)) { width: 1%; }
 .receiver-table td:nth-child(4) { white-space: normal; overflow-wrap: anywhere; }
+/* The receiver, its transport and its account give way too, at their hyphens and
+   spaces and only when the row has no room (B498: *Last fetched* took the width a long crx- account had at
+   1280, and between the cards and 1150 px the table already ran past its edge).
+   In the table only: below 1050 px a row is a card and its cells are the card's. */
+@media (min-width: 1050px) {
+  .receiver-table th:nth-child(-n+3), .receiver-table td:nth-child(-n+3) { width: auto; white-space: normal; }
+  /* What it holds takes the width it needs, not the node table's 120 px, and
+     breaks between certificates rather than inside a name. */
+  .receiver-table th:nth-child(4), .receiver-table td:nth-child(4) { width: auto; overflow-wrap: break-word; }
+}
 .receiver-table .link-button { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; }
 .receiver-table .link-button:disabled { color: var(--muted); cursor: default; text-decoration: none; }
 .receiver-table .inline-form { display: inline; }

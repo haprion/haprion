@@ -145,7 +145,7 @@ class OneCallForTheLocalReadings(unittest.TestCase):
         self.assertEqual(answer["error"]["code"], "bad_input")
         self.assertIn("need a cluster: network", errors)
 
-    def test_the_seven_are_the_poller_s_manager_local_helpers(self) -> None:
+    def test_the_eight_are_the_poller_s_manager_local_helpers(self) -> None:
         self.assertEqual(
             sorted(readings_helper.READINGS),
             [
@@ -155,8 +155,12 @@ class OneCallForTheLocalReadings(unittest.TestCase):
                 "list_backups",
                 "network",
                 "objects",
+                "receiver_fetches",
                 "regeneration",
             ],
+        )
+        self.assertEqual(
+            sorted(readings_helper.MANAGER_READINGS), ["cert_list", "receiver_fetches"]
         )
 
 

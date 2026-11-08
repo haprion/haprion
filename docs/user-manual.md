@@ -1500,6 +1500,19 @@ same value. A `sess.*` variable follows the visitor's connection, and the fronte
 connection may carry requests to several objects on the same listener, so what one object's text sets,
 another object's text reads. Do not take a `sess.*` variable as proof of anything, such as a login.
 
+**Compressing answers.** An application that does not compress its own answers can have HAProxy do it.
+These two lines go to every pool of the object:
+
+```
+compression algo gzip
+compression type text/css text/javascript application/javascript application/json text/plain
+```
+
+HAProxy offers `gzip` and `deflate`. `text/html` is left out on purpose. A page that carries a secret, such
+as a sign-in token, and also repeats what the visitor sent can leak that secret when it is compressed (the
+BREACH attack). Add `text/html` only for pages that carry no such secret. The WAF engine reads the request,
+not the answer, so the two work together.
+
 **Lines that are skipped.** `mode` is skipped, since the form sets the protocol. So are the lines that set
 what the form owns for the pool - servers, balancing, health checks, cookie, and the connect, server,
 queue, tunnel and check timeouts - while the form writes the pool.
@@ -5617,6 +5630,22 @@ in the section linked.
 - **No ACME client of its own.** Renewal reuses certbot and the NDES enrollment client: the manager runs
   them twice a day from `haprion-certbot-renew.timer` and publishes what they renew
   ([Certificates](#certificates)).
+- **ACME issuing uses Let's Encrypt only.** No other ACME CA can be chosen in the interface or the
+  terminal, neither a public one (ZeroSSL, Google Trust Services) nor an internal one (step-ca, Vault).
+  Microsoft AD CS has no ACME; internal names are issued through
+  [NDES](#enrolling-and-renewing-through-ndes).
+- **An object does not require a client certificate.** Limit an admin interface to the networks it is
+  used from with *Reachable from*
+  ([An http or https object, field by field](#an-http-or-https-object-field-by-field)), and put sign-in
+  or a VPN in front of it for anything more.
+- **Certificate Transparency is not watched.** A certificate someone else had issued for one of your
+  public names is not noticed here. Turn on your DNS provider's monitoring (Cloudflare has it on every
+  plan) or use a service such as Cert Spotter.
+- **A refusal answers with a status code.** It does not hold the connection open (tarpit) or drop it
+  without an answer. Either would cost the node, or a firewall in front of it, more than it costs the
+  scanner.
+- **OCSP answers are not stapled.** Let's Encrypt no longer runs OCSP. An internal CA would need a responder
+  that the nodes can reach.
 - **A certbot lineage from before the installation is not taken over.** Issuing a name certbot already
   has is refused, because issuing it again would make a second lineage. A lineage kept from an earlier
   setup is added to the registry by hand, with its targets

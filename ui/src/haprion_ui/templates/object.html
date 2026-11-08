@@ -71,6 +71,16 @@
   <p class="publication-line"><span class="status-badge status-badge-{{ object.publication.tone }}">{{ object.publication.label }}</span><span>{{ object.publication.detail }}</span></p>
   {% endif %}
   {#
+    Test a path (B496, 7): which route a path takes on the stored object and
+    what its server is given - the sentence `haprion-objects --path` prints.
+    A plain GET, so the answer is a page that can be linked and reloaded.
+  #}
+  {% if path_test %}
+  <form class="path-test" method="get" action="/proxies/{{ object.cluster }}/{{ object.name }}"><label for="path-test">Test a path</label><input id="path-test" name="path" value="{{ path_test.asked }}" placeholder="/api/users?limit=10" maxlength="2048" spellcheck="false" autocomplete="off"><button type="submit" class="secondary-button">Test</button>
+    {% if path_test.answer %}<p class="path-answer" role="status"><span class="status-dot status-{{ path_test.tone }}"></span>{{ path_test.answer }}{% for note in path_test.notes %} · {{ note }}{% endfor %}</p>{% endif %}
+  </form>
+  {% endif %}
+  {#
     Folded away by default, and the publication line above it deliberately not:
     what state the object is in is the answer somebody opens the page for,
     while the document is what they open when they have a reason. Left

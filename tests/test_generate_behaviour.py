@@ -494,6 +494,16 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
             "/shop?next=/api/v1/orders",
             "/a%20b",
             "/api%2Fv1",
+            #
+            # Doubled slashes (26-11-08): the path test on an object's page
+            # answers any path a reader types, so the model has to hold where
+            # a path ends in two slashes or carries two inside it. Not `//api`:
+            # Python's http.server reduces a leading `//` to `/` before this
+            # backend reads the path, so what HAProxy sent cannot be seen.
+            #
+            "/health//",
+            "/api//",
+            "/api//orders",
         ]
 
         for target in cases:

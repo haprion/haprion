@@ -415,6 +415,45 @@ class ObjectsCommandTests(unittest.TestCase):
 
         self.assertEqual((code, out), (0, "shop has no advanced config.\n"))
 
+    def test_path_says_which_route_a_path_takes_as_the_page_does(self) -> None:
+        """B496, 7: the sentence comes from `path_test`, the one the object's page shows."""
+
+        code, out, err = self.run_command(
+            ["-c", "alpha", "--path", "shop", "/basket?item=4"], answer(objects=[self.readable()])
+        )
+
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out, "Route / · pool web · the server gets /basket?item=4\n")
+
+    def test_path_writes_each_note_on_a_line_of_its_own(self) -> None:
+        entry = self.readable()
+        entry["document"] = SHOP.decode() + "maintenance:\n  message: Back at noon\n"
+
+        code, out, _ = self.run_command(
+            ["-c", "alpha", "--path", "shop", "/"], answer(objects=[entry])
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            out.splitlines()[1], "Note: the maintenance page answers every path while it is on."
+        )
+
+    def test_path_refuses_a_path_a_client_would_not_send(self) -> None:
+        code, out, err = self.run_command(
+            ["-c", "alpha", "--path", "shop", "basket"], answer(objects=[self.readable()])
+        )
+
+        self.assertEqual((code, out), (65, ""))
+        self.assertIn("A path starts with /", err)
+
+    def test_path_for_a_name_that_is_not_there_says_so(self) -> None:
+        code, _, err = self.run_command(
+            ["-c", "alpha", "--path", "missing", "/"], answer(objects=[self.readable()])
+        )
+
+        self.assertEqual(code, 66)
+        self.assertIn("missing", err)
+
     def test_show_for_a_name_that_is_not_there_says_so(self) -> None:
         code, out, err = self.run_command(
             ["-c", "alpha", "--show", "missing"], answer(objects=[self.readable()])

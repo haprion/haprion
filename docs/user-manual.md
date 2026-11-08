@@ -124,6 +124,16 @@ they were granted for the original's traffic, and the new proxy is inspected in 
 own. The WAF's mode is copied. The new proxy is saved like any other, and nothing ties it to the one it came
 from.
 
+**Which route a path takes.** *Test a path* on an http or https proxy's page answers for one path, such as
+`/api/users?limit=10`: the route it takes, the pool that route sends to, and the path that pool's server is
+given after a route strips or adds a prefix - or the redirect it answers with, or that no route takes it and
+the request reaches no pool. A prefix takes its own path and what lies under it (`/api` takes `/api/x`, not
+`/apix`), the longest one wins, and the query is passed on unchanged. The answer is about the stored
+proxy: a draft or saved change on top of it is not in it, and the answer says so. It adds when the
+maintenance page answers every path, and when the proxy's advanced config rewrites or answers requests in
+its pool. A rule, the WAF and the servers' health can still turn a request away, and the balancing chooses
+the server. `haprion-objects -c <cluster> --path <name> <path>` gives the same answer in the terminal.
+
 The network description and a cluster's logs and metrics settings are saved the same way, as one document
 per cluster each. The page shows the saved document, and *Discard the changes* drops it. The object editor
 checks objects against the saved network, so an object may name a VIP that the same unpublished change
@@ -9173,7 +9183,8 @@ Work outward, and stop at the first step that fails:
    its forced command, and the node reporter.
 3. **The stored objects** - `haprion-objects -c alpha` lists the proxy objects as they are written,
    at the commit the repository is on. `--show <name>` prints one document exactly as stored, and
-   `--advanced <name>` prints where each line of its advanced config goes. Where
+   `--advanced <name>` prints where each line of its advanced config goes, and `--path <name> <path>`
+   which route a request path takes and what the server is given. Where
    `haprion-inventory` parses what a node is serving, this reads the source that produced it - so
    an object the generator refuses is listed with the refusal rather than left out. The listing
    also names the VIP each object is served on, worked out by the generator's own rule against the

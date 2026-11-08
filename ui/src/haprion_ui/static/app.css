@@ -1021,6 +1021,14 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
   .badge-spinner { animation: none; opacity: 0.6; }
 }
 .publication-line { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; padding: 14px 20px 0; color: var(--muted); font-size: 12px; }
+/* Test a path (B496, 7): under the publication line, the answer on the same row while it fits. */
+.path-test { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 0; padding: 10px 20px 0; }
+.path-test label { color: var(--text-secondary); font-size: 13px; }
+.path-test input { width: 260px; max-width: 100%; height: 30px; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel-soft); color: var(--text); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.path-test input:focus { border-color: var(--brand); outline: none; box-shadow: var(--focus); }
+.path-test .secondary-button { min-height: 30px; }
+.path-answer { min-width: 0; margin: 0; color: var(--text-primary); font-size: 13px; overflow-wrap: anywhere; }
+.path-answer .status-dot { margin-right: 8px; vertical-align: 1px; }
 .proxy-link:hover strong { text-decoration: underline; }
 
 /* The schedule, stated once: one timer takes every node's backup. */

@@ -4,7 +4,9 @@ Where `haprion-inventory` says what a node is serving, this says what the
 cluster's objects look like as written. The listing names them; `--show <name>`
 prints one document exactly as it is stored, so it can be piped, diffed or
 copied without going through a browser; `--advanced <name>` prints where each
-line of its advanced config goes, as the interface's *Check* does (Fas 17).
+line of its advanced config goes, as the interface's *Check* does (Fas 17);
+`--path <name> <path>` says which route a request path takes and what the
+server is given, as *Test a path* on the object's page does (B496, 7).
 `apply` and `remove` set them from the terminal (`objects_apply`, Fas 23).
 """
 
@@ -22,6 +24,8 @@ from haprion.cli.caller import config_path, helper_refusal, usage, without_answe
 from haprion.envelope import new_request_id
 from haprion.git_command import GitError
 from haprion.helper_protocol import write_document
+from haprion.path_test import PathRefused
+from haprion.path_test import answer as path_answer
 from haprion.proxy_model import ModelError, advanced_placement
 from haprion.version_history import count_versions
 
@@ -31,6 +35,7 @@ SUDO = "/usr/bin/sudo"
 USAGE = (
     "Usage:\n"
     "  haprion-objects -c <cluster> [--show <name> | --advanced <name> | --json]\n"
+    "  haprion-objects -c <cluster> --path <name> <path>\n"
     "  haprion-objects apply -c <cluster> <file|dir>... [--prune] [--check] [-m <comment>]\n"
     "                        [--allow-certificate-mismatch] [--json]\n"
     "  haprion-objects remove -c <cluster> <name>... [--check] [-m <comment>] [--json]\n"
@@ -65,19 +70,21 @@ def run_objects_helper(
     )
 
 
-def _parse(argv: list[str]) -> tuple[str, bool, str | None, bool]:
-    """Cluster, `--json`, the object named, and whether its advanced config is asked for."""
+def _parse(argv: list[str]) -> tuple[str, bool, str | None, bool, str | None]:
+    """Cluster, `--json`, the object named, whether its advanced config is asked for, and a path."""
 
     if len(argv) < 2 or argv[0] not in ("-c", "--cluster"):
         usage(USAGE)
     cluster = argv[1]
     rest = argv[2:]
     if not rest:
-        return cluster, False, None, False
+        return cluster, False, None, False, None
     if rest == ["--json"]:
-        return cluster, True, None, False
+        return cluster, True, None, False, None
     if len(rest) == 2 and rest[0] in ("--show", "--advanced"):
-        return cluster, False, rest[1], rest[0] == "--advanced"
+        return cluster, False, rest[1], rest[0] == "--advanced", None
+    if len(rest) == 3 and rest[0] == "--path":
+        return cluster, False, rest[1], False, rest[2]
     usage(USAGE)
 
 
@@ -199,6 +206,29 @@ def _advanced(document: Mapping[str, Any], name: str, writer: TextIO, errors: Te
     return _not_stored(document, name, errors)
 
 
+def _path(
+    document: Mapping[str, Any], name: str, target: str, writer: TextIO, errors: TextIO
+) -> int:
+    """Which route `target` takes on the stored object, as *Test a path* says it.
+
+    Exit 65 when the path or the object cannot take the question.
+    """
+
+    for entry in _entries(document):
+        if entry.get("name") != name:
+            continue
+        try:
+            found = path_answer(name, str(entry.get("document", "")), target)
+        except PathRefused as exc:
+            errors.write(f"ERROR: {exc}\n")
+            return exit_codes.REFUSED
+        writer.write(found.sentence + "\n")
+        for note in found.notes:
+            writer.write(f"Note: {note}.\n")
+        return 0
+    return _not_stored(document, name, errors)
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -219,7 +249,7 @@ def main(
             stream_err=errors,
             **({} if run_publish is None else {"run_publish": run_publish}),
         )
-    cluster_id, json_mode, show, advanced = _parse(argv)
+    cluster_id, json_mode, show, advanced, target = _parse(argv)
     completed = run_helper(cluster_id, new_request_id())
 
     try:
@@ -238,6 +268,8 @@ def main(
     if json_mode:
         return write_document(writer, document, completed.returncode)
     try:
+        if show is not None and target is not None:
+            return completed.returncode or _path(document, show, target, writer, errors)
         if show is not None and advanced:
             return completed.returncode or _advanced(document, show, writer, errors)
         if show is not None:

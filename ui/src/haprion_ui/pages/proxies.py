@@ -58,6 +58,7 @@ from haprion_ui.editor_flow import (
     removal_submit,
 )
 from haprion_ui.object_reading import read_object
+from haprion_ui.path_question import path_question
 from haprion_ui.reading import (
     INVENTORY_SOURCE,
     OBJECTS_SOURCE,
@@ -1206,6 +1207,16 @@ def build_router(config: Config) -> APIRouter:
                     ),
                 ),
                 "draft": draft,
+                "path_test": path_question(
+                    name,
+                    detail.stored.document
+                    if detail.stored is not None
+                    and written is not None
+                    and written.protocol in ("http", "https")
+                    else None,
+                    request.query_params.get("path"),
+                    draft,
+                ),
                 "advanced": advanced,
                 "object_fingerprint": editor_module.fingerprint(
                     detail.stored.document if detail.stored is not None else None

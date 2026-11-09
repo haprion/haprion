@@ -40,14 +40,32 @@
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "required": ["host", "port", "ok", "status", "error", "ms"],
+                  "required": ["host", "port", "ok", "status", "error", "ms", "certificate"],
                   "properties": {
                     "host": { "type": "string", "minLength": 1 },
                     "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
                     "ok": { "type": "boolean" },
                     "status": { "type": ["integer", "null"] },
                     "error": { "type": ["string", "null"] },
-                    "ms": { "type": ["integer", "null"], "minimum": 0 }
+                    "ms": { "type": ["integer", "null"], "minimum": 0 },
+                    "certificate": {
+                      "description": "The certificate the server presented to the node over TLS (B496 nr 9); null without TLS, when the handshake failed, or from a node older than the field.",
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "required": ["subject", "names", "issuer", "not_after", "version"],
+                          "properties": {
+                            "subject": { "type": ["string", "null"], "minLength": 1, "maxLength": 255 },
+                            "names": { "type": "array", "maxItems": 10, "items": { "type": "string", "minLength": 1, "maxLength": 255 } },
+                            "issuer": { "type": ["string", "null"], "minLength": 1, "maxLength": 255 },
+                            "not_after": { "type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+                            "version": { "enum": ["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3", null] }
+                          },
+                          "additionalProperties": false
+                        },
+                        { "type": "null" }
+                      ]
+                    }
                   },
                   "additionalProperties": false
                 }

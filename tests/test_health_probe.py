@@ -976,13 +976,50 @@ class APoolsOwnCaIsTheOneTrusted(unittest.TestCase):
         )
 
         self.assertEqual(code, 0)
-        self.assertIn("CERTIFICATE_VERIFY_FAILED", answer["results"][0]["error"])
+        self.assertEqual(
+            answer["results"][0]["error"],
+            "TLS failed: IP address mismatch, certificate is not valid for '127.0.0.1'",
+        )
+        self.assertNotIn("certificate", answer["results"][0])
 
     def test_the_nodes_own_store_does_not_know_it(self) -> None:
+        """B496 nr 9: OpenSSL's reason, where `reason` said CERTIFICATE_VERIFY_FAILED for all."""
+
         code, answer = self.asked(None, verify=True)
 
         self.assertEqual(code, 0)
-        self.assertIn("CERTIFICATE_VERIFY_FAILED", answer["results"][0]["error"])
+        self.assertEqual(
+            answer["results"][0]["error"], "TLS failed: unable to get local issuer certificate"
+        )
+
+    def test_a_verified_server_says_the_certificate_it_presented(self) -> None:
+        code, answer = self.asked({"example-ca": self.authority}, verify=True, ca="example-ca")
+
+        self.assertEqual(code, 0)
+        certificate = answer["results"][0]["certificate"]
+        self.assertRegex(certificate.pop("not_after"), r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+        self.assertIn(certificate.pop("version"), ("TLSv1.2", "TLSv1.3"))
+        self.assertEqual(
+            certificate, {"subject": POOL_NAME, "names": [POOL_NAME], "issuer": "Example Test CA"}
+        )
+
+    def test_an_unverified_pool_still_says_the_certificate(self) -> None:
+        """Python reads nothing of an unverified peer; openssl reads its DER the same way."""
+
+        code, answer = self.asked(None, host="127.0.0.1", verify=False)
+
+        self.assertEqual(code, 0)
+        self.assertTrue(answer["results"][0]["ok"], answer)
+        self.assertEqual(answer["results"][0]["certificate"]["subject"], POOL_NAME)
+        self.assertEqual(answer["results"][0]["certificate"]["issuer"], "Example Test CA")
+
+    def test_a_check_without_tls_says_no_certificate(self) -> None:
+        code, answer = ask(
+            {"schema_version": 1, "targets": [target(host="127.0.0.1", port=self.port)]}
+        )
+
+        self.assertEqual(code, 0)
+        self.assertNotIn("certificate", answer["results"][0])
 
     def test_a_ca_named_but_not_sent_is_refused(self) -> None:
         code, answer = self.asked({}, verify=True, ca="example-ca")
@@ -1002,3 +1039,78 @@ class APoolsOwnCaIsTheOneTrusted(unittest.TestCase):
 
         self.assertEqual(code, 64)
         self.assertIn("ca is not usable", answer["error"])
+
+
+@unittest.skipUnless(shutil.which("openssl"), "openssl is not installed here")
+class AnExpiredCertificate(unittest.TestCase):
+    """B496 nr 9: the case `reason` hid - expired, wrong name and unknown CA all read alike."""
+
+    server: ThreadingHTTPServer
+    port: int
+    directory: tempfile.TemporaryDirectory[str]
+    authority: str
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.directory = tempfile.TemporaryDirectory()
+        root = Path(cls.directory.name)
+        ca, _leaf, key = authority_and_leaf(root)
+        openssl = shutil.which("openssl")
+        assert openssl is not None
+        expired = root / "expired.pem"
+        names = root / "expired.ext"
+        names.write_text(f"subjectAltName=DNS:{POOL_NAME}\n")
+        sp.run(
+            [openssl, "req", "-new", "-key", str(key), "-out", str(root / "expired.csr"),
+             "-subj", f"/CN={POOL_NAME}"],
+            capture_output=True,
+            check=True,
+        )  # fmt: skip
+        sp.run(
+            [openssl, "x509", "-req", "-in", str(root / "expired.csr"), "-CA", str(ca),
+             "-CAkey", str(root / "ca.key"), "-CAcreateserial", "-not_before",
+             "20200101000000Z", "-not_after", "20200102000000Z", "-extfile", str(names),
+             "-out", str(expired)],
+            capture_output=True,
+            check=True,
+        )  # fmt: skip
+        cls.authority = ca.read_text()
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(expired, key)
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        cls.server.socket = context.wrap_socket(cls.server.socket, server_side=True)
+        cls.port = int(cls.server.server_address[1])
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.directory.cleanup()
+
+    def test_a_verified_pool_says_it_has_expired(self) -> None:
+        code, answer = ask(
+            {
+                "schema_version": 1,
+                "authorities": {"example-ca": self.authority},
+                "targets": [
+                    target(host=POOL_NAME, port=self.port, tls=True, verify=True, ca="example-ca")
+                ],
+            }
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(answer["results"][0]["error"], "TLS failed: certificate has expired")
+        self.assertNotIn("certificate", answer["results"][0])
+
+    def test_an_unverified_pool_is_reached_and_says_when_it_expired(self) -> None:
+        code, answer = ask(
+            {
+                "schema_version": 1,
+                "targets": [target(host="127.0.0.1", port=self.port, tls=True, verify=False)],
+            }
+        )
+
+        self.assertEqual(code, 0)
+        self.assertTrue(answer["results"][0]["ok"], answer)
+        self.assertEqual(answer["results"][0]["certificate"]["not_after"], "2020-01-02T00:00:00Z")

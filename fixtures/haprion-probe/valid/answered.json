@@ -14,8 +14,8 @@
         "error": null,
         "source_held": null,
         "results": [
-          { "host": "198.51.100.10", "port": 8080, "ok": true, "status": 200, "error": null, "ms": 4 },
-          { "host": "198.51.100.11", "port": 8080, "ok": false, "status": 503, "error": "answered 503", "ms": 6 }
+          { "host": "198.51.100.10", "port": 8080, "ok": true, "status": 200, "error": null, "ms": 4, "certificate": { "subject": "app.example.com", "names": ["app.example.com"], "issuer": "Example Internal CA", "not_after": "2027-02-01T12:00:00Z", "version": "TLSv1.3" } },
+          { "host": "198.51.100.11", "port": 8080, "ok": false, "status": 503, "error": "answered 503", "ms": 6, "certificate": null }
         ]
       },
       {

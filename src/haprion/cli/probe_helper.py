@@ -413,6 +413,9 @@ def main(
                         "status": entry.status,
                         "error": entry.error,
                         "ms": entry.ms,
+                        "certificate": (
+                            entry.certificate.as_dict() if entry.certificate is not None else None
+                        ),
                     }
                     for entry in answer.results
                 ],

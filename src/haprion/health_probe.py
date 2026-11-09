@@ -18,6 +18,7 @@ happens to own the address today". Two answers are the answer.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -105,6 +106,32 @@ class Target:
 
 
 @dataclass(frozen=True, slots=True)
+class Certificate:
+    """The certificate a TLS server presented to the node's probe (B496 nr 9).
+
+    What the node read from it, nothing more: no chain, no key, no
+    fingerprint. Each field may be missing from what it said.
+    """
+
+    subject: str | None
+    names: tuple[str, ...]
+    issuer: str | None
+    not_after: str | None
+    """ISO 8601 UTC, `YYYY-MM-DDTHH:MM:SSZ`."""
+    version: str | None
+    """The TLS version the handshake settled on, as Python names it (`TLSv1.3`)."""
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "subject": self.subject,
+            "names": list(self.names),
+            "issuer": self.issuer,
+            "not_after": self.not_after,
+            "version": self.version,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class Reached:
     """What one node said about one server."""
 
@@ -114,6 +141,8 @@ class Reached:
     status: int | None
     error: str | None
     ms: int | None
+    certificate: Certificate | None = None
+    """None for a check without TLS, a handshake that failed, or a node older than the field."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +220,43 @@ def _count(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+#
+# The node's reading of a certificate is held to its own bounds again here: the
+# node is not trusted to have kept them, and the page shows these as text.
+#
+MAX_CERTIFICATE_TEXT = 255
+MAX_CERTIFICATE_NAMES = 10
+NOT_AFTER = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+VERSIONS = frozenset({"TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"})
+
+
+def _shown(value: object) -> str | None:
+    if not isinstance(value, str) or not value or len(value) > MAX_CERTIFICATE_TEXT:
+        return None
+    return value if value.isprintable() else None
+
+
+def _certificate(value: object) -> Certificate | None:
+    if not isinstance(value, Mapping):
+        return None
+    names = value.get("names")
+    not_after = value.get("not_after")
+    version = value.get("version")
+    return Certificate(
+        subject=_shown(value.get("subject")),
+        names=tuple(
+            shown
+            for name in (names if isinstance(names, list) else ())[:MAX_CERTIFICATE_NAMES]
+            if (shown := _shown(name)) is not None
+        ),
+        issuer=_shown(value.get("issuer")),
+        not_after=(
+            not_after if isinstance(not_after, str) and NOT_AFTER.fullmatch(not_after) else None
+        ),
+        version=version if version in VERSIONS else None,
+    )
+
+
 def read_answer(node: str, completed: subprocess.CompletedProcess[str]) -> NodeAnswer:
     """What the node said, or why nothing usable came back.
 
@@ -239,6 +305,7 @@ def read_answer(node: str, completed: subprocess.CompletedProcess[str]) -> NodeA
                 status=_count(entry.get("status")),
                 error=_text(entry.get("error")),
                 ms=_count(entry.get("ms")),
+                certificate=_certificate(entry.get("certificate")),
             )
         )
     held = payload.get("source_held")

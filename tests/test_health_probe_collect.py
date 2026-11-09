@@ -19,6 +19,7 @@ from pathlib import Path
 from haprion.config import DeployIdentity, Node
 from haprion.health_probe import (
     MAX_TARGETS,
+    Certificate,
     NodeAnswer,
     Target,
     build_request,
@@ -159,6 +160,57 @@ class WhatCameBackFromANode(unittest.TestCase):
         answer = read_answer("node-a", completed(payload)).results[0]
         self.assertIsNone(answer.ms)
         self.assertIsNone(answer.status)
+
+
+class TheCertificateANodeRead(unittest.TestCase):
+    """B496 nr 9: what the node read from a TLS server's certificate, held to bounds here too."""
+
+    def certificate(self, value: object) -> object:
+        payload = answered(
+            results=[{"host": "198.51.100.10", "port": 8443, "ok": True, "certificate": value}]
+        )
+        return read_answer("node-a", completed(payload)).results[0].certificate
+
+    def test_what_the_node_read_is_kept(self) -> None:
+        read = {
+            "subject": "app.example.com",
+            "names": ["app.example.com", "www.example.com"],
+            "issuer": "Example Internal CA",
+            "not_after": "2027-02-01T12:00:00Z",
+            "version": "TLSv1.3",
+        }
+        found = self.certificate(read)
+        assert isinstance(found, Certificate)
+        self.assertEqual(found.as_dict(), read)
+
+    def test_a_node_older_than_the_field_says_none(self) -> None:
+        payload = answered()
+        self.assertIsNone(read_answer("node-a", completed(payload)).results[0].certificate)
+        self.assertIsNone(self.certificate(None))
+        self.assertIsNone(self.certificate("app.example.com"))
+
+    def test_a_field_out_of_bounds_is_dropped_not_the_rest(self) -> None:
+        found = self.certificate(
+            {
+                "subject": "x" * 256,
+                "names": [
+                    "ok.example.com",
+                    7,
+                    "bad\nname",
+                    *[f"n{i}.example.com" for i in range(20)],
+                ],
+                "issuer": "Example\u202eCA",
+                "not_after": "2027-02-01",
+                "version": "SSLv3",
+            }
+        )
+        assert isinstance(found, Certificate)
+        self.assertEqual(found.subject, None)
+        self.assertEqual(found.issuer, None)
+        self.assertEqual(found.not_after, None)
+        self.assertEqual(found.version, None)
+        self.assertEqual(found.names[0], "ok.example.com")
+        self.assertLessEqual(len(found.names), 10)
 
 
 class AskingEveryNode(unittest.TestCase):

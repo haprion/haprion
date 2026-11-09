@@ -181,6 +181,38 @@ class WhatTheHelperRefusesToSend(HelperFixture):
         self.assertIn("at most", self.refusal({"targets": many}))
 
 
+class TheCertificateGoesOn(HelperFixture):
+    def test_the_nodes_reading_reaches_the_web_in_the_contract(self) -> None:
+        """B496 nr 9; `run_helper` holds the document to the schema."""
+
+        read = {
+            "subject": "app.example.com",
+            "names": ["app.example.com"],
+            "issuer": "Example Internal CA",
+            "not_after": "2027-02-01T12:00:00Z",
+            "version": "TLSv1.3",
+        }
+        rows = [
+            {"host": "198.51.100.10", "port": 8443, "ok": True, "status": None, "error": None,
+             "ms": 4, "certificate": read},
+            {"host": "198.51.100.11", "port": 8443, "ok": False, "status": None,
+             "error": "TLS failed: certificate has expired", "ms": 3},
+        ]  # fmt: skip
+        code, out, _err = self.run_helper(
+            {
+                "targets": [
+                    self.target(port=8443, tls=True),
+                    self.target(host="198.51.100.11", port=8443, tls=True),
+                ]
+            },
+            ask=lambda node, identity, body: answer(rows),
+        )
+        self.assertEqual(code, 0, out)
+        results = json.loads(out)["result"]["nodes"][0]["results"]
+        self.assertEqual(results[0]["certificate"], read)
+        self.assertIsNone(results[1]["certificate"])
+
+
 class APoolsOwnCa(HelperFixture):
     """The CA a pool is verified against travels with the request (B276, 26-10-12).
 

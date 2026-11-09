@@ -472,6 +472,90 @@ def http_status(
     return int(parts[1])
 
 
+#
+# The certificate a TLS server presented, read from its DER with openssl, which
+# the node package depends on (B496 nr 9): the same reading whether the pool
+# verifies it or not - an unverified handshake leaves Python's own reading
+# empty. Fixed argv; the certificate is stdin, never a file or an argument.
+#
+OPENSSL_COMMANDS = ("/usr/bin/openssl", "/bin/openssl")
+CERTIFICATE_ARGUMENTS = (
+    "x509", "-inform", "DER", "-noout", "-nameopt", "utf8,sep_multiline,lname,space_eq",
+    "-subject", "-issuer", "-enddate", "-dateopt", "iso_8601", "-ext", "subjectAltName",
+)  # fmt: skip
+MAX_CERTIFICATE_NAMES = 10
+MAX_CERTIFICATE_TEXT = 255
+NOT_AFTER = re.compile(r"^notAfter=(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})Z$")
+
+
+def _printable(value: str) -> str | None:
+    value = value.strip()
+    if not value or len(value) > MAX_CERTIFICATE_TEXT or not value.isprintable():
+        return None
+    return value
+
+
+def certificate_of(stream: socket.socket, timeout: float) -> dict[str, Any] | None:
+    """Who the server's certificate is for, who issued it, until when, and the TLS version.
+
+    None when there is nothing to read, or openssl could not read it: the
+    check's own answer stands either way, and an unread certificate is said as
+    one rather than guessed at.
+    """
+
+    if not isinstance(stream, ssl.SSLSocket):
+        return None
+    der = stream.getpeercert(binary_form=True)
+    binary = next((path for path in OPENSSL_COMMANDS if os.path.exists(path)), "")
+    if not der or not binary:
+        return None
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed argv, the certificate on stdin
+            [binary, *CERTIFICATE_ARGUMENTS],
+            input=der,
+            capture_output=True,
+            check=False,
+            timeout=max(timeout, 1.0),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    sections: dict[str, list[str]] = {}
+    current = ""
+    not_after = None
+    for line in completed.stdout.decode("utf-8", "replace").splitlines():
+        if line.startswith(" "):
+            sections.setdefault(current, []).append(line.strip())
+            continue
+        current = line.split("=", 1)[0].split(":", 1)[0].strip()
+        found = NOT_AFTER.match(line.strip())
+        if found:
+            not_after = f"{found.group(1)}T{found.group(2)}Z"
+
+    def attribute(section: str, *names: str) -> str | None:
+        for name in names:
+            for entry in sections.get(section, ()):
+                key, equals, value = entry.partition(" = ")
+                if equals and key == name:
+                    return _printable(value)
+        return None
+
+    names = [
+        name
+        for entry in sections.get("X509v3 Subject Alternative Name", ())
+        for part in entry.split(", ")
+        if part.startswith("DNS:") and (name := _printable(part.removeprefix("DNS:")))
+    ][:MAX_CERTIFICATE_NAMES]
+    return {
+        "subject": attribute("subject", "commonName"),
+        "names": names,
+        "issuer": attribute("issuer", "commonName", "organizationName"),
+        "not_after": not_after,
+        "version": _printable(stream.version() or ""),
+    }
+
+
 def dns_ask(target: dict[str, Any], timeout: float, source: str | None) -> tuple[int, str | None]:
     """One question, as dnsdist's health check asks it, and the answer's code.
 
@@ -576,6 +660,12 @@ def probe(target: dict[str, Any], timeout_ms: int, source: str | None) -> dict[s
             result["ms"] = int((time.monotonic() - started) * 1000)
             return result
         stream = connect(target, timeout, source)
+        if target["tls"]:
+            #
+            # Read before the check's own question, so an http check that
+            # answers 500 still says what certificate it was served.
+            #
+            result["certificate"] = certificate_of(stream, timeout)
         if target["type"] == "http":
             status = http_status(stream, target, timeout, deadline)
             result["status"] = status
@@ -591,6 +681,16 @@ def probe(target: dict[str, Any], timeout_ms: int, source: str | None) -> dict[s
                 result["error"] = f"answered {status}"
         else:
             result["ok"] = True
+    except ssl.SSLCertVerificationError as error:
+        #
+        # Why verification failed, in OpenSSL's words: `certificate has
+        # expired`, `Hostname mismatch, ...`, `unable to get local issuer
+        # certificate` - where `reason` says CERTIFICATE_VERIFY_FAILED for
+        # all of them alike (measured 26-11-08). The handshake stops there,
+        # so there is no certificate to report: none is guessed at.
+        #
+        said = (error.verify_message or "").rstrip(".") or error.reason or str(error)
+        result["error"] = f"TLS failed: {said}"
     except ssl.SSLError as error:
         result["error"] = f"TLS failed: {error.reason or error}"
     except TimeoutError:

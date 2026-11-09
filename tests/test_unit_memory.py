@@ -35,6 +35,7 @@ LIMITED = {
             "block-api",
             "cert-export",
             "cert-receiver",
+            "http01-check",
             "ndes-server",
             "node",
             "oidc",

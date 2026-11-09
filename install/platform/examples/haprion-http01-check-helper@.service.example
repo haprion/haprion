@@ -1,0 +1,66 @@
+# Checks whether Let's Encrypt's HTTP-01 would reach this manager for a name,
+# then exits (B496, B499).
+#
+# Started by haprion-http01-check-helper.socket, one instance per connection.
+# The connection is this process's stdin and stdout.
+#
+# What it may do with root
+# ------------------------
+# Write one file with a random name under the runtime policy's HTTP-01
+# webroot, in .well-known/acme-challenge/ where certbot writes its own, fetch
+# it over http://<name>/ the way the CA would, and remove it again - in this
+# one process, through directory descriptors that follow no link. Nothing
+# else is written: the webroot is the only path this unit opens for writing,
+# rendered from the runtime policy by 07-platform-services and
+# refresh-platform-files (empty when the policy names none, and the helper
+# then refuses before it writes).
+#
+# Why it has the network and CAP_DAC_OVERRIDE: fetching over the name is the
+# check, and the webroot is written as certbot writes it, as root whoever owns
+# the directory, so the check does not fail where the certificate would not.
+#
+# Installed as /etc/systemd/system/haprion-http01-check-helper@.service.
+
+[Unit]
+Description=Check HTTP-01 for the Haprion interface
+Documentation=file:///opt/haprion/current
+CollectMode=inactive-or-failed
+
+[Service]
+Type=exec
+ExecStart=/opt/haprion/current/bin/haprion-http01-check-helper
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+MemoryMax=256M
+MemorySwapMax=0
+# With Type=exec the start timeout ends once the helper runs; RuntimeMaxSec
+# bounds the rest. The check has 25 s in all and 10 s for each connection;
+# a server that drips its answer is ended here, under the web's 45 s, and
+# the helper removes its file on the SIGTERM before it goes.
+TimeoutStartSec=60
+RuntimeMaxSec=40
+TimeoutStopSec=10
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=@WEBROOT@
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@obsolete
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=CAP_DAC_OVERRIDE

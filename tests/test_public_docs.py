@@ -186,7 +186,7 @@ class TheContractListsEveryOperation(unittest.TestCase):
 
         listed = set(
             re.findall(
-                r"^\| [^|]+ \| `([a-z_]+)` \|",
+                r"^\| [^|]+ \| `([a-z0-9_]+)` \|",
                 (ROOT / "docs" / "CONTRACT.md").read_text(encoding="utf-8"),
                 re.M,
             )

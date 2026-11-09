@@ -1134,6 +1134,31 @@ def check_receiver_fetches_semantics(document: dict[str, object], path: Path) ->
             raise AssertionError(f"{path}: a witness is unread once")
 
 
+def check_http01_check_semantics(document: dict[str, object], path: Path) -> None:
+    # A result only on success, and each answer with what it says and nothing
+    # else: an address unless the name did not resolve, a status only from the
+    # other service, a problem from a silence or a redirect that led nowhere.
+    result = document["result"]
+    if document["outcome"] == "done" and result is None:
+        raise AssertionError(f"{path}: a done http01_check carries no result")
+    if document["outcome"] != "done" and result is not None:
+        raise AssertionError(f"{path}: a {document['outcome']} http01_check carries a result")
+    if not isinstance(result, dict):
+        return
+    answer = result["answer"]
+    shape = (result["address"] is not None, result["status"] is not None)
+    expected = {
+        "reached": (True, False),
+        "other": (True, True),
+        "silent": (True, False),
+        "unresolved": (False, False),
+    }[answer]
+    if shape != expected:
+        raise AssertionError(f"{path}: a {answer} answer with the wrong address or status")
+    if answer != "other" and (result["problem"] is not None) != (answer == "silent"):
+        raise AssertionError(f"{path}: a {answer} answer with the wrong problem")
+
+
 def check_ndes_server_semantics(document: dict[str, object], path: Path) -> None:
     # A result only on success; the CA that issues the server's RA certificate
     # is the first shown, since it is the one the server enrolls for.
@@ -1474,6 +1499,7 @@ SEMANTIC_CHECKS = {
     "resolve": check_resolve_semantics,
     "receiver_fetches": check_receiver_fetches_semantics,
     "ndes_server": check_ndes_server_semantics,
+    "http01_check": check_http01_check_semantics,
     "probe": check_probe_semantics,
     "cert_export": check_cert_export_semantics,
     "node_restore_prepare": check_node_restore_prepare_semantics,
@@ -1616,6 +1642,11 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
             result["authorities"].append({**result["authorities"][0], "issues_ra": True})
         else:
             invalid["outcome"] = "failed"
+    elif operation == "http01_check":
+        if result is None:
+            invalid["outcome"] = "done"
+        else:
+            result["address"] = None if result["answer"] != "unresolved" else "192.0.2.80"
     elif operation == "probe":
         for node in result["nodes"]:
             node["reachable"] = invalid["outcome"] == "failed"

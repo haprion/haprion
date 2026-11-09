@@ -1,0 +1,30 @@
+# The socket the interface checks HTTP-01 through (B496, B499).
+#
+# Owned by root, connectable by the web's account. Each connection starts one
+# instance of haprion-http01-check-helper@.service, which reads one request -
+# a name a certificate is for - writes a test file in the HTTP-01 webroot,
+# fetches it over the name, removes it, and writes one answer.
+#
+# Installed as /etc/systemd/system/haprion-http01-check-helper.socket, with
+# WEB_USER rendered by 07-platform-services.
+
+[Unit]
+Description=Socket the Haprion interface checks HTTP-01 through
+Documentation=file:///opt/haprion/current
+
+[Socket]
+ListenStream=/run/haprion/http01-check.sock
+SocketUser=root
+SocketGroup=WEB_USER
+SocketMode=0660
+
+Accept=yes
+
+# One person pressing the button now and then; a few at once is plenty, and
+# each check's file has a name of its own.
+MaxConnections=4
+
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

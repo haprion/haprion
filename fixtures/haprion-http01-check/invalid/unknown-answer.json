@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "operation": "http01_check",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "result": {
+    "name": "app.example.com",
+    "answer": "maybe",
+    "address": "192.0.2.80",
+    "status": null,
+    "problem": null
+  },
+  "error": null
+}

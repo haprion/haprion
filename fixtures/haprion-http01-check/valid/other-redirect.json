@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "operation": "http01_check",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "result": {
+    "name": "app.example.com",
+    "answer": "other",
+    "address": "192.0.2.80",
+    "status": 301,
+    "problem": "redirected to https://app.example.com/, where port 443 refused the connection"
+  },
+  "error": null
+}

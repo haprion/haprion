@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-http01-check.schema.json",
+  "title": "haprion-http01-check-helper JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "http01_check" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/checked" },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "checked": {
+      "description": "Whether a test file written in the HTTP-01 webroot came back over http://<name>/.well-known/acme-challenge/, fetched from the manager (B496, B499).",
+      "type": "object",
+      "required": ["name", "answer", "address", "status", "problem"],
+      "properties": {
+        "name": { "type": "string", "minLength": 3, "maxLength": 253 },
+        "answer": {
+          "description": "reached: the file came back; other: something answered without it; silent: nothing answered; unresolved: the name does not resolve from the manager.",
+          "enum": ["reached", "other", "silent", "unresolved"]
+        },
+        "address": { "oneOf": [{ "type": "string", "minLength": 2, "maxLength": 45 }, { "type": "null" }] },
+        "status": {
+          "description": "The HTTP status the other service answered with, the last redirect's when one led nowhere (other only).",
+          "oneOf": [{ "type": "integer", "minimum": 100, "maximum": 599 }, { "type": "null" }]
+        },
+        "problem": {
+          "description": "Why nothing answered (silent), or where a redirect led nowhere (other).",
+          "oneOf": [{ "type": "string", "minLength": 1, "maxLength": 1024 }, { "type": "null" }]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

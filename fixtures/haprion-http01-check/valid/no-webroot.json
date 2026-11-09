@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "operation": "http01_check",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": false,
+  "outcome": "failed",
+  "result": null,
+  "error": {
+    "code": "dependency_unavailable",
+    "message": "the runtime policy names no HTTP-01 webroot (acme.webroot)",
+    "details": {}
+  }
+}

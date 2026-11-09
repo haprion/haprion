@@ -965,6 +965,97 @@ class Run:
                 check=False,
             )
 
+    def http01_checked(self) -> None:
+        """B496, B499: Check HTTP-01 through the web's socket and the command, in the helper's own unit.
+
+        A webroot is added to the policy and step 07 run again, as an
+        administrator would; nginx serves the challenge path from it on port 80
+        for one name, as the manual asks. The file comes back and is gone after;
+        a name nginx sends on to https without the rule is another service.
+        The policy, the units and the webroot are put back after.
+        """
+
+        webroot = "/var/www/acme"
+        step07 = "/usr/share/haprion-ui/install/platform/07-platform-services"
+        policy = "/etc/haprion/runtime-policy.yaml"
+        edit = (
+            "import pathlib, sys; p = pathlib.Path(sys.argv[1]); t = p.read_text(); "
+            "line = '  webroot: ' + sys.argv[2]; "
+            "t = t.replace('\\nacme:\\n', '\\nacme:\\n' + line + '\\n', 1) "
+            "if '\\nacme:\\n' in t else t + '\\nacme:\\n' + line + '\\n'; "
+            "p.write_text(t)"
+        )
+        site = (
+            "server {\n    listen 80;\n    server_name http01.example.com;\n"
+            f"    location /.well-known/acme-challenge/ {{ root {webroot}; }}\n"
+            "    location / { return 404; }\n}\n"
+        )
+        self.on("mgr", f"cp -p {policy} /root/runtime-policy.before-http01")
+        try:
+            self.on(
+                "mgr",
+                f"install -d -m 755 {webroot} && "
+                f"python3 -c {shlex.quote(edit)} {policy} {webroot} && {step07} >/dev/null",
+            )
+            _, unit = self.on("mgr", "cat /etc/systemd/system/haprion-http01-check-helper@.service")
+            if f"\nReadWritePaths=-{webroot}\n" not in unit:
+                raise Failed(f"step 07 did not open the webroot for the check helper:\n{unit}")
+            self.on(
+                "mgr",
+                f"printf %s {shlex.quote(site)} > /etc/nginx/sites-enabled/install-test-acme && "
+                "printf '127.0.0.1 http01.example.com other.example.com\\n' >> /etc/hosts && "
+                "nginx -t 2>/dev/null && systemctl reload nginx",
+            )
+            ask = (
+                "import socket, sys; s = socket.socket(socket.AF_UNIX); "
+                "s.connect('/run/haprion/http01-check.sock'); "
+                "s.sendall(sys.stdin.buffer.read()); s.shutdown(socket.SHUT_WR); "
+                "print(s.makefile().read())"
+            )
+            for name, expected in (
+                ("http01.example.com", "reached"),
+                ("other.example.com", "other"),
+            ):
+                request = json.dumps(
+                    {
+                        "schema_version": 1,
+                        "operation": "http01_check",
+                        "cluster": None,
+                        "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                        "parameters": {"name": name},
+                    }
+                )
+                _, answer = self.on(
+                    "mgr",
+                    f"runuser -u _haprion-web -- python3 -c {shlex.quote(ask)}",
+                    stdin=request + "\n",
+                )
+                try:
+                    result = json.loads(answer)["result"] or {}
+                except (ValueError, KeyError, TypeError):
+                    result = {}
+                if result.get("answer") != expected:
+                    raise Failed(
+                        f"the web's socket did not answer {expected} for {name}:\n{answer}"
+                    )
+                _, left = self.on("mgr", f"find {webroot} -mindepth 1 -type f")
+                if left.strip():
+                    raise Failed(f"the check left a file in the webroot:\n{left}")
+            _, said = self.on("mgr", "haprion-http01-check http01.example.com")
+            if not said.startswith("Reached: a test file in the webroot came back"):
+                raise Failed(f"haprion-http01-check did not say the file came back:\n{said}")
+        finally:
+            self.on(
+                "mgr",
+                "rm -f /etc/nginx/sites-enabled/install-test-acme; "
+                "sed -i '/ http01.example.com other.example.com$/d' /etc/hosts; "
+                "systemctl reload nginx; "
+                f"cp -p /root/runtime-policy.before-http01 {policy} && "
+                f"rm /root/runtime-policy.before-http01 && {step07} >/dev/null; "
+                f"rm -rf {webroot}",
+                check=False,
+            )
+
     def every_function_has_what_it_needs(self) -> None:
         missing = [
             f"{role}: {what}"
@@ -1255,6 +1346,10 @@ def run_one(
         step(
             "an NDES server confirmed from its CA, as the web and the command do",
             run.ndes_server_confirmed,
+        )
+        step(
+            "HTTP-01 checked for a name, as the web and the command do",
+            run.http01_checked,
         )
         step("an object published", run.publish)
 

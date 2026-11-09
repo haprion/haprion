@@ -37,7 +37,7 @@ from typing import Any
 from uuid import uuid4
 
 from haprion.check_policy import EffectiveCheck, effective_checks
-from haprion.health_probe import DEFAULT_TIMEOUT_MS, UDP_WAIT_MS
+from haprion.health_probe import DEFAULT_TIMEOUT_MS, UDP_WAIT_MS, Certificate, read_certificate
 from haprion.probe_socket import ProbeUnavailable, ask, build_request
 from haprion.proxy_model import (
     DEFAULT_EXPECT_STATUS,
@@ -89,6 +89,14 @@ class Reached:
     # An http check that names no Host header, so a 400 can say it was sent none.
     #
     hostless: bool = False
+    #
+    # Over TLS: the certificate the server presented, and whether the pool
+    # holds it to anything (B496 nr 9). `verified` is None for a check
+    # without TLS; `authority` the pool's own CA when it names one (B276).
+    #
+    certificate: Certificate | None = None
+    verified: bool | None = None
+    authority: str = ""
 
     @property
     def phrase(self) -> str:
@@ -337,6 +345,7 @@ def _read(payload: Any) -> tuple[str, tuple[NodeReport, ...]]:
                         status=row.get("status") if isinstance(row.get("status"), int) else None,
                         error=str(row.get("error")) if row.get("error") else None,
                         ms=row.get("ms") if isinstance(row.get("ms"), int) else None,
+                        certificate=read_certificate(row.get("certificate")),
                     )
                     for row in (rows if isinstance(rows, list) else ())
                     if isinstance(row, Mapping)
@@ -487,6 +496,29 @@ def run(
     if any(check.type == "dns" for check in checks):
         nodes = tuple(
             replace(node, results=tuple(replace(entry, dns=True) for entry in node.results))
+            for node in nodes
+        )
+    #
+    # What each TLS server is held to, from the check the request was built
+    # from: the page says it beside the certificate, and a pool that checks
+    # nothing is said as such.
+    #
+    encrypted = {(check.host, check.port): check for check in checks if check.encrypted}
+    if encrypted:
+        nodes = tuple(
+            replace(
+                node,
+                results=tuple(
+                    replace(
+                        entry,
+                        verified=check.verify,
+                        authority=(check.authority or "") if check.verify else "",
+                    )
+                    if (check := encrypted.get((entry.host, entry.port))) is not None
+                    else entry
+                    for entry in node.results
+                ),
+            )
             for node in nodes
         )
     return ProbeReport(

@@ -443,6 +443,9 @@
             #}
             <td{% if row.code %} title="{{ row.code }}"{% endif %}>{{ row.last }}</td>
           </tr>
+          {% if row.tls %}{% set tls = row.tls %}
+          <tr class="tls-row"><td></td><td colspan="3">{% if tls.unread %}<span class="tls-unread">{{ tls.unread }}</span>{% else %}{% if tls.name %}<span>Certificate <code>{{ tls.name }}</code></span>{% endif %}{% if tls.issuer %}<span>{{ tls.issuer }}</span>{% endif %}{% if tls.until %}<span{% if tls.expired %} class="tls-expired"{% endif %}>{{ tls.until }}</span>{% endif %}{% if tls.version %}<span>{{ tls.version }}</span>{% endif %}<span{% if tls.unverified %} class="tls-unverified"{% endif %}>{{ tls.verification }}</span>{% endif %}</td></tr>
+          {% endif %}
           {% endif %}{% endfor %}
         </tbody>
       </table>

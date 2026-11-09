@@ -16,10 +16,93 @@ reproduce is said under the table, not in the colour of a row.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
-from haprion_ui import server_card
+from haprion_ui import moments, server_card
 from haprion_ui.health import BackendHealth, check_phrase
-from haprion_ui.probe import NO_HOST_SENT, ProbeReport
+from haprion_ui.probe import NO_HOST_SENT, ProbeReport, Reached
+
+UNREAD = "The certificate was not read: the check stops where verification fails."
+UNVERIFIED = "not verified: the pool does not check the server's certificate"
+
+
+@dataclass(frozen=True, slots=True)
+class TlsLine:
+    """The line under a tested TLS server: the certificate it presented (B496 nr 9).
+
+    Either `unread` alone - verification failed, so the handshake stopped
+    before a certificate could be read - or the certificate's parts.
+    """
+
+    unread: str = ""
+    name: str = ""
+    issuer: str = ""
+    until: str = ""
+    expired: bool = False
+    version: str = ""
+    verification: str = ""
+    unverified: bool = False
+
+
+def _version(version: str | None) -> str:
+    if not version:
+        return ""
+    number = version.removeprefix("TLSv")
+    return f"TLS {'1.0' if number == '1' else number}"
+
+
+def _days(count: int) -> str:
+    return f"{count} day" if count == 1 else f"{count} days"
+
+
+def _until(not_after: str | None, now: datetime) -> tuple[str, bool]:
+    """`valid until 27-02-01 (in 85 days)`, or `expired ... (3 days ago)` and True."""
+
+    if not not_after:
+        return "", False
+    ends = datetime.strptime(not_after, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    days = (ends.date() - now.date()).days
+    if ends <= now:
+        return (
+            f"expired {moments.day(ends)} ({'today' if days == 0 else f'{_days(-days)} ago'})",
+            True,
+        )
+    return (
+        f"valid until {moments.day(ends)} ({'today' if days == 0 else f'in {_days(days)}'})",
+        False,
+    )
+
+
+def tls_line(entry: Reached, now: datetime | None = None) -> TlsLine | None:
+    """The line for one tested server, or None: no TLS, or nothing the node said about it."""
+
+    if entry.verified is None:
+        return None
+    certificate = entry.certificate
+    if certificate is None:
+        #
+        # Only where verification is what stopped the handshake: a connection
+        # refused never got that far, and a node older than the field read
+        # nothing it could have said.
+        #
+        failed = bool(entry.error and entry.error.startswith("TLS failed:"))
+        return TlsLine(unread=UNREAD) if entry.verified and failed else None
+    until, expired = _until(certificate.not_after, now or datetime.now(UTC))
+    if entry.verified and entry.authority:
+        verification = "verified against the cluster's CA"
+    elif entry.verified:
+        verification = "verified against the node's trusted CAs"
+    else:
+        verification = UNVERIFIED
+    return TlsLine(
+        name=certificate.subject or (certificate.names[0] if certificate.names else ""),
+        issuer=f"issued by {certificate.issuer}" if certificate.issuer else "",
+        until=until,
+        expired=expired,
+        version=_version(certificate.version),
+        verification=verification,
+        unverified=not entry.verified,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +124,7 @@ class HealthRow:
     # claim a check that was never made (2026-09-30).
     #
     tone: str = "unknown"
+    tls: TlsLine | None = None
 
 
 def _duration(ms: int | None) -> str:
@@ -109,5 +193,6 @@ def health_rows(backend: BackendHealth | None, probe: ProbeReport | None) -> lis
                     last=f"{entry.phrase}{_duration(None if entry.udp and entry.ok else entry.ms)}"
                     " · tested",
                     tested=True,
+                    tls=tls_line(entry),
                 )
     return list(rows.values())

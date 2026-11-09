@@ -32,7 +32,7 @@
             "description": "One row per server tried.",
             "items": {
               "type": "object",
-              "required": ["host", "port", "ok", "status", "error", "ms", "summary"],
+              "required": ["host", "port", "ok", "status", "error", "ms", "summary", "certificate", "verified"],
               "properties": {
                 "host": { "type": "string", "description": "Value. The server's host." },
                 "port": { "type": "integer", "description": "Value. The port tried." },
@@ -40,7 +40,21 @@
                 "status": { "type": ["integer", "null"], "description": "Value. The status the server answered with (a response code for a dns check); null where there was none." },
                 "error": { "type": ["string", "null"], "description": "Text. Why the server did not pass; null where it did." },
                 "ms": { "type": ["integer", "null"], "description": "Value. Milliseconds the try took; null where it did not finish." },
-                "summary": { "type": "string", "description": "Text. What happened, in the interface's words, such as answered 200." }
+                "summary": { "type": "string", "description": "Text. What happened, in the interface's words, such as answered 200." },
+                "certificate": {
+                  "type": ["object", "null"],
+                  "description": "Value. The certificate the server presented over TLS: subject, names, issuer, not_after (ISO 8601 UTC) and version; null without TLS, where the handshake failed, or from a node older than the field.",
+                  "required": ["subject", "names", "issuer", "not_after", "version"],
+                  "properties": {
+                    "subject": { "type": ["string", "null"], "description": "Text. The certificate's common name." },
+                    "names": { "type": "array", "items": { "type": "string" }, "description": "Text. Its DNS names, at most ten." },
+                    "issuer": { "type": ["string", "null"], "description": "Text. Who issued it: the issuer's common name, else its organization." },
+                    "not_after": { "type": ["string", "null"], "description": "Value. When it expires, ISO 8601 UTC." },
+                    "version": { "type": ["string", "null"], "description": "Value. The TLS version the handshake settled on, such as TLSv1.3." }
+                  },
+                  "additionalProperties": true
+                },
+                "verified": { "type": ["boolean", "null"], "description": "Value. Whether the pool holds the server's certificate to a CA; null for a check without TLS." }
               },
               "additionalProperties": true
             }

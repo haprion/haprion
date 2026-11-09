@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import json
 import unittest
+from datetime import UTC, datetime
 
 from haprion.check_policy import EffectiveCheck, effective_checks
 from haprion.probe_socket import ProbeUnavailable
 from haprion.proxy_model import ModelError, load_proxy
 
+from haprion_ui.health_rows import UNREAD, UNVERIFIED, TlsLine, tls_line
 from haprion_ui.preview import build_document
 from haprion_ui.probe import (
     MAX_TARGETS,
@@ -266,6 +268,110 @@ class WhetherTheVerdictIsTheChecksOwn(unittest.TestCase):
         )
         self.assertFalse(report.ran)
         self.assertIn("no health check", str(report.problem))
+
+
+class TheCertificateUnderATestedServer(unittest.TestCase):
+    """B496 nr 9: the certificate each TLS server presented, and what the pool holds it to."""
+
+    CERTIFICATE = {
+        "subject": "shop-backend.example.com",
+        "names": ["shop-backend.example.com"],
+        "issuer": "Example Internal CA",
+        "not_after": "2027-02-01T12:00:00Z",
+        "version": "TLSv1.3",
+    }
+    NOW = datetime(2026, 11, 8, 12, 0, tzinfo=UTC)
+
+    def line(self, row: dict[str, object], **fields: object) -> TlsLine | None:
+        #
+        # The node answers for the server as it was asked: by name for a
+        # verified pool, which is held to that name.
+        #
+        host = str(fields.get("servers", "198.51.100.10:8080")).rsplit(":", 1)[0]
+        answer = answered(
+            [
+                {
+                    "node": "node-a",
+                    "reachable": True,
+                    "error": None,
+                    "results": [{"host": host, "port": 8080, "ms": 3, **row}],
+                }
+            ]
+        )
+        written: dict[str, object] = {"health_type": "https", **fields}
+        report = run("alpha", form(**written), CHOICES, call=lambda *a, **k: answer)
+        result = report.nodes[0].results[0]
+        return tls_line(result, self.NOW)
+
+    def test_a_pool_verified_against_its_own_ca_says_so(self) -> None:
+        line = self.line(
+            {"ok": True, "status": 200, "error": None, "certificate": self.CERTIFICATE},
+            backend_tls="ca",
+            backend_tls_ca="example-ca",
+            servers="shop-backend.example.com:8080",
+        )
+        self.assertEqual(
+            line,
+            TlsLine(
+                name="shop-backend.example.com",
+                issuer="issued by Example Internal CA",
+                until="valid until 27-02-01 (in 85 days)",
+                version="TLS 1.3",
+                verification="verified against the cluster's CA",
+            ),
+        )
+
+    def test_a_pool_verified_against_the_nodes_store_says_so(self) -> None:
+        line = self.line(
+            {"ok": True, "status": 200, "error": None, "certificate": self.CERTIFICATE},
+            backend_tls="system",
+            servers="shop-backend.example.com:8080",
+        )
+        if line is None:
+            self.fail("no line")
+        self.assertEqual(line.verification, "verified against the node's trusted CAs")
+        self.assertFalse(line.unverified)
+
+    def test_a_pool_that_checks_nothing_is_said_in_the_warning_colour(self) -> None:
+        line = self.line(
+            {"ok": True, "status": 200, "error": None, "certificate": self.CERTIFICATE},
+            backend_tls="none",
+        )
+        if line is None:
+            self.fail("no line")
+        self.assertEqual(line.verification, UNVERIFIED)
+        self.assertTrue(line.unverified)
+
+    def test_an_expired_certificate_an_unverified_pool_accepts_is_said(self) -> None:
+        expired = {**self.CERTIFICATE, "not_after": "2026-11-05T00:00:00Z"}
+        line = self.line(
+            {"ok": True, "status": 200, "error": None, "certificate": expired}, backend_tls="none"
+        )
+        if line is None:
+            self.fail("no line")
+        self.assertEqual((line.until, line.expired), ("expired 26-11-05 (3 days ago)", True))
+
+    def test_a_verification_that_stopped_the_handshake_says_nothing_was_read(self) -> None:
+        line = self.line(
+            {"ok": False, "status": None, "error": "TLS failed: certificate has expired"},
+            backend_tls="system",
+            servers="shop-backend.example.com:8080",
+        )
+        self.assertEqual(line, TlsLine(unread=UNREAD))
+
+    def test_no_line_without_tls_or_without_a_reading(self) -> None:
+        self.assertIsNone(self.line({"ok": True, "status": 200, "error": None}, health_type="http"))
+        #
+        # A node older than the field, and a connection refused before any handshake.
+        #
+        self.assertIsNone(self.line({"ok": True, "status": 200, "error": None}, backend_tls="none"))
+        self.assertIsNone(
+            self.line(
+                {"ok": False, "status": None, "error": "Connection refused"},
+                backend_tls="system",
+                servers="shop-backend.example.com:8080",
+            )
+        )
 
 
 class WhatThisRunCannotReproduce(unittest.TestCase):

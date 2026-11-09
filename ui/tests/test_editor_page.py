@@ -20,6 +20,7 @@ from unittest import mock
 from uuid import uuid4
 
 import yaml
+from haprion.health_probe import Certificate
 
 from haprion_ui import auth, db, editor_flow, health, objects
 from haprion_ui import editor as editor_module
@@ -917,6 +918,60 @@ class TheHealthCardOnThePage(EditorTestCase):
             if held is not False
             else (),
         )
+
+    def tls(self, **fields: object) -> probe_module.NodeReport:
+        entry = probe_module.Reached(
+            host="198.51.100.10", port=8443, ok=True, status=200, error=None, ms=2
+        )
+        return probe_module.NodeReport(
+            node="node-a",
+            reachable=True,
+            error=None,
+            source_held=True,
+            results=(replace(entry, **fields),),  # type: ignore[arg-type]
+        )
+
+    def test_a_tested_tls_server_has_its_certificate_on_the_line_under_it(self) -> None:
+        """B496 nr 9, the sketch of 26-11-08: name, issuer, until when, version, what it is held to."""
+
+        certificate = Certificate(
+            subject="shop-backend.example.com",
+            names=("shop-backend.example.com",),
+            issuer="Example Internal CA",
+            not_after="2099-02-01T12:00:00Z",
+            version="TLSv1.3",
+        )
+        body = self.probe([self.tls(certificate=certificate, verified=False)])
+        line = body[body.index('<tr class="tls-row">') :].split("</tr>", 1)[0]
+        self.assertIn("<span>Certificate <code>shop-backend.example.com</code></span>", line)
+        self.assertIn("<span>issued by Example Internal CA</span>", line)
+        self.assertIn("<span>valid until 99-02-01 (in ", line)
+        self.assertIn("<span>TLS 1.3</span>", line)
+        self.assertIn(
+            '<span class="tls-unverified">not verified: the pool does not check the server', line
+        )
+
+    def test_a_failed_verification_says_the_certificate_was_not_read(self) -> None:
+        body = self.probe(
+            [
+                self.tls(
+                    ok=False,
+                    status=None,
+                    error="TLS failed: certificate has expired",
+                    verified=True,
+                )
+            ]
+        )
+        self.assertIn("TLS failed: certificate has expired", body)
+        self.assertIn(
+            '<span class="tls-unread">The certificate was not read: the check stops where '
+            "verification fails.</span>",
+            body,
+        )
+
+    def test_a_server_without_tls_has_no_line(self) -> None:
+        body = self.probe([self.node("node-a", held=True)])
+        self.assertNotIn('class="tls-row"', body)
 
     def test_a_node_without_the_address_is_not_on_the_page_at_all(self) -> None:
         body = self.probe([self.node("node-a", held=True), self.node("node-b", held=False)])

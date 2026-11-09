@@ -439,6 +439,8 @@ class TheHealthCheck(HealthCheckCase):
                                 "error": None,
                                 "ms": 3,
                                 "summary": "answered 200",
+                                "certificate": None,
+                                "verified": None,
                             },
                             {
                                 "host": "192.0.2.11",
@@ -448,6 +450,8 @@ class TheHealthCheck(HealthCheckCase):
                                 "error": "answered 503, not 200",
                                 "ms": 4,
                                 "summary": "answered 503",
+                                "certificate": None,
+                                "verified": None,
                             },
                         ],
                     },

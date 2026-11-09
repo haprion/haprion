@@ -173,6 +173,10 @@ def _result(
                         "error": row.error,
                         "ms": row.ms,
                         "summary": row.phrase,
+                        "certificate": (
+                            row.certificate.as_dict() if row.certificate is not None else None
+                        ),
+                        "verified": row.verified,
                     }
                     for row in node.results
                 ],

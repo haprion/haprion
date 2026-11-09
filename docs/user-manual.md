@@ -492,6 +492,14 @@ Rise and fall are 1 to 10. Intervals are written as `500ms`, `5s` or `1m`.
 stands on screen, once, now. It sends the same request as HAProxy's check. *What the nodes report* lists each node's verdict on each server. The rows
 the test tried are marked *tested*, and pointing at *Last check* shows HAProxy's own code.
 
+Over TLS, a tested server has a line under it with the certificate it presented: its name, who issued it,
+until when it is valid (*expired* in red once it has) and the TLS version. The line ends with what the pool
+holds the certificate to: the cluster's CA, the node's trusted CAs, or nothing (*not verified*, in yellow).
+When verification fails, *Last check* says why in OpenSSL's words - `certificate has expired`, a name the
+certificate does not cover, an issuer the node does not trust - and the line says the certificate was not
+read: the check stops where verification stops, as HAProxy's does. The API's health check answers with the
+same certificate and `verified` for each row.
+
 ### Coming from Nginx Proxy Manager
 
 Some switches in Nginx Proxy Manager, or in a firewall's reverse proxy, have no field here. HAProxy and the

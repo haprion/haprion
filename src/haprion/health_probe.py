@@ -236,7 +236,9 @@ def _shown(value: object) -> str | None:
     return value if value.isprintable() else None
 
 
-def _certificate(value: object) -> Certificate | None:
+def read_certificate(value: object) -> Certificate | None:
+    """The node's reading of a certificate, each field within its bounds or None."""
+
     if not isinstance(value, Mapping):
         return None
     names = value.get("names")
@@ -305,7 +307,7 @@ def read_answer(node: str, completed: subprocess.CompletedProcess[str]) -> NodeA
                 status=_count(entry.get("status")),
                 error=_text(entry.get("error")),
                 ms=_count(entry.get("ms")),
-                certificate=_certificate(entry.get("certificate")),
+                certificate=read_certificate(entry.get("certificate")),
             )
         )
     held = payload.get("source_held")

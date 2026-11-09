@@ -1426,6 +1426,16 @@ a.login-sso, a.login-action { display: flex; align-items: center; justify-conten
 .node-health-table col:nth-child(2) { width: 34%; }
 .node-health-table col:nth-child(3) { width: 14%; }
 .node-health-table col:nth-child(4) { width: 30%; }
+/* Under a tested TLS server, the certificate it presented (B496 nr 9): the row above
+ * gives up its border so the two read as one server. The parts wrap between each other,
+ * never inside one, except a name too long for the cell. */
+.node-health-table tr:has(+ .tls-row) td { border-bottom: 0; padding-bottom: 2px; }
+.node-health-table .tls-row td { padding-top: 0; font-size: 12px; white-space: normal; }
+.node-health-table .tls-row span { display: inline-block; margin-right: 16px; color: var(--text-secondary); }
+.node-health-table .tls-row code { color: var(--text-primary); overflow-wrap: anywhere; }
+.node-health-table .tls-row .tls-unread { color: var(--muted); }
+.node-health-table .tls-row .tls-unverified { color: var(--warning-text); }
+.node-health-table .tls-row .tls-expired { color: var(--critical-text); }
 /* The object form's folded groups (2026-09-30). A group is a rule, a title and
    one line saying what it holds; opened, its fields sit at the card's gutter
    like every other row, so the group adds a heading and no second indent.

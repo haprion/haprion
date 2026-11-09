@@ -1610,6 +1610,15 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
  * shown, the other hidden, and under HTTP-01 the DNS one greyed in place. */
 .certificate-form .profile-field [hidden] { display: none; }
 .certificate-form .profile-field:has(select:disabled:not([hidden])) { opacity: 0.7; }
+/* Check HTTP-01 (2026-11-08): the button in the profile field HTTP-01 leaves unused, its
+ * answer on a row of its own. The row keeps the answer's height whether or not there is
+ * one - one line from 1100 px, two below, three on a phone - so the card does not grow
+ * when the answer arrives; only a name too long for that grows the row. */
+.certificate-form .http01-check { margin: 14px 20px 0; }
+.certificate-form .http01-check .path-answer { min-height: 1lh; overflow-wrap: anywhere; }
+@media (max-width: 1099px) { .certificate-form .http01-check .path-answer { min-height: 2lh; } }
+@media (max-width: 600px) { .certificate-form .http01-check .path-answer { min-height: 3lh; } }
+.certificate-form .profile-field .http01-button { align-self: flex-start; margin-top: 8px; white-space: nowrap; }
 /* Row, said explicitly: `.form-grid label` stacks its contents, and a box
  * above its own name is a box nobody can read. */
 .certificate-form .method-choices .check, .certificate-form .form-checks-stacked .check { display: flex; flex-direction: row; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }

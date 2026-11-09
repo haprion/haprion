@@ -98,6 +98,7 @@
         </select>
         <small data-profile-hint="dns-01"{% if form.method in ('http-01', 'ndes') %} hidden{% endif %}>Required for DNS-01. <a href="/dns-profiles">Manage DNS profiles</a>.</small>
         <small data-profile-hint="http-01"{% if form.method != 'http-01' %} hidden{% endif %}>Not used with HTTP-01.</small>
+        {% if choices.http01 %}<button type="submit" class="secondary-button http01-button" formaction="/certificates/new/check-http01" formnovalidate data-profile-hint="http-01"{% if form.method != 'http-01' %} hidden disabled{% endif %}>Check HTTP-01</button>{% endif %}
         <select name="key_type" class="csr-only" aria-labelledby="profile-field-title"{% if form.method != 'csr' %} disabled hidden{% endif %}>
           {% for value, label in key_types.items() %}<option value="{{ value }}"{% if form.key_type == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
         </select>
@@ -105,6 +106,7 @@
         <small data-profile-hint="csr"{% if form.method != 'csr' %} hidden{% endif %}>The key is made on the manager, root-only, and never shown. Choose RSA only if the CA requires it.</small>
       </div>
     </div>
+    {% if choices.http01 %}<div class="http01-check" data-http01-check{% if form.method != 'http-01' %} hidden{% endif %}><p class="path-answer" role="status">{% if http01_answer %}<span class="status-dot status-{{ http01_answer.tone }}"></span>{% for text, code in http01_answer.pieces %}{% if code %}<code>{{ text }}</code>{% else %}{{ text }}{% endif %}{% endfor %}{% endif %}</p></div>{% endif %}
   </section>
 
   {#

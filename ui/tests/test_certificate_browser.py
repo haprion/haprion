@@ -20,6 +20,7 @@ from dataclasses import replace
 from typing import Any, ClassVar
 from unittest import mock
 
+from haprion.http01_check import Check
 from playwright.sync_api import Browser, Playwright, sync_playwright
 
 from haprion_ui.app import create_app
@@ -367,7 +368,7 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
                 page.evaluate("getComputedStyle(document.querySelector('.profile-field')).opacity"),
                 "1",
             )
-            self.assertTrue(page.locator("[data-profile-hint='http-01']").is_visible())
+            self.assertTrue(page.locator("small[data-profile-hint='http-01']").is_visible())
 
             page.check("input[name='method'][value='dns-01']")
             self.assertFalse(profile.is_disabled())
@@ -416,6 +417,85 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             right = profile["x"] - (challenge["x"] + challenge["width"])
             self.assertGreater(left, 16)
             self.assertAlmostEqual(left, right, delta=2)
+
+    def test_check_http_01_shows_with_http_01_and_its_answer_does_not_grow_the_card(self) -> None:
+        #
+        # The longest normal answer: another service, with its address and status.
+        #
+        longest = Check("app.example.com", "other", "192.0.2.80", 404, None)
+        heights: dict[int, tuple[float, float]] = {}
+        with (
+            mock.patch("haprion_ui.certificate_form.http01_offered", return_value=True),
+            mock.patch("haprion.http01_check_socket.ask", return_value=longest),
+            self.signed_in(path="/certificates/new") as page,
+        ):
+            button = page.locator(".http01-button")
+            row = page.locator(".http01-check")
+            self.assertFalse(button.is_visible())
+            self.assertFalse(row.is_visible())
+
+            page.fill("input[name='domain']", "app.example.com")
+            page.check("input[name='method'][value='http-01']")
+            self.assertTrue(button.is_visible())
+            self.assertTrue(row.is_visible())
+
+            page.check("input[name='method'][value='dns-01']")
+            self.assertFalse(button.is_visible())
+            self.assertFalse(row.is_visible())
+
+            page.check("input[name='method'][value='http-01']")
+            card = page.locator(".certificate-form .cluster-card").first
+            for width in (1280, 1100, 900, 700, 390):
+                page.set_viewport_size({"width": width, "height": 900})
+                page.fill("input[name='domain']", "app.example.com")
+                before = card.bounding_box()
+                self.assertIsNotNone(before)
+                self.assertEqual(
+                    page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"),
+                    True,
+                )
+                page.click(".http01-button")
+                page.wait_for_selector(".http01-check .status-dot")
+                page.set_viewport_size({"width": width, "height": 900})
+                self.assertTrue(page.locator(".http01-button").is_visible())
+                after = card.bounding_box()
+                if before is None or after is None:
+                    self.fail("the card must have a layout box")
+                self.assertEqual(page.input_value("input[name='domain']"), "app.example.com")
+                self.assertTrue(page.is_checked("input[name='method'][value='http-01']"))
+                self.assertEqual(
+                    page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"),
+                    True,
+                    width,
+                )
+                heights[width] = (before["height"], after["height"])
+                self.assertEqual(before["height"], after["height"], width)
+                #
+                # Back to a form without an answer for the next width.
+                #
+                page.goto(f"http://127.0.0.1:{self.port}/certificates/new?method=http-01")
+                page.wait_for_selector(".certificate-form")
+                page.check("input[name='method'][value='http-01']")
+        print("card heights before/after per width:", heights)
+
+    def test_enter_in_the_name_requests_rather_than_checks(self) -> None:
+        with (
+            mock.patch("haprion_ui.certificate_form.http01_offered", return_value=True),
+            mock.patch("haprion.http01_check_socket.ask") as ask,
+            mock.patch(
+                "haprion_ui.db.queue_job",
+                return_value=queued(operation="cert_issue", cluster=None),
+            ) as queue,
+            mock.patch("haprion_ui.db.record_audit_event"),
+            self.signed_in(path="/certificates/new") as page,
+        ):
+            page.check("input[name='method'][value='http-01']")
+            page.fill("input[name='domain']", "app.example.com")
+            page.check("input[name='cluster'][value='alpha']")
+            page.press("input[name='domain']", "Enter")
+            page.wait_for_url("**/certificates?view=registry")
+            self.assertEqual(queue.call_count, 1)
+        ask.assert_not_called()
 
 
 if __name__ == "__main__":

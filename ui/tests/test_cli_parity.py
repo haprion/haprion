@@ -153,6 +153,7 @@ REFUSED_CALLS: dict[str, list[str]] = {
     "haprion-deploy": [*BAD_CLUSTER],
     "haprion-export": [*BAD_CLUSTER, "/srv/export"],
     "haprion-history-reset": [*BAD_CLUSTER, "--confirm", "please reset me"],
+    "haprion-http01-check": ["not a name", "--json"],
     "haprion-ndes-server add": ["add", "not an address"],
     "haprion-ndes-server remove": ["remove", "not an address"],
     "haprion-network apply": ["apply", *BAD_CLUSTER, "/nonexistent.yaml"],
@@ -275,6 +276,7 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
     "/ndes-profiles/{profile_id}/remove": Command(
         "haprion-profiles remove", "haprion-profiles-apply"
     ),
+    "/certificates/new/check-http01": Command("haprion-http01-check", "haprion-http01-check"),
     "/ndes-profiles/servers/new": Command("haprion-ndes-server add", "haprion-ndes-server"),
     "/ndes-profiles/servers/confirm": Command("haprion-ndes-server add", "haprion-ndes-server"),
     "/ndes-profiles/servers/remove": Command("haprion-ndes-server remove", "haprion-ndes-server"),
@@ -438,6 +440,7 @@ HELPER_ENDS = frozenset(
         "haprion-deploy-helper",
         "haprion-dns-profile-apply-helper",
         "haprion-history-reset-helper",
+        "haprion-http01-check-helper",
         "haprion-inventory-helper",
         "haprion-list-backups-helper",
         "haprion-list-helper",
@@ -483,6 +486,9 @@ EARLY_STOPS = frozenset({"not_root", "dependency_unavailable"})
 #
 BEHIND_THE_DATABASE = "the database is asked before the call is judged; there is none here"
 BEHIND_A_HELPER = "the helper behind the socket judges the call; it is tested with the helper"
+BEHIND_THE_WEBROOT = (
+    "the runtime policy's webroot is read before the name is judged; there is none here"
+)
 BEHIND_SOMETHING: dict[str, str] = {
     **{
         f"haprion-api-token {verb}": BEHIND_THE_DATABASE
@@ -490,6 +496,7 @@ BEHIND_SOMETHING: dict[str, str] = {
     },
     "haprion-cert-delete": BEHIND_A_HELPER,
     "haprion-export": BEHIND_THE_DATABASE,
+    "haprion-http01-check": BEHIND_THE_WEBROOT,
     "haprion-cert-target": BEHIND_A_HELPER,
     "haprion-cluster add": BEHIND_A_HELPER,
     "haprion-cluster remove": BEHIND_A_HELPER,

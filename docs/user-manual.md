@@ -2089,6 +2089,23 @@ page ([Registering a receiver](#registering-a-receiver)). The form refuses a wil
 before anything is queued, and a target it did not offer. The other two things HTTP-01 needs are in
 [ACME configuration and challenge routing](#acme-configuration-and-challenge-routing).
 
+**Check HTTP-01.** With *HTTP-01* chosen, the *DNS profile* field is not used, and *Check HTTP-01* takes its
+place there. It asks whether Let's Encrypt's challenge path would reach this manager for the name in
+*Domain*. The manager writes a test file in the webroot, fetches it over `http://<name>/`, and removes it.
+Nothing is queued and nothing is kept. The answer appears on the row under the fields, and the form stays
+as it was. The check runs from this manager, not from the internet. The answer is one of four:
+
+- *Reached* - the test file came back. The path ends here.
+- *Another service answers* - the name resolves, and something else replied: the status it gave, or
+  where it redirected to. Port 80 for the name ends at a different server, or a rule in the cluster is
+  missing.
+- *Nothing answers* - the name resolves to an address, and nothing replied in time.
+- *The name does not resolve* - from this manager.
+
+A sentence in red that is not one of these means the check itself could not run: the policy names no
+webroot, the name is a wildcard or not a name, or the check service does not answer. At a terminal the
+same check is `sudo haprion-http01-check <name>`; `--json` gives the answer for a script.
+
 **Sending it.** *Request the certificate* queues the job, and the page goes back to the registry. The
 new row says *Requesting* until the CA has answered. If the answer is no, the row carries the CA's own
 words. The Events page keeps the job's record, certbot's output included. The queue runs one
@@ -6837,6 +6854,11 @@ use_backend acme_challenge if acme_challenge
 
 Here `192.0.2.5` stands for the manager's own address. Without all three, an `http-01` request fails at
 the challenge, with certbot's own explanation.
+
+*Check HTTP-01* on the new-certificate form (see [Issuing a certificate](#issuing-a-certificate)) tells whether the three
+are in place before a request is made. At a terminal, `sudo haprion-http01-check <name>` does the same
+and `--json` gives the answer as a document. It writes its test file in the webroot, so it needs the
+`webroot` setting above and runs as root only.
 
 When certbot fails, its output is printed after the error line at a terminal, and carried whole under
 `error.details.diagnostics` in the JSON result. So the explanation of a failed challenge reaches whoever

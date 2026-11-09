@@ -23,6 +23,8 @@
     const title = field.querySelector("#profile-field-title");
     const hints = Array.from(field.querySelectorAll("[data-profile-hint]"));
     if (!profile) return;
+    // The answer to Check HTTP-01 has a row of its own, under the fields.
+    const check = document.querySelector("[data-http01-check]");
 
     //
     // The CSR method (C9b) has no profile: the same field shows the key
@@ -48,10 +50,30 @@
             : method === "ndes" ? title.dataset.ndesTitle
             : title.dataset.profileTitle;
       }
-      hints.forEach((hint) => { hint.hidden = hint.dataset.profileHint !== method; });
+      hints.forEach((hint) => {
+        hint.hidden = hint.dataset.profileHint !== method;
+        // A hidden button must not be the form's default one.
+        if (hint.tagName === "BUTTON") hint.disabled = hint.hidden;
+      });
+      if (check) check.hidden = method !== "http-01";
     };
     methods.forEach((method) => method.addEventListener("change", apply));
     apply();
+
+    //
+    // Enter in a field sends the form with its first button, which with
+    // HTTP-01 chosen is Check HTTP-01. Enter stays the request's.
+    //
+    const form = field.closest("form");
+    const request = form && form.querySelector(".deploy-button");
+    if (form && request) {
+      form.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || event.target.tagName !== "INPUT") return;
+        if (["submit", "button"].includes(event.target.type)) return;
+        event.preventDefault();
+        if (!request.disabled) form.requestSubmit(request);
+      });
+    }
   };
 
   //

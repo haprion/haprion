@@ -18,10 +18,12 @@ from fastapi.responses import (
 from haprion import (
     cert_export_socket,
     cert_receiver,
+    http01_check_socket,
 )
 from haprion.cert_export import FORMATS as EXPORT_FORMATS
 from haprion.cert_export import Export, ExportError
 from haprion.config import CERTIFICATE_ID
+from haprion.http01_check import CheckError
 
 from haprion_ui import (
     auth,
@@ -34,6 +36,7 @@ from haprion_ui import (
     certificates,
     db,
     features,
+    http01_answer,
     jobs,
     operations,
     refusals,
@@ -275,6 +278,60 @@ def build_router(config: Config) -> APIRouter:
         if form.interface:
             return RedirectResponse("/settings", status_code=303)
         return RedirectResponse("/certificates?view=registry", status_code=303)
+
+    @router.post("/certificates/new/check-http01", response_class=HTMLResponse)
+    def check_http01(
+        request: Request,
+        domain: str = Form(default="", max_length=255),
+        method: str = Form(default="", max_length=16),
+        cluster: Sequence[str] = Form(default=()),
+        receiver: Sequence[str] = Form(default=()),
+        format: Sequence[str] = Form(default=()),
+        dns_profile: str = Form(default="", max_length=32),
+        ndes_profile: str = Form(default="", max_length=32),
+        key_type: str = Form(default="", max_length=16),
+        interface: str = Form(default="", max_length=1),
+        exportable: str = Form(default="", max_length=1),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Whether the challenge path reaches this manager; the form is drawn again as it was.
+
+        Nothing is queued and nothing is stored, and the form's request key is
+        not used: the page that answers carries a new one. Not audited, as the
+        NDES server fetch is not: a check changes nothing that stays.
+        """
+
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        if not config.management_writes:
+            return PlainTextResponse("Not found", status_code=404)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return forbidden_page(request, config)
+        if session.role != "admin":
+            return forbidden_page(request, config)
+        if not certificate_choices(request, config).http01:
+            return PlainTextResponse("Not found", status_code=404)
+        form = certificate_form.normalise(
+            certificate_form.IssueForm(
+                domain=domain,
+                method=method,
+                dns_profile=dns_profile,
+                ndes_profile=ndes_profile,
+                clusters=tuple(cluster),
+                receivers=tuple(receiver),
+                formats=tuple(format),
+                key_type=key_type,
+                interface=interface == "1",
+                exportable=exportable == "1",
+            )
+        )
+        try:
+            answer = http01_answer.of_check(http01_check_socket.ask(form.domain))
+        except CheckError as error:
+            answer = http01_answer.of_error(error)
+        return _certificate_form_page(request, config, form, http01=answer)
 
     #
     # The signing request a waiting row exists to hand out (C9b). Served
@@ -902,6 +959,7 @@ def build_router(config: Config) -> APIRouter:
         form: certificate_form.IssueForm,
         *,
         problem: str = "",
+        http01: http01_answer.Answer | None = None,
     ) -> Response:
         session = current_session(request)
         if session is None:
@@ -931,6 +989,7 @@ def build_router(config: Config) -> APIRouter:
                 "choices": choices,
                 "key_types": certificate_form.KEY_TYPE_LABELS,
                 "problem": problem,
+                "http01_answer": http01,
                 "certificate_job": jobs.certificate_in_flight(
                     recent, writes=config.management_writes
                 ),

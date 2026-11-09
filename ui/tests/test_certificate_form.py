@@ -10,6 +10,7 @@ the button is a courtesy, and what stops a reader or a stale form is here.
 from __future__ import annotations
 
 import html
+import re
 import tempfile
 import unittest
 from dataclasses import replace
@@ -19,7 +20,9 @@ from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
-from haprion_ui import auth, certificate_form, db, jobs
+from haprion.http01_check import Check, CheckError
+
+from haprion_ui import auth, certificate_form, db, http01_answer, jobs
 from tests.test_certificates import reading as certificate_reading
 from tests.test_certificates import registered, with_registry
 from tests.test_login import LoginTestCase, configuration
@@ -710,6 +713,151 @@ class SendingTheForm(CertificateFormRouteTestCase):
         )
         self.assertEqual(self.post(self.writing_client(), idempotency_key="x").status_code, 400)
         self.assertEqual(self.queued, [])
+
+
+CHECKS = {
+    "reached": Check("app.example.com", "reached", "192.0.2.80", 200, None),
+    "other": Check("app.example.com", "other", "192.0.2.80", 404, None),
+    "other with a problem": Check(
+        "app.example.com",
+        "other",
+        "192.0.2.80",
+        301,
+        "redirected to https://x.app.example.com/, where port 443 did not answer",
+    ),
+    "silent": Check("app.example.com", "silent", "192.0.2.80", None, "did not answer in 5 seconds"),
+    "unresolved": Check("app.example.com", "unresolved", None, None, None),
+}
+
+
+def stripped(markup: str) -> str:
+    return html.unescape(re.sub(r"<[^>]+>", "", markup))
+
+
+class TheAnswerIsTheEnginesSentence(unittest.TestCase):
+    def test_stripped_of_markup_it_is_the_sentence_for_every_answer(self) -> None:
+        for label, check in CHECKS.items():
+            with self.subTest(label):
+                answer = http01_answer.of_check(check)
+                self.assertEqual(answer.text, check.sentence())
+
+    def test_the_name_and_its_address_are_code_and_nothing_else(self) -> None:
+        answer = http01_answer.of_check(CHECKS["reached"])
+        self.assertEqual(
+            [text for text, code in answer.pieces if code], ["http://app.example.com/"]
+        )
+        other = http01_answer.of_check(CHECKS["other with a problem"])
+        self.assertEqual([text for text, code in other.pieces if code], ["app.example.com"])
+
+    def test_the_tone_is_healthy_only_for_reached(self) -> None:
+        tones = {label: http01_answer.of_check(check).tone for label, check in CHECKS.items()}
+        self.assertEqual(tones.pop("reached"), "healthy")
+        self.assertEqual(set(tones.values()), {"critical"})
+
+
+class CheckingHttpOnTheForm(CertificateFormRouteTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        offered = mock.patch("haprion_ui.certificate_form.http01_offered", return_value=True)
+        offered.start()
+        self.addCleanup(offered.stop)
+
+    def check(self, client: Any, **fields: Any) -> Any:
+        token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        data: dict[str, Any] = {
+            "domain": "App.Example.com",
+            "method": "http-01",
+            "cluster": ["alpha"],
+            "idempotency_key": KEY,
+            auth.CSRF_FIELD: token,
+        }
+        data.update(fields)
+        return client.post("/certificates/new/check-http01", data=data, follow_redirects=False)
+
+    def answer_of(self, page: str) -> str:
+        found = re.search(r'<p class="path-answer" role="status">(.*?)</p>', page, re.S)
+        self.assertIsNotNone(found)
+        return stripped(found.group(1)) if found else ""
+
+    def test_each_answer_is_drawn_as_the_sentence(self) -> None:
+        for label, check in CHECKS.items():
+            with (
+                self.subTest(label),
+                mock.patch("haprion.http01_check_socket.ask", return_value=check) as ask,
+            ):
+                response = self.check(self.writing_client())
+                self.assertEqual(response.status_code, 200)
+                ask.assert_called_once_with("app.example.com")
+                self.assertEqual(self.answer_of(response.text), check.sentence())
+                tone = "healthy" if check.answer == "reached" else "critical"
+                self.assertIn(f'<span class="status-dot status-{tone}">', response.text)
+
+    def test_a_check_error_is_drawn_as_its_sentence(self) -> None:
+        error = CheckError("unavailable", "the HTTP-01 check helper is not running")
+        with mock.patch("haprion.http01_check_socket.ask", side_effect=error):
+            response = self.check(self.writing_client())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.answer_of(response.text), "the HTTP-01 check helper is not running")
+        self.assertIn("status-critical", response.text)
+
+    def test_what_was_filled_in_is_kept_and_nothing_is_queued(self) -> None:
+        with mock.patch("haprion.http01_check_socket.ask", return_value=CHECKS["reached"]):
+            response = self.check(self.writing_client(), cluster=["alpha", "beta"])
+
+        page = response.text
+        self.assertIn('name="domain" value="app.example.com"', page)
+        self.assertIn('value="http-01" checked', page)
+        self.assertRegex(page, r'name="cluster" value="alpha"[^>]* checked')
+        self.assertRegex(page, r'name="cluster" value="beta"[^>]* checked')
+        self.assertEqual(self.queued, [])
+
+    def test_the_forms_request_key_is_not_consumed(self) -> None:
+        client = self.writing_client()
+        with (
+            mock.patch("haprion.http01_check_socket.ask", return_value=CHECKS["reached"]),
+            mock.patch("haprion_ui.db.record_audit_event") as audit,
+        ):
+            response = self.check(client)
+
+        self.assertEqual(self.queued, [])
+        audit.assert_not_called()
+        self.assertNotIn(f'name="idempotency_key" value="{KEY}"', response.text)
+        self.assertRegex(response.text, r'name="idempotency_key" value="[0-9a-f-]{36}"')
+
+    def test_the_refusals_come_before_the_helper_is_asked(self) -> None:
+        with mock.patch("haprion.http01_check_socket.ask") as ask:
+            client = self.client(configuration())
+            self.sign_in(client)
+            self.assertEqual(self.check(client).status_code, 404)
+            self.assertEqual(self.check(self.writing_client(role="reader")).status_code, 403)
+            self.assertEqual(
+                self.check(self.writing_client(), **{auth.CSRF_FIELD: "stale"}).status_code, 403
+            )
+        ask.assert_not_called()
+
+    def test_the_button_and_the_row_are_drawn_where_http_is_offered(self) -> None:
+        page = self.writing_client().get("/certificates/new?method=http-01").text
+
+        self.assertIn('formaction="/certificates/new/check-http01" formnovalidate', page)
+        self.assertIn('class="http01-check" data-http01-check>', page)
+        dns = self.writing_client().get("/certificates/new").text
+        self.assertIn("data-http01-check hidden>", dns)
+        self.assertIn("hidden disabled>Check HTTP-01", dns)
+
+    def test_without_a_webroot_there_is_neither_button_nor_row_nor_route(self) -> None:
+        with (
+            mock.patch("haprion_ui.certificate_form.http01_offered", return_value=False),
+            mock.patch("haprion.http01_check_socket.ask") as ask,
+        ):
+            client = self.writing_client()
+            page = client.get("/certificates/new").text
+            response = self.check(client)
+
+        self.assertNotIn("Check HTTP-01", page)
+        self.assertNotIn("http01-check", page)
+        self.assertEqual(response.status_code, 404)
+        ask.assert_not_called()
 
 
 if __name__ == "__main__":

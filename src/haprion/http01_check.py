@@ -142,6 +142,8 @@ def parse_name(text: str) -> str:
     """The one name HTTP-01 can prove, or CheckError with the reason."""
 
     name = text.strip().lower()
+    if not name:
+        raise CheckError("bad_input", "write the name the certificate is for, then check it")
     if name.startswith("*."):
         raise CheckError("bad_input", "HTTP-01 does not prove a wildcard; a wildcard needs DNS-01")
     if (

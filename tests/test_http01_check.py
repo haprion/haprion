@@ -86,6 +86,16 @@ class TheName(unittest.TestCase):
         self.assertIn("DNS-01", str(caught.exception))
         self.assertEqual(caught.exception.code, "bad_input")
 
+    def test_no_name_is_said_in_words_not_as_a_parameter(self) -> None:
+        """An empty domain field reached the helper as `parameters.name must be a string`."""
+
+        for text in ("", "   "):
+            with self.subTest(text=text), self.assertRaises(CheckError) as caught:
+                http01_check.parse_name(text)
+            self.assertEqual(
+                str(caught.exception), "write the name the certificate is for, then check it"
+            )
+
     def test_what_is_not_a_domain_name_is_refused(self) -> None:
         for text in ("localhost", "192.0.2.80", "a b.example.com", "", "example.com/x"):
             with self.subTest(text=text), self.assertRaises(CheckError):
@@ -463,7 +473,7 @@ class TheHelper(Scenario):
         self.assertIn("acme.webroot", document["error"]["message"])
 
     def test_a_bad_name_is_refused_as_bad_input(self) -> None:
-        for name in ("*.example.com", 7, "x" * 300):
+        for name in ("*.example.com", 7, "x" * 300, ""):
             with self.subTest(name=name):
                 code, out, _err = self.run_helper(request(name))
                 self.assertEqual(code, exit_codes.REFUSED)

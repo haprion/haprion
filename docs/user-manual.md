@@ -2099,7 +2099,8 @@ as it was. The check runs from this manager, not from the internet. The answer i
 - *Another service answers* - the name resolves, and something else replied: the status it gave, or
   where it redirected to. Port 80 for the name ends at a different server, or a rule in the cluster is
   missing.
-- *Nothing answers* - the name resolves to an address, and nothing replied in time.
+- *Nothing answers* - the name resolves to an address, and nothing replied on port 80: the connection
+  was refused, timed out or could not be made.
 - *The name does not resolve* - from this manager.
 
 A sentence in red that is not one of these means the check itself could not run: the policy names no
@@ -6836,7 +6837,9 @@ routes, change the published configuration or check that the name resolves.
 **`http-01` needs more than the webroot setting.** Port 80 for a proxied name ends at the cluster's VIP,
 not at the manager. Three things must be in place, all of them yours to set up:
 
-1. the webroot directory named in the policy
+1. the webroot directory named in the policy. Added after the installation, run platform step 07 again
+   (`/usr/share/haprion-ui/install/platform/07-platform-services`): the worker's sandbox and the check's
+   open the webroot the policy names when the step writes their units
 2. something on the manager that serves that directory over plain HTTP - a port-80 `server` block in nginx
    that exposes only `/.well-known/acme-challenge/` from the webroot
 3. a rule in each cluster that sends that path to the manager, written once into `core/` or `manual/`,

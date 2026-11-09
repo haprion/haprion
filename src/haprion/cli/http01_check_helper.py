@@ -48,7 +48,7 @@ def perform(
     resolve: http01_check.Resolve = http01_check.resolve,
 ) -> dict[str, Any]:
     name = parameters.get("name")
-    if not isinstance(name, str) or not name or len(name) > 253:
+    if not isinstance(name, str) or len(name) > 253:
         raise HelperProtocolError("parameters.name must be a string", exit_code=exit_codes.REFUSED)
     return http01_check.check(name, webroot(policy_path), fetch=fetch, resolve=resolve).as_dict()
 

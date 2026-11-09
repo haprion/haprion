@@ -46,7 +46,7 @@ HSTS_SNIPPET="${HSTS_SNIPPET:-/etc/nginx/snippets/haprion-hsts.conf}"
 # step adds; the timers steps 06, 11, 13 and 14 install. Tests hold the lists to
 # the steps and to the examples.
 #
-SOCKETS=(resolve cert-export block-api cert-receiver node tls backup-job node-restore ndes-server)
+SOCKETS=(resolve cert-export block-api cert-receiver node tls backup-job node-restore ndes-server http01-check)
 OPTIONAL_SOCKETS=(probe oidc)
 TIMERS=(haprion-backup haprion-restore-check haprion-retention haprion-retention-budget
         haprion-traffic-collector haprion-certbot-renew)
@@ -151,7 +151,7 @@ put() {
 socket_pair() {
     local name="haprion-${1}-helper"
     put socket "${SYSTEMD_DIR}/${name}@.service" 644 \
-        "$(render_example "examples/${name}@.service.example")"
+        "$(render_example "examples/${name}@.service.example" | sed -e "s|@WEBROOT@|${webroot_path}|")"
     put socket "${SYSTEMD_DIR}/${name}.socket" 644 \
         "$(render_example "examples/${name}.socket.example")"
 }
@@ -188,6 +188,12 @@ policy_paths="$(worker_writable_paths "$release_python")" \
 put unit "${SYSTEMD_DIR}/${WORKER_UNIT}" 644 \
     "$(sed -e "s|@POLICY_PATHS@|${policy_paths}|" examples/haprion-worker.service.example)"
 put unit "${SYSTEMD_DIR}/${POLLER_UNIT}" 644 "$(cat examples/haprion-poller.service.example)"
+#
+# The HTTP-01 check helper's one writable path is the policy's webroot, read the
+# same way (empty when the policy names none).
+#
+webroot_path="$(http01_check_writable_path "$release_python")" \
+    || die "cannot read the runtime policy's HTTP-01 webroot for the check helper"
 #
 # The web's socket with its unit, as a unit: started and restarted with the web
 # when the release is activated (install-ui-release), not here, where the

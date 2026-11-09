@@ -36,7 +36,13 @@ from haprion import cert_pending, cert_publish, exit_codes
 from haprion.cert_inventory import registry_result
 from haprion.cert_publish import PublishError, publish
 from haprion.cli import cert_publish as command
-from haprion.config import Receiver, load_policy, load_runtime_config, worker_writable_paths
+from haprion.config import (
+    Receiver,
+    http01_check_writable_path,
+    load_policy,
+    load_runtime_config,
+    worker_writable_paths,
+)
 
 BASE = Path(__file__).resolve().parents[1]
 ME = pwd.getpwuid(os.getuid()).pw_name
@@ -1233,6 +1239,23 @@ class TheWorkerCanLookWhereItPublishes(unittest.TestCase):
                 "/srv/example/acme",
             ],
         )
+
+    def test_the_http01_check_helper_opens_the_webroot_if_it_is_there(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "runtime-policy.yaml"
+            head = (
+                "schema_version: 1\n"
+                "cluster_file: /srv/example/registry/clusters.yaml\n"
+                "config_root: /srv/example/config\n"
+                "publish_root: /srv/example/published\n"
+                "validation_certs_root: /srv/example/validation\n"
+            )
+            path.write_text(head, encoding="utf-8")
+            none = http01_check_writable_path(load_policy(path, require_secure=False))
+            path.write_text(head + "acme:\n  webroot: /srv/example/acme\n", encoding="utf-8")
+            named = http01_check_writable_path(load_policy(path, require_secure=False))
+        self.assertEqual(none, "")
+        self.assertEqual(named, "-/srv/example/acme")
 
 
 class TheFileIsModedWhileItIsStillOurs(unittest.TestCase):

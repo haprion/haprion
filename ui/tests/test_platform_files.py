@@ -48,10 +48,14 @@ done
 exec /usr/bin/install "${arguments[@]}"
 """
 #
-# The release's Python, asked for the worker's sandbox roots.
+# The release's Python, asked for the worker's sandbox roots and for the HTTP-01
+# check helper's one writable path.
 #
 STUB_PYTHON = """#!/bin/bash
-echo /srv/example/config /srv/example/registry
+case "$3" in
+    *http01_check_writable_path*) echo -/srv/example/acme ;;
+    *) echo /srv/example/config /srv/example/registry ;;
+esac
 """
 
 
@@ -178,6 +182,9 @@ class ThePlatformFilesFollowAnUpdate(unittest.TestCase):
         socket = (self.systemd / "haprion-node-helper.socket").read_text()
         self.assertIn("SocketGroup=_haprion-worker", socket)
         self.assertIn("haprion-probe", (self.systemd / "haprion-probe-helper.socket").read_text())
+        check = (self.systemd / "haprion-http01-check-helper@.service").read_text()
+        self.assertIn("\nReadWritePaths=-/srv/example/acme\n", check)
+        self.assertNotIn("@WEBROOT@", check)
         site = self.site.read_text()
         self.assertIn("mgr.example.com", site)
         self.assertNotIn("SERVER_NAME", site)
@@ -419,6 +426,7 @@ class TheListsAreTheSteps(unittest.TestCase):
             "backup-job",
             "node-restore",
             "ndes-server",
+            "http01-check",
         )
         for suffix in ("@.service", ".socket")
     }
@@ -580,7 +588,7 @@ class TheListsAreTheSteps(unittest.TestCase):
         step = (PLATFORM / "07-platform-services").read_text()
         always = set(
             re.findall(
-                r'^install_file "/etc/systemd/system/haprion-([a-z-]+)-helper\.socket"',
+                r'^install_file "/etc/systemd/system/haprion-([a-z0-9-]+)-helper\.socket"',
                 step,
                 re.MULTILINE,
             )

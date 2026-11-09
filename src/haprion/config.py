@@ -1290,6 +1290,22 @@ def worker_writable_paths(policy: PathPolicy) -> tuple[Path, ...]:
     return tuple(dict.fromkeys(paths))
 
 
+def http01_check_writable_path(policy: PathPolicy) -> str:
+    """What `haprion-http01-check-helper@.service` opens for writing, as systemd reads it.
+
+    Rendered into the unit by platform step 07 and `refresh-platform-files`: the
+    policy's HTTP-01 webroot, the one path the helper writes in, with a leading
+    `-` so a directory that is missing does not stop the unit from starting (the
+    helper then says the webroot is not a directory). Empty when the policy
+    names no webroot: `ReadWritePaths=` empty opens nothing, and the helper
+    refuses before it writes.
+    """
+
+    if policy.acme is None or policy.acme.webroot is None:
+        return ""
+    return f"-{policy.acme.webroot}"
+
+
 def _ndes_policy(data: Mapping[str, Any]) -> NdesPolicy | None:
     raw = data.get("ndes")
     if raw is None:

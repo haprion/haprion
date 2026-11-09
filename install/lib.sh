@@ -318,6 +318,16 @@ print(" ".join(str(path) for path in worker_writable_paths(load_policy())))'
 }
 
 #
+# What the HTTP-01 check helper's sandbox opens for writing, from the runtime
+# policy by the current release (haprion.config, http01_check_writable_path):
+# the webroot with a leading "-", or nothing when the policy names none.
+#
+http01_check_writable_path() {
+    "${1:-${UI_ROOT}/current/venv/bin/python}" -I -c 'from haprion.config import http01_check_writable_path, load_policy
+print(http01_check_writable_path(load_policy()))'
+}
+
+#
 # A platform example with the accounts its step names put in: each step that
 # installs one replaces TOKEN with ${TOKEN}, and the update installs them again
 # without the step (review 2026-10-22, 6-5). A test holds the steps to this list.

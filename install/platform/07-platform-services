@@ -124,6 +124,26 @@ systemctl is-active --quiet haprion-ndes-server-helper.socket \
     || die "haprion-ndes-server-helper.socket did not start"
 log "  listening on /run/haprion/ndes-server.sock  (group ${WEB_USER})"
 
+#
+# Whether Let's Encrypt's HTTP-01 would reach this manager for a name is
+# checked from the interface: the web asks over a socket, group this account,
+# and a root helper writes one test file in the HTTP-01 webroot, fetches it
+# over the name and removes it. The webroot, from the runtime policy, is the
+# one path its unit opens for writing; empty when the policy names none.
+#
+webroot_path="$(http01_check_writable_path)" \
+    || die "cannot read the runtime policy's HTTP-01 webroot for the check helper"
+install_file "/etc/systemd/system/haprion-http01-check-helper@.service" root:root 644 \
+    "$(sed -e "s|@WEBROOT@|${webroot_path}|" 'examples/haprion-http01-check-helper@.service.example')"
+install_file "/etc/systemd/system/haprion-http01-check-helper.socket" root:root 644 \
+    "$(sed "s|WEB_USER|${WEB_USER}|g" examples/haprion-http01-check-helper.socket.example)"
+systemctl daemon-reload
+systemctl enable --quiet haprion-http01-check-helper.socket
+systemctl restart haprion-http01-check-helper.socket
+systemctl is-active --quiet haprion-http01-check-helper.socket \
+    || die "haprion-http01-check-helper.socket did not start"
+log "  listening on /run/haprion/http01-check.sock  (group ${WEB_USER})"
+
 step "The web service's way to an exportable certificate's key"
 #
 # A certificate made exportable (B255) is downloaded with its key from the

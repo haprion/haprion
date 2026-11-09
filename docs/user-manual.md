@@ -9029,6 +9029,8 @@ reaches a helper over a local socket instead:
 | `/run/haprion/block.sock` | root | placing a block for an API token of the level *Block*, in the call that asks |
 | `/run/haprion/oidc.sock` | its own account, `_haprion-oidc` | sign-in through an OIDC provider |
 | `/run/haprion/resolve.sock` | a temporary account | looking up the names of DNS servers |
+| `/run/haprion/ndes-server.sock` | root | confirming an NDES server from its CA, and writing it into the runtime policy |
+| `/run/haprion/http01-check.sock` | root | *Check HTTP-01*: a test file written in the webroot, fetched over the name, removed again |
 
 The probe shows why it works this way. A health check needs root, because the probe identity's key
 is owned by root - no application account may hold a key that reaches a node. The obvious way to

@@ -468,6 +468,21 @@ read-only sandbox and the network to the nodes. It places a block on every node 
 cluster, and writes nothing. The
 CLI release must carry `haprion-block-api-helper`.
 
+And the web's way to confirm an NDES server:
+`haprion-ndes-server-helper.socket` (`/run/haprion/ndes-server.sock`, group
+`_haprion-web`) and the per-request `haprion-ndes-server-helper@.service`, root with
+the network. It fetches a server's CA and, once the administrator confirms it, writes
+the server into the runtime policy. The CLI release must carry
+`haprion-ndes-server-helper`.
+
+And the web's way to check HTTP-01 before a certificate is requested:
+`haprion-http01-check-helper.socket` (`/run/haprion/http01-check.sock`, group
+`_haprion-web`) and the per-request `haprion-http01-check-helper@.service`, root with
+the network. It writes one test file in the runtime policy's HTTP-01 webroot, fetches
+it over the name the way the CA would, and removes it again. The webroot is the only
+path its unit can write; with no webroot in the policy, nothing is. The CLI release
+must carry `haprion-http01-check-helper`.
+
 ## Step 6 — backups that have been read back
 
 `./06-platform-backup` installs a daily dump timer and a weekly restore check for

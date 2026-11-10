@@ -542,6 +542,7 @@
         "cert_delete",
         "cert_receiver",
         "dns_profile_apply",
+        "blocklist_apply",
         "ndes_profile_apply",
         "cluster_node",
         "cluster_define",

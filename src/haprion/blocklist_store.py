@@ -35,6 +35,7 @@ from haprion.dns_profile_keys import (
 )
 
 OPERATION = "blocklist_apply"
+HELPER = "/opt/haprion/current/bin/haprion-blocklist-apply-helper"
 SCHEMA_VERSION = 1
 DEFINITIONS = Path("/etc/haprion/blocklists")
 STATE = Path("/var/lib/haprion/blocklists")

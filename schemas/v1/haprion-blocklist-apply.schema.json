@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-blocklist-apply.schema.json",
+  "title": "haprion-blocklist-apply-helper JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "blocklist_apply" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "failed", "blocked"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/apply_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/apply_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "apply_result": {
+      "type": "object",
+      "required": ["name", "revision", "refresh_started"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" },
+        "revision": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "refresh_started": { "type": "boolean", "description": "Whether systemd took the request to run a refresh pass now; the timer's next pass does it otherwise." },
+        "removed": { "type": "boolean", "description": "With remove: whether there was a definition to remove." }
+      },
+      "additionalProperties": false
+    }
+  }
+}

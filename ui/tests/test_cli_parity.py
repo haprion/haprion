@@ -422,6 +422,7 @@ HELPER_ENDS = frozenset(
         "haprion-backup-job-ask",
         "haprion-backup-job-helper",
         "haprion-block-api-helper",
+        "haprion-blocklist-apply-helper",
         "haprion-cert-delete-helper",
         "haprion-cert-deploy-helper",
         "haprion-cert-export-helper",
@@ -471,6 +472,9 @@ NOT_COMMANDS: dict[str, str] = {
     "haprion-poller": "a service the unit runs",
     "haprion-worker": "a service the unit runs",
     "haprion-traffic-collector": "a service the timer runs on the nodes",
+    "haprion-blocklist-refresh": (
+        "a pass the timer runs (B500); Settings shows its state, which the poller reads"
+    ),
 }
 
 #

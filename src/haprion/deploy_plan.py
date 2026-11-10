@@ -342,6 +342,13 @@ class CertificateGap:
     stale: tuple[str, ...]
     missing_authorities: tuple[str, ...] = ()
     stale_authorities: tuple[str, ...] = ()
+    #
+    # A blocklist the node does not carry at all (B500). Only a missing one
+    # stops a deploy: HAProxy refuses `-f` on a file that is not there, and
+    # an older list is the last one the node swapped in, which the timer's
+    # next deploy replaces without a version.
+    #
+    missing_blocklists: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
         document: dict[str, object] = {
@@ -352,6 +359,8 @@ class CertificateGap:
         if self.missing_authorities or self.stale_authorities:
             document["missing_authorities"] = list(self.missing_authorities)
             document["stale_authorities"] = list(self.stale_authorities)
+        if self.missing_blocklists:
+            document["missing_blocklists"] = list(self.missing_blocklists)
         return document
 
     def describe(self) -> str:
@@ -364,6 +373,8 @@ class CertificateGap:
             parts.append(f"missing CA {', '.join(self.missing_authorities)}")
         if self.stale_authorities:
             parts.append(f"stale CA {', '.join(self.stale_authorities)}")
+        if self.missing_blocklists:
+            parts.append(f"missing blocklist {', '.join(self.missing_blocklists)}")
         return f"{self.node} ({'; '.join(parts)})"
 
 
@@ -414,13 +425,16 @@ def certificate_gaps(
         stale: tuple[str, ...] = ()
         missing_authorities: tuple[str, ...] = ()
         stale_authorities: tuple[str, ...] = ()
+        missing_blocklists: tuple[str, ...] = ()
         if node.certificates is not None:
             missing, stale = _behind(node.certificates, certificates.certificates, node.chains)
         if node.authorities is not None:
             missing_authorities, stale_authorities = _behind(
                 node.authorities, certificates.authorities
             )
-        if missing or stale or missing_authorities or stale_authorities:
+        if node.blocklists is not None:
+            missing_blocklists, _ = _behind(node.blocklists, certificates.blocklists)
+        if missing or stale or missing_authorities or stale_authorities or missing_blocklists:
             gaps.append(
                 CertificateGap(
                     node=node.name,
@@ -428,6 +442,7 @@ def certificate_gaps(
                     stale=stale,
                     missing_authorities=missing_authorities,
                     stale_authorities=stale_authorities,
+                    missing_blocklists=missing_blocklists,
                 )
             )
     return tuple(gaps)
@@ -448,6 +463,8 @@ def unverified_certificates(
             silent.append((node.name, "certificates"))
         if certificates.authorities and node.authorities is None:
             silent.append((node.name, "CA files"))
+        if certificates.blocklists and node.blocklists is None:
+            silent.append((node.name, "blocklists"))
     return tuple(silent)
 
 

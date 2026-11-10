@@ -456,6 +456,21 @@ class TheClustersBlocklistsCount(unittest.TestCase):
         self.assertEqual(_certificates(status, "blocklists"), (("crowdsec", ROTATED),))
         self.assertIsNone(_certificates({}, "blocklists"))
 
+    def test_a_node_missing_a_list_stops_a_configuration_deploy(self) -> None:
+        observation = ClusterObservation(
+            nodes=(self.observed(()),), vip_state=VipState.SINGLE_OWNER
+        )
+        (gap,) = certificate_gaps(observation, self.TARGET)
+        self.assertEqual(gap.missing_blocklists, ("crowdsec",))
+        self.assertEqual(gap.as_dict()["missing_blocklists"], ["crowdsec"])
+        self.assertIn("missing blocklist crowdsec", gap.describe())
+
+    def test_an_older_list_does_not_stop_one(self) -> None:
+        observation = ClusterObservation(
+            nodes=(self.observed((("crowdsec", UNRELATED),)),), vip_state=VipState.SINGLE_OWNER
+        )
+        self.assertEqual(certificate_gaps(observation, self.TARGET), ())
+
     def test_the_manager_reads_each_file_the_refresh_wrote(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

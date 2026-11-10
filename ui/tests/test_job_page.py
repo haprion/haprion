@@ -880,6 +880,16 @@ class ADeployBlockedOnCertificates(unittest.TestCase):
 
         self.assertEqual(block.headline, "Deploy blocked: node-b carries an older CA corp-root")
 
+    def test_a_node_missing_only_a_blocklist_is_named_with_it(self) -> None:
+        """B500: the same block, and the same fix - deploying the certificates sends the lists."""
+
+        refusal = certificate_refusal(
+            [{"node": "node-a", "missing": [], "stale": [], "missing_blocklists": ["crowdsec"]}]
+        )
+        block = block_of(job(state="blocked", outcome="blocked", result=refusal))
+
+        self.assertEqual(block.headline, "Deploy blocked: node-a is missing the blocklist crowdsec")
+
     def test_any_other_ending_is_not_a_block(self) -> None:
         other_code = {"error": {"code": "deploy_blocked", "message": "split brain"}}
         for row in (

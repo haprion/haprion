@@ -795,7 +795,11 @@ def _certificate_preflight(
         report.warnings.append(Message(code="certificates_unchecked", message=warning))
         return None
 
-    if not preflight.target.certificates and not preflight.target.authorities:
+    if (
+        not preflight.target.certificates
+        and not preflight.target.authorities
+        and not preflight.target.blocklists
+    ):
         #
         # Nothing referenced, nothing to be behind on. Warning about nodes
         # that did not report certificates would then be noise about a

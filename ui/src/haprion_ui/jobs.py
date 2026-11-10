@@ -605,11 +605,16 @@ class NodeGap:
     stale: tuple[str, ...]
     missing_authorities: tuple[str, ...] = ()
     stale_authorities: tuple[str, ...] = ()
+    missing_blocklists: tuple[str, ...] = ()
 
     @property
     def behind(self) -> bool:
         return bool(
-            self.missing or self.stale or self.missing_authorities or self.stale_authorities
+            self.missing
+            or self.stale
+            or self.missing_authorities
+            or self.stale_authorities
+            or self.missing_blocklists
         )
 
     def describe(self) -> str:
@@ -622,6 +627,8 @@ class NodeGap:
             parts.append(f"is missing the CA {', '.join(self.missing_authorities)}")
         if self.stale_authorities:
             parts.append(f"carries an older CA {', '.join(self.stale_authorities)}")
+        if self.missing_blocklists:
+            parts.append(f"is missing the blocklist {', '.join(self.missing_blocklists)}")
         return f"{self.node} {' and '.join(parts)}"
 
 
@@ -690,6 +697,7 @@ def _gaps(value: object) -> tuple[NodeGap, ...]:
                 stale=_ids(entry.get("stale")),
                 missing_authorities=_ids(entry.get("missing_authorities")),
                 stale_authorities=_ids(entry.get("stale_authorities")),
+                missing_blocklists=_ids(entry.get("missing_blocklists")),
             )
             if gap.node and gap.behind:
                 gaps.append(gap)

@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import BinaryIO, TextIO, cast
 
 from haprion import exit_codes, node_ssh
-from haprion.certificates import CertificateError, target_for
+from haprion.certificates import BLOCKLIST_DIRECTORY, CertificateError, target_for
 from haprion.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
 from haprion.cluster_status import ClusterStatus, NodeStatus, parse_status
 from haprion.config import (
@@ -336,7 +336,16 @@ def main(
     # says so, in the rollout text and in the result's warnings.
     #
     preflight: CertificatePreflight | None = None
-    if cluster.certificate_ids or cluster.authority_ids:
+    #
+    # The blocklists the timer wrote for the cluster (B500) are checked the
+    # same way, so a cluster with lists and no certificate is checked too.
+    #
+    listed = policy.certificate_directory(cluster.cluster_id)
+    if (
+        cluster.certificate_ids
+        or cluster.authority_ids
+        or (listed is not None and (listed / BLOCKLIST_DIRECTORY).is_dir())
+    ):
         try:
             preflight = CertificatePreflight(
                 target=(

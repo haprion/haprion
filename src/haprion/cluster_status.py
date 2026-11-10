@@ -186,6 +186,11 @@ class NodeStatus:
     #
     authorities: tuple[tuple[str, str], ...] | None = None
     #
+    # The blocklists the node carries (B500), as (name, file fingerprint).
+    # None on a node whose status script predates them.
+    #
+    blocklists: tuple[tuple[str, str], ...] | None = None
+    #
     # The certificates' chain fingerprints as the node reports them, as (id,
     # chain) for each one that did. Empty on a node whose status script
     # predates the field; its certificates are then judged by the leaf alone.
@@ -247,6 +252,7 @@ class ClusterStatus:
                     keepalived_active=node.keepalived_active,
                     certificates=node.certificates,
                     authorities=node.authorities,
+                    blocklists=node.blocklists,
                     chains=node.chains,
                 )
                 for node in self.nodes
@@ -742,6 +748,7 @@ def _node(entry: Mapping[str, Any]) -> NodeStatus:
         keepalived_active=_flag(_mapping(status.get("keepalived")).get("active")),
         certificates=_certificates(status),
         authorities=_certificates(status, "authorities"),
+        blocklists=_certificates(status, "blocklists"),
         chains=_chains(status),
         servers=_servers(status),
         frontends=_frontends(status),

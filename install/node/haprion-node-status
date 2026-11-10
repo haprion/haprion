@@ -2024,6 +2024,44 @@ def read_authorities() -> list[dict[str, Any]]:
     return entries
 
 
+BLOCKLISTS_DIR = Path("/etc/haproxy/blocklists")
+BLOCKLIST_PENDING = Path("/run/haprion-blocklist-pull.pending")
+MAX_BLOCKLIST_BYTES = 8 * 1024 * 1024
+
+
+def read_blocklists() -> list[dict[str, Any]]:
+    """The blocklists this node carries (B500), each by the SHA-256 of its file.
+
+    Like the CA files: one installed but not yet swapped into HAProxy is left
+    out, and so is one that cannot be read, so the manager sees the node as
+    behind on it and the next deploy finishes the swap.
+    """
+
+    entries: list[dict[str, Any]] = []
+    pending: set[str] = set()
+    if BLOCKLIST_PENDING.exists():
+        try:
+            pending = set(BLOCKLIST_PENDING.read_text(encoding="ascii").split())
+        except Exception:
+            return entries
+    try:
+        paths = sorted(BLOCKLISTS_DIR.glob("*.lst"))
+    except Exception:
+        return entries
+    for path in paths:
+        name = path.name[: -len(".lst")]
+        if name.startswith(".") or name in pending:
+            continue
+        try:
+            if not path.is_file() or path.stat().st_size > MAX_BLOCKLIST_BYTES:
+                continue
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            continue
+        entries.append({"id": name, "fingerprint_sha256": digest})
+    return entries
+
+
 def certificate_valid(path: Path) -> bool:
     """Is it in its validity window right now? Measured, not assumed."""
 
@@ -2227,6 +2265,7 @@ result: dict[str, Any] = {
     "servers": servers,
     "certificates": certificates,
     "authorities": read_authorities(),
+    "blocklists": read_blocklists(),
     "installation": read_installation(),
     "preparation": read_preparation(),
     "architecture": os.uname().machine,

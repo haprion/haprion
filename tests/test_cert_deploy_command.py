@@ -348,7 +348,7 @@ class TriggerTests(unittest.TestCase):
 class BatchTests(unittest.TestCase):
     """E02: a cluster with more files than the node takes in one request is asked in batches."""
 
-    def ask(self, certificates: int, authorities: int = 0) -> list[str]:
+    def ask(self, certificates: int, authorities: int = 0, blocklists: int = 0) -> list[str]:
         from haprion.deploy_plan import CertificateRef, CertificateTarget
 
         def refs(prefix: str, count: int) -> tuple[CertificateRef, ...]:
@@ -358,7 +358,9 @@ class BatchTests(unittest.TestCase):
             )
 
         target = CertificateTarget(
-            certificates=refs("site", certificates), authorities=refs("root", authorities)
+            certificates=refs("site", certificates),
+            authorities=refs("root", authorities),
+            blocklists=refs("list", blocklists),
         )
         sent: list[str] = []
 
@@ -412,6 +414,16 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(
             [request.split()[0] for request in sent], ["ca-pull", "ca-pull", "cert-pull"]
         )
+
+    def test_blocklists_are_asked_last_in_batches(self) -> None:
+        sent = self.ask(1, authorities=1, blocklists=33)
+        self.assertEqual(
+            [request.split()[0] for request in sent],
+            ["ca-pull", "cert-pull", "blocklist-pull", "blocklist-pull"],
+        )
+
+    def test_a_cluster_with_only_blocklists_asks_for_them_alone(self) -> None:
+        self.assertEqual(self.ask(0, blocklists=1), ["blocklist-pull list01"])
 
 
 class RefusalContractTests(HelperFixture):

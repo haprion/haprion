@@ -18,9 +18,13 @@ rewrite has something to be measured against.
 
 from __future__ import annotations
 
+import hashlib
+import tempfile
 import unittest
+from pathlib import Path
 
-from haprion import exit_codes
+from haprion import certificates, exit_codes
+from haprion.cluster_status import _certificates
 from haprion.deploy_plan import (
     CertificateRef,
     CertificateTarget,
@@ -409,6 +413,65 @@ class TheClustersCaFilesCount(unittest.TestCase):
             [{"id": "corp-root", "fingerprint_sha256": ROTATED}],
         )
         self.assertNotIn("target_authorities", ONE.result_fields())
+
+
+class TheClustersBlocklistsCount(unittest.TestCase):
+    """B500: a node is current only when it carries every list the manager wrote for the cluster."""
+
+    TARGET = CertificateTarget(
+        certificates=(CertificateRef(id="example-net", fingerprint=WILDCARD),),
+        blocklists=(CertificateRef(id="crowdsec", fingerprint=ROTATED),),
+    )
+
+    def observed(self, blocklists: tuple[tuple[str, str], ...] | None) -> NodeObservation:
+        return NodeObservation(
+            name="node-a",
+            status_ok=True,
+            certificates=(("example-net", WILDCARD),),
+            blocklists=blocklists,
+        )
+
+    def test_the_right_file_is_current(self) -> None:
+        self.assertIs(self.TARGET.is_current(self.observed((("crowdsec", ROTATED),))), True)
+
+    def test_an_older_or_missing_file_is_behind(self) -> None:
+        self.assertIs(self.TARGET.is_current(self.observed((("crowdsec", UNRELATED),))), False)
+        self.assertIs(self.TARGET.is_current(self.observed(())), False)
+
+    def test_a_node_that_says_nothing_about_blocklists_is_unknown(self) -> None:
+        self.assertIsNone(self.TARGET.is_current(self.observed(None)))
+
+    def test_a_cluster_without_blocklists_does_not_ask(self) -> None:
+        self.assertIs(ONE.is_current(self.observed(None)), True)
+
+    def test_the_result_names_them(self) -> None:
+        self.assertEqual(
+            self.TARGET.result_fields()["target_blocklists"],
+            [{"id": "crowdsec", "fingerprint_sha256": ROTATED}],
+        )
+        self.assertNotIn("target_blocklists", ONE.result_fields())
+
+    def test_the_node_reports_them_from_their_own_key(self) -> None:
+        status = {"blocklists": [{"id": "crowdsec", "fingerprint_sha256": ROTATED}, {"id": "x"}]}
+        self.assertEqual(_certificates(status, "blocklists"), (("crowdsec", ROTATED),))
+        self.assertIsNone(_certificates({}, "blocklists"))
+
+    def test_the_manager_reads_each_file_the_refresh_wrote(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.assertEqual(certificates.read_blocklists(root), ())
+            (root / "blocklists").mkdir()
+            (root / "blocklists" / "crowdsec.lst").write_bytes(b"192.0.2.0/24\n")
+            (root / "blocklists" / ".haprion-tmp.lst").write_bytes(b"x")
+            (root / "blocklists" / "notes.txt").write_bytes(b"x")
+            self.assertEqual(
+                certificates.read_blocklists(root),
+                (
+                    CertificateRef(
+                        id="crowdsec", fingerprint=hashlib.sha256(b"192.0.2.0/24\n").hexdigest()
+                    ),
+                ),
+            )
 
 
 if __name__ == "__main__":

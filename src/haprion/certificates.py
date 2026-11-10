@@ -237,6 +237,37 @@ def read_reference(root: Path, identifier: str) -> CertificateRef:
         raise CertificateError(f"certificate '{identifier}': {exc}") from exc
 
 
+#
+# The blocklists the refresh timer wrote for a cluster (B500), under its
+# certificate directory: every one there goes to every node of the cluster.
+#
+BLOCKLIST_DIRECTORY = "blocklists"
+MAX_BLOCKLIST_BYTES = 8 * 1024 * 1024
+_BLOCKLIST_FILE = re.compile(r"^[a-z][a-z0-9-]{0,39}\.lst$")
+
+
+def read_blocklists(root: Path) -> tuple[CertificateRef, ...]:
+    """Each blocklist file in the cluster's directory, by name and the SHA-256 of its bytes."""
+
+    directory = root / BLOCKLIST_DIRECTORY
+    try:
+        paths = sorted(p for p in directory.iterdir() if _BLOCKLIST_FILE.fullmatch(p.name))
+    except FileNotFoundError:
+        return ()
+    except OSError as exc:
+        raise CertificateError(f"the blocklists could not be listed: {exc}") from exc
+    found = []
+    for path in paths:
+        try:
+            if path.stat().st_size > MAX_BLOCKLIST_BYTES:
+                raise CertificateError(f"blocklist '{path.stem}' is implausibly large")
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as exc:
+            raise CertificateError(f"blocklist '{path.stem}' could not be read: {exc}") from exc
+        found.append(CertificateRef(id=path.stem, fingerprint=digest))
+    return tuple(found)
+
+
 def target_for(cluster: Cluster, root: Path) -> CertificateTarget:
     """The certificates this cluster references, in configured order.
 
@@ -251,4 +282,5 @@ def target_for(cluster: Cluster, root: Path) -> CertificateTarget:
             read_reference(root, identifier) for identifier in cluster.certificate_ids
         ),
         authorities=tuple(read_authority(root, identifier) for identifier in cluster.authority_ids),
+        blocklists=read_blocklists(root),
     )

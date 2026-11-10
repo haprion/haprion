@@ -49,12 +49,17 @@
       ],
       "properties": {
         "target_certificates": {
+          "description": "The certificates the cluster references; empty for a cluster that carries only CA files or blocklists.",
           "type": "array",
-          "minItems": 1,
           "items": { "$ref": "#/$defs/certificate_target" }
         },
         "target_authorities": {
           "description": "The CA files the cluster's pools verify against (B276); absent when it has none.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/certificate_target" }
+        },
+        "target_blocklists": {
+          "description": "The blocklists the cluster's nodes carry (B500), each by the SHA-256 of its file; absent when there are none.",
           "type": "array",
           "items": { "$ref": "#/$defs/certificate_target" }
         },

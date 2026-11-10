@@ -110,6 +110,11 @@ class NodeObservation:
     #
     authorities: tuple[tuple[str, str], ...] | None = None
     #
+    # The blocklists the node carries (B500), as (name, file fingerprint).
+    # None when the node did not say - a node from before blocklists existed.
+    #
+    blocklists: tuple[tuple[str, str], ...] | None = None
+    #
     # The chain fingerprint (id, chain) of each certificate that reported one.
     # Empty for a node from before the field: its certificates are then
     # compared by the leaf alone, as they were.
@@ -264,6 +269,12 @@ class CertificateTarget:
     # added behind the one already there is a change the node must get.
     #
     authorities: tuple[CertificateRef, ...] = ()
+    #
+    # The blocklists (B500): every list the manager wrote for the cluster,
+    # each by the SHA-256 of its file. They go to the nodes the way the
+    # certificates do, with the same key, and need no configuration version.
+    #
+    blocklists: tuple[CertificateRef, ...] = ()
 
     def is_current(self, node: NodeObservation) -> bool | None:
         if node.certificates is None:
@@ -276,12 +287,17 @@ class CertificateTarget:
             return None
         if self.authorities and node.authorities is None:
             return None
+        if self.blocklists and node.blocklists is None:
+            return None
         carried = dict(node.certificates)
         chains = dict(node.chains)
         held = dict(node.authorities or ())
-        return all(
-            ref.matches(carried.get(ref.id), chains.get(ref.id)) for ref in self.certificates
-        ) and all(held.get(ref.id) == ref.fingerprint for ref in self.authorities)
+        lists = dict(node.blocklists or ())
+        return (
+            all(ref.matches(carried.get(ref.id), chains.get(ref.id)) for ref in self.certificates)
+            and all(held.get(ref.id) == ref.fingerprint for ref in self.authorities)
+            and all(lists.get(ref.id) == ref.fingerprint for ref in self.blocklists)
+        )
 
     def skip_reason(self, node: NodeObservation) -> str:
         return f"{node.name} already has the referenced certificates; nothing to do"
@@ -295,6 +311,10 @@ class CertificateTarget:
         if self.authorities:
             fields["target_authorities"] = [
                 {"id": ref.id, "fingerprint_sha256": ref.fingerprint} for ref in self.authorities
+            ]
+        if self.blocklists:
+            fields["target_blocklists"] = [
+                {"id": ref.id, "fingerprint_sha256": ref.fingerprint} for ref in self.blocklists
             ]
         return fields
 

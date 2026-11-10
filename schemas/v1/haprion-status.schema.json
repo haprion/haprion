@@ -251,6 +251,19 @@
             "additionalProperties": false
           }
         },
+        "blocklists": {
+          "description": "The blocklists the node carries (B500), each by the SHA-256 of its file. One installed but not yet swapped into HAProxy is left out. Absent from nodes installed before blocklists existed.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "fingerprint_sha256"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" },
+              "fingerprint_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            },
+            "additionalProperties": false
+          }
+        },
         "architecture": {
           "description": "The node's machine architecture, as the kernel names it (`x86_64`). Absent from nodes installed before it was reported.",
           "type": "string"

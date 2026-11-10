@@ -73,6 +73,10 @@ REQUEST_VERB = "cert-pull"
 #
 AUTHORITY_VERB = "ca-pull"
 #
+# The blocklists (B500), through the same pull helper with `--blocklist`.
+#
+BLOCKLIST_VERB = "blocklist-pull"
+#
 # The most IDs one request may carry: the node's trigger wrapper refuses more
 # (`MAX_CERTIFICATES` in `install/node/haprion-cert-trigger`), and a test holds
 # the two numbers together. A cluster with more files is asked in batches.
@@ -124,6 +128,7 @@ def trigger_node(
     # for, and the node's wrapper refuses a request without IDs (lab 26-10-26).
     #
     requests.extend(_batches(REQUEST_VERB, [ref.id for ref in target.certificates]))
+    requests.extend(_batches(BLOCKLIST_VERB, [ref.id for ref in target.blocklists]))
     for request in requests:
         code = run_trigger(
             node_ssh.ssh_argv(identity.key, identity.user, node.mgmt_host, request),

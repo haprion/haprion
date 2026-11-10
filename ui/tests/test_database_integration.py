@@ -11660,11 +11660,14 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
     def test_a_dump_at_0117_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
         self.restored_from("0117", grants_differ="0117 has no receiver_fetch to grant on")
 
+    def test_a_dump_at_0118_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
+        self.restored_from("0118", grants_differ="0118 has no blocklist to grant on")
+
 
 class EveryRevisionADumpCanBeAtIsRestored(unittest.TestCase):
     """A restore migrates a dump from any revision from the baseline to the head (B436).
 
-    A dump at 0115, 0116 or 0117 restored under the head must be migrated, proved and held, and
+    A dump at any revision from 0115 restored under the head must be migrated, proved and held, and
     this fails until `ADumpFromBeforeTheHead` says so with `restored_from` for
     every revision between the baseline and the head.
     """

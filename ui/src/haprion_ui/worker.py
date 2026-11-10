@@ -170,6 +170,11 @@ _OPERATION_OUTCOMES = {
     "ndes_profile_apply": frozenset({"done", "failed", "blocked"}),
     "dns_profile_apply": frozenset({"done", "failed", "blocked"}),
     #
+    # `blocklist_apply` (B500) writes one definition or refuses to; the
+    # refresh pass it starts is the timer's, not the job's.
+    #
+    "blocklist_apply": frozenset({"done", "failed", "blocked"}),
+    #
     # `cert_scep` has a real half: the CA holding the request. That is
     # `partial` - the key is kept and the same request is resumed later.
     #
@@ -396,6 +401,22 @@ def _finish(
                 " for and was kept",
             )
 
+    if state == "done" and job.operation == "blocklist_apply" and job.payload.get("remove") is True:
+        name = job.payload.get("name")
+        revision = job.payload.get("revision")
+        if not (
+            isinstance(name, str)
+            and type(revision) is int
+            and db.delete_blocklist(connection, name, revision)
+        ):
+            logger.error("job %s removed a blocklist's definition but its row changed", job.id)
+            result = _with_warning(
+                result,
+                "blocklist_row_changed",
+                "the blocklist's definition was removed; its row changed after the removal was"
+                " asked for and was kept",
+            )
+
     if not db.finish_job(
         connection,
         job_id=job.id,
@@ -599,6 +620,26 @@ def _sealed_profile(
         key_id=row.key_id,
         revision=row.revision,
         ciphertext=bytes(row.ciphertext),
+    )
+
+
+def _blocklist_row(connection: Any, name: str) -> operations.BlocklistRow | None:
+    """The one blocklist row a `blocklist_apply` job needs, read as the worker."""
+
+    row = db.sealed_blocklist(connection, name)
+    if row is None:
+        return None
+    return operations.BlocklistRow(
+        name=row.name,
+        revision=row.revision,
+        url=row.url,
+        every_hours=row.every_hours,
+        auth=row.auth,
+        username=row.username,
+        description=row.description,
+        excepts=tuple(row.excepts),
+        key_id=row.key_id,
+        ciphertext=None if row.ciphertext is None else bytes(row.ciphertext),
     )
 
 
@@ -879,6 +920,7 @@ def run_one_job(
             profile_lookup=lambda profile_id: _sealed_profile(
                 connection, profile_id, ndes=job.operation == "ndes_profile_apply"
             ),
+            blocklist_lookup=lambda name: _blocklist_row(connection, name),
         )
     except (operations.UnknownOperation, operations.BadPayload) as refusal:
         #

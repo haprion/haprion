@@ -102,6 +102,19 @@ from haprion_ui.db.audit import (
     requested_by,
     server_state_events,
 )
+from haprion_ui.db.blocklists import (
+    Blocklist,
+    BlocklistChanged,
+    BlocklistState,
+    SealedBlocklist,
+    blocklist,
+    blocklist_states,
+    blocklists,
+    delete_blocklist,
+    record_blocklist_states,
+    save_blocklist,
+    sealed_blocklist,
+)
 from haprion_ui.db.clusters import (
     COMMIT_SHAPE,
     CPU_READING_MAX_GAP,
@@ -647,4 +660,15 @@ __all__ = [
     "waf_request_count",
     "waf_verdicts",
     "wake_poller",
+    "Blocklist",
+    "BlocklistChanged",
+    "BlocklistState",
+    "SealedBlocklist",
+    "blocklist",
+    "blocklist_states",
+    "blocklists",
+    "delete_blocklist",
+    "record_blocklist_states",
+    "save_blocklist",
+    "sealed_blocklist",
 ]

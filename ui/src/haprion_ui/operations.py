@@ -26,6 +26,8 @@ from uuid import UUID
 
 from haprion import (
     backup_schedule_write,
+    blocklist_store,
+    blocklists,
     cert_issue,
     cert_request_state,
     cert_upload,
@@ -254,6 +256,7 @@ OPERATIONS = frozenset(
     {
         "backup_run",
         "backup_schedule",
+        "blocklist_apply",
         "cert_delete",
         "cert_deploy",
         "cert_import",
@@ -282,6 +285,7 @@ OPERATIONS = frozenset(
 
 CERTIFICATE_OPERATIONS = frozenset(
     {
+        "blocklist_apply",
         "cert_issue",
         "cert_publish",
         "cert_target",
@@ -320,6 +324,25 @@ class SealedProfileRow:
 
 ProfileLookup = Callable[[str], SealedProfileRow | None]
 
+
+@dataclass(frozen=True)
+class BlocklistRow:
+    """What `prepare` needs from a blocklist row (B500); the box is read, never queued."""
+
+    name: str
+    revision: int
+    url: str
+    every_hours: int
+    auth: str
+    username: str
+    description: str
+    excepts: tuple[str, ...]
+    key_id: str | None
+    ciphertext: bytes | None
+
+
+BlocklistLookup = Callable[[str], BlocklistRow | None]
+
 #
 # Which of the named certificates a draft still names, as certificate ID to
 # `cluster/object` rows. The web asks its own database and hands the answer
@@ -342,6 +365,7 @@ def _certificate_operation(
     payload: Mapping[str, Any],
     profile_lookup: ProfileLookup | None,
     draft_references: DraftReferences | None,
+    blocklist_lookup: BlocklistLookup | None = None,
 ) -> Prepared:
     """The three operations scoped by certificate rather than by cluster.
 
@@ -638,6 +662,58 @@ def _certificate_operation(
                 formats=formats,
                 interface=interface,
             ),
+        )
+
+    if operation == "blocklist_apply":
+        #
+        # As a DNS profile: the payload names the list and the revision saved,
+        # and the listed - with its box - is read when the job runs. A newer listed
+        # is applied (the helper takes no older box); a removal applies only
+        # the revision it was asked for, and the worker deletes the listed after.
+        #
+        _only(payload, "name", "revision", "remove")
+        name = payload.get("name")
+        revision = payload.get("revision")
+        if not isinstance(name, str) or not blocklists.NAME.fullmatch(name):
+            raise BadPayload("blocklist_apply needs a blocklist's name")
+        if type(revision) is not int or not 1 <= revision <= blocklist_store.MAX_REVISION:
+            raise BadPayload("blocklist_apply needs a revision from 1 to 1 000 000")
+        remove = _flag(payload, "remove", default=False)
+        if blocklist_lookup is None:
+            raise BadPayload("blocklist_apply needs the blocklist listed and none was offered")
+        listed = blocklist_lookup(name)
+        if listed is None:
+            raise BadPayload(f"blocklist {name} no longer exists")
+        if listed.revision < revision or (remove and listed.revision != revision):
+            raise BadPayload(f"blocklist {name} is at revision {listed.revision}, not {revision}")
+        if remove:
+            request = blocklist_store.build_request(
+                str(request_id), stored=None, name=name, revision=listed.revision
+            )
+        else:
+            try:
+                definition = blocklists.definition(
+                    name=listed.name,
+                    url=listed.url,
+                    every_hours=listed.every_hours,
+                    authorization=listed.auth,
+                    username=listed.username,
+                    description=listed.description,
+                    excepts=listed.excepts,
+                )
+            except ValueError as exc:
+                raise BadPayload(f"blocklist {name}: {exc}") from exc
+            request = blocklist_store.build_request(
+                str(request_id),
+                stored=definition,
+                name=name,
+                revision=listed.revision,
+                key_id=listed.key_id,
+                ciphertext=listed.ciphertext,
+            )
+        return Prepared(
+            argv=(dns_profiles.SUDO, *SUDO_FLAGS, blocklist_store.HELPER),
+            request=request,
         )
 
     if operation == "dns_profile_apply":
@@ -1029,6 +1105,7 @@ def prepare(
     payload: Mapping[str, Any],
     profile_lookup: ProfileLookup | None = None,
     draft_references: DraftReferences | None = None,
+    blocklist_lookup: BlocklistLookup | None = None,
 ) -> Prepared:
     """Build the command for one job, or refuse it.
 
@@ -1059,6 +1136,7 @@ def prepare(
             payload=payload,
             profile_lookup=profile_lookup,
             draft_references=draft_references,
+            blocklist_lookup=blocklist_lookup,
         )
 
     #

@@ -17,6 +17,7 @@ sealed for one list or an older revision opens and is refused.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import stat
@@ -309,3 +310,50 @@ def write_state(states: Mapping[str, ListState], *, directory: Path = STATE) -> 
     }
     content = json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n"
     atomic_file.write(directory / STATE_FILE, content.encode("utf-8"), mode=0o644)
+
+
+# - the worker's request ----------------------------------------------------
+
+
+def build_request(
+    request_id: str,
+    *,
+    stored: blocklists.Definition | None,
+    name: str,
+    revision: int,
+    key_id: str | None = None,
+    ciphertext: bytes | None = None,
+) -> str:
+    """The request the worker sends the apply helper; `stored` None removes the definition.
+
+    The box travels base64 inside the JSON, as a DNS profile's does, and the
+    helper holds it to the list's name and to a revision no older than this.
+    """
+
+    parameters: dict[str, Any] = {"name": name, "revision": revision}
+    if stored is None:
+        parameters["remove"] = True
+    else:
+        parameters.update(
+            {
+                "url": stored.url,
+                "every_hours": stored.every_hours,
+                "authorization": stored.authorization,
+                "username": stored.username,
+                "description": stored.description,
+                "excepts": list(stored.excepts),
+            }
+        )
+        if ciphertext is not None:
+            parameters["key_id"] = key_id
+            parameters["ciphertext"] = base64.b64encode(ciphertext).decode("ascii")
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "operation": OPERATION,
+            "cluster": None,
+            "request_id": request_id,
+            "parameters": parameters,
+        },
+        separators=(",", ":"),
+    )

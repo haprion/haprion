@@ -19,6 +19,7 @@ from uuid import UUID, uuid4
 
 from haprion import (
     accounts,
+    blocklist_store,
     cert_issue,
     cert_lock,
     cert_receiver,
@@ -312,6 +313,74 @@ class TheCommandComesFromTheEngine(unittest.TestCase):
                 request_id=REQUEST,
                 payload={"profile": "cf-main", "revision": 2, "remove": True},
                 profile_lookup=lambda _profile: row,
+            )
+
+
+class ApplyingABlocklist(unittest.TestCase):
+    """B500: the row and its box are read when the job runs, as a DNS profile's are."""
+
+    ROW = operations.BlocklistRow(
+        name="crowdsec",
+        revision=3,
+        url="https://example.com/list.txt",
+        every_hours=24,
+        auth="bearer",
+        username="",
+        description="CrowdSec raw IP list",
+        excepts=("192.0.2.10/32", "partner-sites"),
+        key_id="0123456789abcdef",
+        ciphertext=b"x" * 48,
+    )
+
+    def prepare(self, payload: dict[str, object], row: object = ROW) -> operations.Prepared:
+        return operations.prepare(
+            operation="blocklist_apply",
+            cluster=None,
+            request_id=REQUEST,
+            payload=payload,
+            blocklist_lookup=lambda _name: row,  # type: ignore[arg-type,return-value]
+        )
+
+    def test_the_request_carries_the_row_and_its_box(self) -> None:
+        prepared = self.prepare({"name": "crowdsec", "revision": 3})
+
+        self.assertEqual(prepared.argv[-1], blocklist_store.HELPER)
+        parameters = json.loads(prepared.request)["parameters"]
+        self.assertEqual(parameters["excepts"], ["192.0.2.10/32", "partner-sites"])
+        self.assertEqual(parameters["key_id"], "0123456789abcdef")
+        self.assertEqual(parameters["ciphertext"], "eHh4" * 16)
+        self.assertNotIn("remove", parameters)
+
+    def test_a_newer_row_is_applied_and_an_older_refused(self) -> None:
+        self.assertEqual(
+            json.loads(self.prepare({"name": "crowdsec", "revision": 2}).request)["parameters"][
+                "revision"
+            ],
+            3,
+        )
+        with self.assertRaisesRegex(operations.BadPayload, "revision 3, not 4"):
+            self.prepare({"name": "crowdsec", "revision": 4})
+
+    def test_a_removal_is_bound_to_the_exact_revision(self) -> None:
+        parameters = json.loads(
+            self.prepare({"name": "crowdsec", "revision": 3, "remove": True}).request
+        )["parameters"]
+        self.assertEqual(parameters, {"name": "crowdsec", "revision": 3, "remove": True})
+        with self.assertRaisesRegex(operations.BadPayload, "revision 3, not 2"):
+            self.prepare({"name": "crowdsec", "revision": 2, "remove": True})
+
+    def test_a_row_that_is_gone_or_a_bad_payload_is_refused(self) -> None:
+        with self.assertRaisesRegex(operations.BadPayload, "no longer exists"):
+            self.prepare({"name": "crowdsec", "revision": 3}, row=None)
+        for payload in ({"name": "Bad", "revision": 1}, {"name": "crowdsec", "revision": 0}):
+            with self.subTest(payload=payload), self.assertRaises(operations.BadPayload):
+                self.prepare(payload)
+        with self.assertRaises(operations.BadPayload):
+            operations.prepare(
+                operation="blocklist_apply",
+                cluster="alpha",
+                request_id=REQUEST,
+                payload={"name": "crowdsec", "revision": 3},
             )
 
 

@@ -444,6 +444,10 @@ refuse "$WEB_USER" "has no DNS profile helper grant" \
     sudo -n -l /opt/haprion/current/bin/haprion-dns-profile-apply-helper
 refuse "$POLLER_USER" "has no DNS profile helper grant" \
     sudo -n -l /opt/haprion/current/bin/haprion-dns-profile-apply-helper
+refuse "$WEB_USER" "has no blocklist helper grant" \
+    sudo -n -l /opt/haprion/current/bin/haprion-blocklist-apply-helper
+refuse "$POLLER_USER" "has no blocklist helper grant" \
+    sudo -n -l /opt/haprion/current/bin/haprion-blocklist-apply-helper
 refuse "$WEB_USER" "has no NDES profile helper grant" \
     sudo -n -l /opt/haprion/current/bin/haprion-ndes-profile-apply-helper
 refuse "$POLLER_USER" "has no NDES profile helper grant" \

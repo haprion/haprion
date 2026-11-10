@@ -72,6 +72,9 @@ _haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-targe
 _haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-dns-profile-apply-helper ""
 _haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-delete-helper ""
 
+# Blocklists (B500): the list's sealed secret arrives only on stdin.
+_haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-blocklist-apply-helper ""
+
 # NDES profiles: ciphertext arrives only on stdin.
 _haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-ndes-profile-apply-helper ""
 

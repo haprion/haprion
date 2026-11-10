@@ -32,7 +32,7 @@ from __future__ import annotations
 import dataclasses
 import re
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from haprion import address_ranges, crs, dnsdist_config, geo, ipvs_config, rsyslog_forward
@@ -469,6 +469,7 @@ def generate(
     node_addresses: Sequence[tuple[str, str]] = (),
     held_ports: Mapping[tuple[str, int], Sequence[tuple[str, str | None]]] | None = None,
     rule_definitions: Mapping[int, crs.Definition] | None = None,
+    blocklists: Collection[str] = (),
 ) -> GeneratedLayer:
     """Every file the generated layer consists of.
 
@@ -538,7 +539,14 @@ def generate(
     _refuse_unknown_authorities(ordered, authorities)
     if certificate_sans is not None and not allow_certificate_mismatch:
         _refuse_uncovered_hostnames(ordered, certificate_sans)
-    known_networks = dict(networks or {})
+    known_networks: dict[str, Sequence[str]] = dict(networks or {})
+    for name in sorted(blocklists):
+        if name in known_networks:
+            raise GeneratorError(
+                f"the group {name} and the blocklist {name} share a name; "
+                "rename the group on the Network page"
+            )
+        known_networks[name] = BlocklistGroup()
     _refuse_unknown_networks(ordered, known_networks)
 
     known_sources = dict(sources or {})
@@ -1436,6 +1444,21 @@ def groups_named(proxy: Proxy) -> tuple[str, ...]:
     )
 
 
+class BlocklistGroup(tuple[str, ...]):
+    """A group whose members are a file on the node, not the network file's (B500).
+
+    Empty here: the addresses are the list the refresh timer fetched, which
+    the nodes load from `BLOCKLISTS_DIRECTORY` and swap without a version.
+    `_address_acl` writes it as `-f <file>`; anywhere else it would match
+    nobody, so `_refuse_unknown_networks` refuses it anywhere but *Denied*.
+    """
+
+    __slots__ = ()
+
+
+BLOCKLISTS_DIRECTORY = "/etc/haproxy/blocklists"
+
+
 def _refuse_unknown_networks(
     proxies: Sequence[Proxy], networks: Mapping[str, Sequence[str]]
 ) -> None:
@@ -1448,7 +1471,20 @@ def _refuse_unknown_networks(
     """
 
     for proxy in proxies:
+        denied = set(proxy.deny_from.sources) if proxy.deny_from is not None else set()
         for name in groups_named(proxy):
+            if isinstance(networks.get(name), BlocklistGroup):
+                elsewhere = (
+                    name in proxy.allow_from
+                    or any(name in rule.sources for rule in proxy.deny_rules)
+                    or (proxy.dynamic_block is not None and name in proxy.dynamic_block.exempt)
+                )
+                if elsewhere or name not in denied:
+                    raise GeneratorError(
+                        f"{proxy.name} names the blocklist {name} outside Denied; "
+                        "a blocklist can only deny"
+                    )
+                continue
             if name in networks:
                 continue
             known = ", ".join(sorted(networks)) or "none"
@@ -2513,6 +2549,8 @@ def _address_acl(
     cidrs = _cidrs(entries, networks)
     if cidrs:
         lines.extend(_value_lines(f"    acl {acl} {fetch}", cidrs))
+    for entry in sorted(e for e in entries if isinstance(networks.get(e), BlocklistGroup)):
+        lines.append(f"    acl {acl} {fetch} -f {BLOCKLISTS_DIRECTORY}/{entry}.lst")
     for entry in sorted(entry for entry in entries if geo.is_country(entry)):
         lines.append(f"    acl {acl} {fetch} -f {MAPS_DIRECTORY}/{geo.file_name(geo.code(entry))}")
     return lines

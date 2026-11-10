@@ -340,6 +340,9 @@ def parse_candidate(parameters: Mapping[str, JsonValue]) -> Candidate:
     return candidate_from_files(decoded)
 
 
+_BLOCKLIST_FILE = re.compile(rb"/candidate/blocklists/([a-z][a-z0-9-]{0,39})\.lst")
+
+
 def materialize_candidate(
     candidate: Candidate,
     root: Path,
@@ -349,8 +352,9 @@ def materialize_candidate(
     authority_ids: Sequence[str] = (),
 ) -> None:
     root.mkdir(mode=0o700)
-    for directory in (root / "conf.d", root / "maps", root / "certs"):
+    for directory in (root / "conf.d", root / "maps", root / "certs", root / "blocklists"):
         directory.mkdir(mode=0o700)
+    lists: set[str] = set()
 
     for relative, original in candidate.files.items():
         target = root / relative
@@ -368,6 +372,13 @@ def materialize_candidate(
         if relative == "haproxy.cfg" or relative.startswith(("conf.d/", f"{CRT_LIST_TARGET}/")):
             content = content.replace(b"/etc/haproxy/maps/", b"/candidate/maps/")
             content = content.replace(b"/etc/haproxy/certs/", b"/candidate/certs/")
+            #
+            # A blocklist (B500) is a file the node pulls beside its
+            # certificates, not part of the candidate: each one the
+            # configuration names gets an empty stand-in, which `-f` loads.
+            #
+            content = content.replace(b"/etc/haproxy/blocklists/", b"/candidate/blocklists/")
+            lists.update(m.decode("ascii") for m in _BLOCKLIST_FILE.findall(content))
         #
         # The SPOE file a frontend names and the rules `coraza.yaml` includes,
         # pointed at the candidate's own copies - the node does the same.
@@ -383,6 +394,14 @@ def materialize_candidate(
         )
         with os.fdopen(descriptor, "wb") as output:
             output.write(content)
+
+    for name in sorted(lists):
+        descriptor = os.open(
+            root / "blocklists" / f"{name}.lst",
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+        )
+        os.close(descriptor)
 
     for certificate_id in certificate_ids:
         target = root / "certs" / f"{certificate_id}.pem"

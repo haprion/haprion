@@ -1,0 +1,14 @@
+[Unit]
+Description=Haprion blocklist refresh
+Documentation=file:///opt/haprion/current
+After=network-online.target
+Wants=network-online.target
+
+# Fetches the blocklists that are due, writes each cluster's files under the
+# certificate root and deploys them with haprion-cert-deploy, as the
+# certificates go (B500). As root and sandboxed like certbot's renewal, which
+# deploys to the same nodes the same way.
+[Service]
+Type=oneshot
+ExecStart=/opt/haprion/current/bin/haprion-blocklist-refresh
+PrivateTmp=true

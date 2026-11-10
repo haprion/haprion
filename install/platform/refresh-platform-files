@@ -55,6 +55,11 @@ TIMERS=(haprion-backup haprion-restore-check haprion-retention haprion-retention
 # first timer is, since the step that would install it ran before it existed.
 #
 declare -A TIMER_STEP=([haprion-retention-budget]=haprion-retention)
+#
+# Timers step 07 always installs (B500), so an update installs them whether or
+# not they are there yet, as it does the sockets.
+#
+ALWAYS_TIMERS=(haprion-blocklist-refresh)
 
 usage() { die "usage: $(basename "$0") <release-id> <keep-dir> | --restore <keep-dir> [--from <line>]"; }
 
@@ -221,8 +226,10 @@ for name in "${OPTIONAL_SOCKETS[@]}"; do
 done
 
 step "Timers"
-for name in "${TIMERS[@]}"; do
-    [[ -e "${SYSTEMD_DIR}/${TIMER_STEP[$name]:-$name}.timer" ]] || continue
+for name in "${TIMERS[@]}" "${ALWAYS_TIMERS[@]}"; do
+    if [[ " ${ALWAYS_TIMERS[*]} " != *" ${name} "* ]]; then
+        [[ -e "${SYSTEMD_DIR}/${TIMER_STEP[$name]:-$name}.timer" ]] || continue
+    fi
     for kind in service timer; do
         put timer "${SYSTEMD_DIR}/${name}.${kind}" 644 \
             "$(render_example "examples/${name}.${kind}.example")"

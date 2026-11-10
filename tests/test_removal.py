@@ -421,7 +421,12 @@ class TheSteps(unittest.TestCase):
         for step in sorted((INSTALL / "platform").glob("[0-9]*")):
             self.assertNotIn("haprion-block.sudoers", step.read_text(), step.name)
         self.assertEqual(
-            sorted(p.name for p in (INSTALL / "platform/examples").glob("*block*")),
+            sorted(
+                p.name
+                for p in (INSTALL / "platform/examples").glob("*block*")
+                # The blocklists (B500) are another thing with a similar name.
+                if "blocklist" not in p.name
+            ),
             [
                 "haprion-block-api-helper.socket.example",
                 "haprion-block-api-helper@.service.example",

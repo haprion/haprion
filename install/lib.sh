@@ -89,6 +89,8 @@ ensure_worker_directories() {
     ensure_dir /etc/haprion/ndes-requests root:root 700
     # Step 15's, as it makes it; that step is optional and may come later.
     ensure_dir /etc/haprion/dns-profiles root:root 700
+    # The blocklists' definitions (B500), written by the apply helper.
+    ensure_dir /etc/haprion/blocklists root:root 700
     #
     # Where the helpers behind sockets keep their answers for recovery (B367):
     # root's, read by the worker. Not in the worker's ReadWritePaths - it only

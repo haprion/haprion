@@ -400,6 +400,9 @@ class TheListsAreTheSteps(unittest.TestCase):
             "examples/haprion-poller.service.example"
         ),
         ("11-platform-retention", '"/etc/systemd/system/${timer}.${kind}"'): ("haprion-retention"),
+        ("07-platform-services", '"/etc/systemd/system/haprion-blocklist-refresh.${kind}"'): (
+            "ALWAYS_TIMERS=(haprion-blocklist-refresh)"
+        ),
         ("13-platform-traffic-collector", '"/etc/systemd/system/${UNIT}.${kind}"'): (
             "haprion-traffic-collector"
         ),
@@ -603,7 +606,15 @@ class TheListsAreTheSteps(unittest.TestCase):
             if name != "haprion-web"
         }
         self.assertEqual(set(self.array("SOCKETS")) | set(self.array("OPTIONAL_SOCKETS")), sockets)
-        self.assertEqual(set(self.array("TIMERS")), self.examples(".timer.example"))
+        self.assertEqual(
+            set(self.array("TIMERS")) | set(self.array("ALWAYS_TIMERS")),
+            self.examples(".timer.example"),
+        )
+
+    def test_the_always_timers_are_those_step_07_installs(self) -> None:
+        step = (PLATFORM / "07-platform-services").read_text()
+        always = set(re.findall(r"haprion-([a-z0-9-]+)\.\$\{kind\}", step))
+        self.assertEqual({f"haprion-{name}" for name in always}, set(self.array("ALWAYS_TIMERS")))
 
     def test_each_step_renders_an_example_as_render_example_does(self) -> None:
         lib = (ROOT / "install/lib.sh").read_text()

@@ -302,6 +302,21 @@ install_file "/etc/systemd/system/${POLLER_UNIT}" root:root 644 \
 systemctl daemon-reload
 log "  reloaded systemd"
 
+step "The blocklist timer"
+#
+# B500: root fetches the blocklists Settings defines from what the worker's
+# apply helper writes into /etc/haprion/blocklists (made with the worker's
+# directories above), and keeps the last good list and the state the poller
+# reads in /var/lib/haprion/blocklists, which the command makes.
+#
+for kind in service timer; do
+    install_file "/etc/systemd/system/haprion-blocklist-refresh.${kind}" root:root 644 \
+        "$(cat "examples/haprion-blocklist-refresh.${kind}.example")"
+done
+systemctl daemon-reload
+systemctl enable --quiet --now haprion-blocklist-refresh.timer
+log "  enabled  haprion-blocklist-refresh.timer (every 15 minutes)"
+
 step "Starting"
 #
 # Restarted, not merely enabled. `enable --now` starts a unit that is stopped

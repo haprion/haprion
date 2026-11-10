@@ -1,0 +1,14 @@
+[Unit]
+Description=Run Haprion blocklist refresh every 15 minutes
+
+# Each list has its own interval (1, 6, 12 or 24 hours) and a failed one is
+# tried again after an hour; this only decides how soon a pass notices. A
+# changed exception is written by the next pass, without a fetch.
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

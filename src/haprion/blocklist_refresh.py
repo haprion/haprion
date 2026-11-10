@@ -208,4 +208,23 @@ def run(
             continue
         for target in targets:
             written.append(write_cluster(target, item, networks))
+    for target in targets:
+        _remove_undefined(target, defined)
     return Pass(states=states, written=tuple(written))
+
+
+def _remove_undefined(target: ClusterTarget, defined: set[str]) -> None:
+    """A list no longer defined leaves the cluster's directory, and with it the generator's groups.
+
+    The nodes keep the file they have: nothing on them is removed, and a
+    configuration still naming it keeps loading. A new one naming it is
+    refused, as the web refuses removing a list an object names.
+    """
+
+    directory = target.directory / DIRECTORY
+    if not directory.is_dir():
+        return
+    for path in directory.glob(f"*{blocklist_store.LIST_SUFFIX}"):
+        if path.stem not in defined and blocklists.NAME.fullmatch(path.stem):
+            path.unlink()
+            atomic_file.sync_directory(directory)

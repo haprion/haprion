@@ -22,12 +22,12 @@ from __future__ import annotations
 
 import io
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from haprion import blocklist_store, crs, exit_codes, geo, peers
+from haprion import crs, exit_codes, geo, peers
 from haprion.candidate_validation import DEFAULT_RUN_ROOT, SandboxValidator, validate_in_sandbox
 from haprion.cli.managed_helper import Change, Refusal, Refuse, Words, _publish, network_of
 from haprion.config import Cluster, ConfigError
@@ -58,6 +58,7 @@ def generated(
     country_reader: geo.CountryReader | None = None,
     certificate_sans: Mapping[str, Sequence[str]] | None = None,
     held_ports: Mapping[tuple[str, int], Sequence[tuple[str, str | None]]] | None = None,
+    blocklists: Collection[str] = (),
 ) -> dict[str, bytes]:
     """The managed layer for `base_files` and the cluster's node list as it is now.
 
@@ -76,7 +77,7 @@ def generated(
         node_addresses=lambda: addresses(cluster),
         certificate_sans=certificate_sans,
         held_ports=held_ports,
-        blocklists=blocklist_store.names(),
+        blocklists=blocklists,
     )
 
 
@@ -125,6 +126,7 @@ def publish(
     clock: Callable[[], datetime] | None = None,
     addresses: Addresses = peers.addresses,
     names: tuple[str, str] = ("root", "root"),
+    blocklists: Collection[str] = (),
 ) -> dict[str, Any]:
     """Publish the cluster's node list as a version; what it became, or why it did not.
 
@@ -141,7 +143,7 @@ def publish(
 
     def apply(base_files: Mapping[str, bytes]) -> Mapping[str, bytes]:
         try:
-            return generated(base_files, cluster, addresses=addresses)
+            return generated(base_files, cluster, addresses=addresses, blocklists=blocklists)
         except ConfigError as exc:
             raise Refusal("changes_invalid", str(exc), exit_codes.REFUSED) from exc
 

@@ -55,6 +55,7 @@ from haprion import (
     peers,
 )
 from haprion.cert_lock import DEFAULT_LOCK_PATH as CERTIFICATE_LOCK
+from haprion.certificates import blocklist_names
 from haprion.cli import deploy_helper
 from haprion.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
 from haprion.config import (
@@ -393,10 +394,21 @@ def _node_work(
             "parameters.node is not a node name", exit_code=exit_codes.REFUSED
         )
 
-    def publish(remaining: Any) -> dict[str, Any]:
-        return publisher(
-            request, remaining, comment=f"{name} removed", require_secure=require_secure
-        )
+    def publish_for(policy: PathPolicy) -> Callable[[Any], dict[str, Any]]:
+        def publish(remaining: Any) -> dict[str, Any]:
+            return publisher(
+                request,
+                remaining,
+                comment=f"{name} removed",
+                require_secure=require_secure,
+                #
+                # The lists the cluster's nodes carry (B500): the layer is
+                # made again whole, and an object naming one is valid.
+                #
+                blocklists=blocklist_names(policy.certificate_directory(request.cluster)),
+            )
+
+        return publish
 
     return lambda policy, runtime, ask, _join: node_enrollment.remove(
         policy,
@@ -404,7 +416,7 @@ def _node_work(
         cluster=request.cluster,
         name=name,
         ask=ask,
-        publish=publish,
+        publish=publish_for(policy),
         leave=leave or _leave_with(policy),
         locations=locations,
         require_secure=require_secure,

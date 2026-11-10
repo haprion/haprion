@@ -54,6 +54,7 @@ from haprion.candidate_validation import (
     validate_in_sandbox,
 )
 from haprion.cert_inventory import coverage_for
+from haprion.certificates import blocklist_names
 from haprion.cli.helper_guard import guarded
 from haprion.cli.managed_helper import Refusal
 from haprion.cluster_lock import DEFAULT_LOCK_ROOT, hold
@@ -479,6 +480,7 @@ def _revert(
                 country_reader=geo.tree_reader(carried, geo.location_database()),
                 certificate_sans=coverage_for(policy, cluster) if has_objects else None,
                 held_ports=held.held,
+                blocklists=blocklist_names(policy.certificate_directory(cluster.cluster_id)),
             )
         except Refusal as exc:
             return refuse(exc.code, str(exc), exc.exit_code)

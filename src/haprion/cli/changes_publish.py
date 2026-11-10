@@ -22,7 +22,6 @@ from typing import Any, BinaryIO, TextIO
 
 from haprion import (
     address_ranges,
-    blocklist_store,
     cluster_settings,
     crs,
     exit_codes,
@@ -37,6 +36,7 @@ from haprion.candidate_validation import (
     validate_in_sandbox,
 )
 from haprion.cert_inventory import coverage_for
+from haprion.certificates import blocklist_names
 from haprion.cli import managed_helper
 from haprion.cli.managed_helper import (
     SUDO,
@@ -433,7 +433,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                     settings_document=canonical,
                     node_addresses=lambda: peers.addresses(cluster),
                     held_ports=held.held,
-                    blocklists=blocklist_store.names(),
+                    blocklists=blocklist_names(policy.certificate_directory(cluster.cluster_id)),
                 )
             except ConfigError as exc:
                 said = str(exc)

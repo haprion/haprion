@@ -144,6 +144,15 @@ class APass(unittest.TestCase):
         self.assertEqual(set(result.states), {"crowdsec"})
         self.assertEqual(set(blocklist_store.read_state(directory=self.state)), {"crowdsec"})
 
+    def test_a_removed_list_leaves_every_clusters_directory(self) -> None:
+        self._run(_stored(), _stored(name="drop"))
+        self._run(_stored(), now=NOW + dt.timedelta(minutes=1))
+        for target in self.targets:
+            self.assertEqual(
+                sorted(p.name for p in (target.directory / "blocklists").iterdir()),
+                ["crowdsec.lst"],
+            )
+
     def test_only_fetches_the_named_list_now(self) -> None:
         self._run(_stored(), _stored(name="drop"))
         blocklist_refresh.run(

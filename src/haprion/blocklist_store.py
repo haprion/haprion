@@ -244,43 +244,6 @@ def _read_one(path: Path) -> Stored:
     return Stored(definition=item, secret=secret, revision=check_revision(document["revision"]))
 
 
-def names(*, directory: Path = DEFINITIONS) -> tuple[str, ...]:
-    """The lists defined, by name: the groups the generator may write as `-f` files.
-
-    Read from the file names alone, so a publish does not depend on every
-    definition parsing; a directory not made yet defines none, and neither
-    does one a caller other than root may not read.
-    """
-
-    try:
-        found = [p.name for p in directory.iterdir()]
-    except FileNotFoundError:
-        return ()
-    except PermissionError as exc:
-        #
-        # Every publish runs as root and reads the directory. Anyone else -
-        # the test suite on a manager that has lists - is told there are
-        # none, which is a refusal and not an opening: an object naming one
-        # is refused as naming a group the cluster does not define.
-        #
-        if os.geteuid() != 0:
-            return ()
-        raise StoreError(
-            f"the blocklists in {directory} could not be listed: {exc.strerror}"
-        ) from exc
-    except OSError as exc:
-        raise StoreError(
-            f"the blocklists in {directory} could not be listed: {exc.strerror}"
-        ) from exc
-    return tuple(
-        sorted(
-            name[: -len(SUFFIX)]
-            for name in found
-            if name.endswith(SUFFIX) and blocklists.NAME.fullmatch(name[: -len(SUFFIX)])
-        )
-    )
-
-
 def read_all(*, directory: Path = DEFINITIONS) -> tuple[Stored, ...]:
     """Every definition, by name; a directory not made yet holds none."""
 

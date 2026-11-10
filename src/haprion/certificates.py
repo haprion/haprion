@@ -268,6 +268,20 @@ def read_blocklists(root: Path) -> tuple[CertificateRef, ...]:
     return tuple(found)
 
 
+def blocklist_names(root: Path | None) -> tuple[str, ...]:
+    """The blocklists the cluster's nodes are sent, by name: the groups *Denied* may name.
+
+    The files the refresh timer wrote under the cluster's certificate
+    directory, and nothing else - a list never fetched well has no file, and
+    a configuration naming it would load a file no node has. None (no
+    certificate root) is none.
+    """
+
+    if root is None:
+        return ()
+    return tuple(ref.id for ref in read_blocklists(root))
+
+
 def target_for(cluster: Cluster, root: Path) -> CertificateTarget:
     """The certificates this cluster references, in configured order.
 

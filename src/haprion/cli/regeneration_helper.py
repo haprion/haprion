@@ -19,8 +19,9 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import blocklist_store, cluster_settings, crs, exit_codes, regeneration
+from haprion import cluster_settings, crs, exit_codes, regeneration
 from haprion.cert_inventory import certificate_state, coverage_for
+from haprion.certificates import blocklist_names
 from haprion.config import (
     DEFAULT_POLICY_PATH,
     Cluster,
@@ -156,7 +157,7 @@ def main(
             found = regeneration.lookup_addresses(cluster)
         else:
             found = regeneration.lookup_addresses(cluster, addresses)
-        lists = blocklist_store.names()
+        lists = blocklist_names(policy.certificate_directory(cluster.cluster_id))
         key = regeneration.fingerprint(
             commit,
             cluster,

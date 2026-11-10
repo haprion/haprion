@@ -11,7 +11,7 @@ YAML and HAProxy configuration disagree.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import PurePosixPath
 
 from haprion import cluster_settings, crs, geo, ipvs_config, keepalived_conf
@@ -123,6 +123,7 @@ def managed_files(
     rule_set: Callable[[], crs.RuleSet | None] | None = None,
     node_addresses: Callable[[], Sequence[tuple[str, str]]] | None = None,
     held_ports: Mapping[tuple[str, int], Sequence[tuple[str, str | None]]] | None = None,
+    blocklists: Collection[str] = (),
 ) -> dict[str, bytes]:
     """Return the complete managed snapshot created by one network document.
 
@@ -238,6 +239,12 @@ def managed_files(
         #
         node_addresses=addresses,
         held_ports=held_ports,
+        #
+        # The blocklists Settings defines (B500), by name: the caller reads
+        # them, as it reads the policy, and they are groups only *Denied*
+        # may name, written as files the nodes pull.
+        #
+        blocklists=blocklists,
         rule_definitions=crs.definitions(rules) if rules is not None else None,
     )
     result.update(

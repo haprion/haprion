@@ -22,6 +22,7 @@ from typing import Any, BinaryIO, TextIO
 
 from haprion import (
     address_ranges,
+    blocklist_store,
     cluster_settings,
     crs,
     exit_codes,
@@ -432,6 +433,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                     settings_document=canonical,
                     node_addresses=lambda: peers.addresses(cluster),
                     held_ports=held.held,
+                    blocklists=blocklist_store.names(),
                 )
             except ConfigError as exc:
                 said = str(exc)

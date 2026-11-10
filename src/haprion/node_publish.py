@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from haprion import crs, exit_codes, geo, peers
+from haprion import blocklist_store, crs, exit_codes, geo, peers
 from haprion.candidate_validation import DEFAULT_RUN_ROOT, SandboxValidator, validate_in_sandbox
 from haprion.cli.managed_helper import Change, Refusal, Refuse, Words, _publish, network_of
 from haprion.config import Cluster, ConfigError
@@ -76,6 +76,7 @@ def generated(
         node_addresses=lambda: addresses(cluster),
         certificate_sans=certificate_sans,
         held_ports=held_ports,
+        blocklists=blocklist_store.names(),
     )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 import tempfile
 import unittest
@@ -138,6 +139,27 @@ class TheStateAndTheLastGoodList(unittest.TestCase):
         (self.directory / "state.json").write_text('{"lists": {"crowdsec": {"x": 1}}}')
         with self.assertRaises(StoreError):
             blocklist_store.read_state(directory=self.directory)
+
+
+class TheNamesAreTheFiles(unittest.TestCase):
+    def test_only_definition_files_with_a_list_name_count(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            for name in ("crowdsec.json", "drop.json", ".tmp.json", "Bad.json", "notes.txt"):
+                (directory / name).write_text("{}")
+            self.assertEqual(blocklist_store.names(directory=directory), ("crowdsec", "drop"))
+            self.assertEqual(blocklist_store.names(directory=directory / "absent"), ())
+
+    def test_a_directory_only_root_may_read_is_none_to_anyone_else(self) -> None:
+        if os.geteuid() == 0:
+            self.skipTest("root reads every directory")
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw) / "lists"
+            directory.mkdir(mode=0o000)
+            try:
+                self.assertEqual(blocklist_store.names(directory=directory), ())
+            finally:
+                directory.chmod(0o700)
 
 
 if __name__ == "__main__":

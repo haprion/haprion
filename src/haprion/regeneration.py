@@ -139,6 +139,7 @@ def fingerprint(
     *,
     rules: str | None = None,
     certificates: str | None = None,
+    blocklists: Sequence[str] = (),
 ) -> str:
     """What the result depends on, as one digest: the cache key.
 
@@ -157,6 +158,7 @@ def fingerprint(
         "crs": crs_version,
         "rules": rules,
         "certificates": certificates,
+        "blocklists": sorted(blocklists),
     }
     return hashlib.sha256(json.dumps(document, sort_keys=True, default=str).encode()).hexdigest()
 
@@ -320,6 +322,7 @@ def regenerate(
     rule_set: Callable[[], crs.RuleSet | None] = crs.installed,
     location_database: geo.CountryReader | None = None,
     certificate_sans: Mapping[str, Sequence[str]] | None = None,
+    blocklists: Sequence[str] = (),
 ) -> dict[str, Any]:
     """The result for one published tree: would a publish of it change the nodes' files?
 
@@ -376,6 +379,7 @@ def regenerate(
             rule_set=rules,
             node_addresses=node_addresses,
             certificate_sans=sans,
+            blocklists=blocklists,
         )
         tree = {
             path: content for path, content in files.items() if not path.startswith(MANAGED_PREFIX)

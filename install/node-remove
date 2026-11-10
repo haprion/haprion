@@ -81,6 +81,7 @@ FIXED_PATHS = (
     "/root/.ssh/id_ed25519_cert_pull.pub",
     "/etc/haproxy/releases",
     "/etc/haproxy/certs",
+    "/etc/haproxy/blocklists",
     "/etc/haproxy/current",
     "/etc/keepalived/addresses.conf",
     "/etc/keepalived/ipvs.conf",

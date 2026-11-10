@@ -603,6 +603,7 @@ class ANode(unittest.TestCase):
             "/etc/systemd/system/dnsdist.service.d/haprion.conf",
             "/etc/haproxy/releases",
             "/etc/haproxy/certs",
+            "/etc/haproxy/blocklists",
             "/etc/haproxy/current",
             "/etc/haproxy/conf.d",
             "/etc/keepalived/keepalived.conf",

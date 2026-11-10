@@ -5,6 +5,7 @@
     haprion-server-state reload
     haprion-server-state reapply
     haprion-server-state update-certs <certificate-id>...
+    haprion-server-state update-lists <blocklist>...
     haprion-server-state unblock <object> <address>...
     haprion-server-state block <object> <address>...
 
@@ -55,6 +56,19 @@ holds under that file's name - HAProxy refuses any other ("not referenced by the
 configuration", measured on 3.4.6) - and answers EXIT_NOT_HELD for it, so the
 caller reloads as before. Any other failure is aborted and answered too; the
 files on disk are the new ones either way, and a reload reads them.
+
+**`update-lists` puts new blocklist files into the running HAProxy** (B500):
+the ACL every object's *Denied* reads from `/etc/haproxy/blocklists/<name>.lst`
+is one reference in HAProxy, however many objects name it (measured on 3.4.7),
+so one swap reaches them all. `prepare acl` opens a new version, every entry is
+added to it, and `commit acl` makes it the one matched - atomically. HAProxy
+3.4.7 takes no payload on `add acl`, so it is one entry to a command, sent a
+hundred at a time on one connection in `prompt` mode (100 000 entries in 0.2 s,
+measured). **A commit of a version whose adds failed empties the list**
+(measured), so each answer is read, the new version is counted against the file
+before the commit, and anything else leaves the old list matched and answers
+EXIT_REFUSED. A list HAProxy does not load yet is not an error: no running
+configuration names it, and the reload that brings one reads the file.
 
 **`block` places addresses in an object's blocked table** (B412), as going over
 the object's limit would, for the table's own `block_for`; another system (an
@@ -648,6 +662,138 @@ def command_update_certs(identifiers: list[str]) -> int:
         os.close(held_lock)
 
 
+BLOCKLISTS_DIR = Path("/etc/haproxy/blocklists")
+BLOCKLIST = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
+MAX_BLOCKLISTS = 32
+ADD_BATCH = 100
+LIST_SECONDS = 60.0
+
+
+class Prompt:
+    """One admin-socket connection in `prompt` mode: each command answered before the next block."""
+
+    def __init__(self) -> None:
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(LIST_SECONDS)
+        try:
+            self.sock.connect(ADMIN_SOCKET)
+            self.buffer = b""
+            self.send(["prompt"], greeting=True)
+        except OSError as error:
+            self.sock.close()
+            raise Unavailable(
+                f"cannot ask HAProxy on {ADMIN_SOCKET} ({error.strerror or error})"
+            ) from error
+
+    def send(self, commands: list[str], *, greeting: bool = False) -> list[str]:
+        """The answers to `commands`, in order; `prompt`'s own answer is the bare prompt."""
+
+        self.sock.sendall("".join(f"{command}\n" for command in commands).encode())
+        wanted = 1 if greeting else len(commands)
+        marker = b"> " if greeting else b"\n> "
+        while self.buffer.count(marker) < wanted:
+            data = self.sock.recv(65536)
+            if not data:
+                raise Unavailable("HAProxy closed the admin socket in the middle of a list")
+            self.buffer += data
+        if greeting:
+            self.buffer = self.buffer.split(b"> ", 1)[1]
+            return []
+        parts = self.buffer.split(marker)
+        answers, self.buffer = parts[:wanted], marker.join(parts[wanted:])
+        return [part.decode("utf-8", errors="replace").strip() for part in answers]
+
+    def close(self) -> None:
+        self.sock.close()
+
+
+def held_lists() -> dict[str, int]:
+    """Each file HAProxy loaded an ACL from, with the version it matches (`curr_ver`)."""
+
+    held: dict[str, int] = {}
+    for line in ask(["show acl"]).splitlines():
+        found = re.match(r"^\d+ \((/[^)]*)\) .*\bcurr_ver=(\d+)\b", line)
+        if found:
+            held[found.group(1)] = int(found.group(2))
+    return held
+
+
+def list_entries(path: Path) -> list[str]:
+    """The file's entries, each checked to be a plain address or network."""
+
+    entries = [
+        line.strip() for line in path.read_text(encoding="ascii").splitlines() if line.strip()
+    ]
+    for entry in entries:
+        if not re.fullmatch(r"[0-9A-Fa-f:./]{2,49}", entry):
+            raise ValueError(f"{path.name} holds a line that is not an address: {entry[:60]!r}")
+    return entries
+
+
+def update_list(name: str, entries: list[str]) -> str | None:
+    """Swap one loaded list for `entries`; None once HAProxy matches exactly them, else why not."""
+
+    prompt = Prompt()
+    try:
+        (opened,) = prompt.send([f"prepare acl {name}"])
+        found = re.fullmatch(r"New version created: (\d+)", opened)
+        if not found:
+            return f"prepare acl: {opened[:300]}"
+        version = found.group(1)
+        for start in range(0, len(entries), ADD_BATCH):
+            batch = entries[start : start + ADD_BATCH]
+            answers = prompt.send([f"add acl @{version} {name} {entry}" for entry in batch])
+            refused = next((text for text in answers if text), None)
+            if refused is not None:
+                prompt.send([f"clear acl @{version} {name}"])
+                return f"add acl: {refused[:300]}"
+        (shown,) = prompt.send([f"show acl @{version} {name}"])
+        counted = len([line for line in shown.splitlines() if line.strip()])
+        if counted != len(entries):
+            prompt.send([f"clear acl @{version} {name}"])
+            return (
+                f"the new version holds {counted} entries, the file {len(entries)}; not committed"
+            )
+        (committed,) = prompt.send([f"commit acl @{version} {name}"])
+        if committed:
+            return f"commit acl: {committed[:300]}"
+    finally:
+        prompt.close()
+    if held_lists().get(name) != int(version):
+        return "HAProxy does not match the new version after the commit"
+    return None
+
+
+def command_update_lists(names: list[str]) -> int:
+    if (
+        not names
+        or len(names) > MAX_BLOCKLISTS
+        or not all(BLOCKLIST.fullmatch(name) for name in names)
+    ):
+        log("ERROR: expected one to 32 blocklist names")
+        return EXIT_USAGE
+    held_lock = lock()
+    try:
+        held = held_lists()
+        for name in names:
+            path = BLOCKLISTS_DIR / f"{name}.lst"
+            if str(path) not in held:
+                log(f"{name} is not loaded by the running configuration; nothing to swap")
+                continue
+            entries = list_entries(path)
+            problem = update_list(str(path), entries)
+            if problem is not None:
+                log(f"ERROR: {name}: {problem}; the running HAProxy keeps the list it had")
+                return EXIT_REFUSED
+            log(f"{name} replaced in the running HAProxy: {len(entries)} entries")
+        return 0
+    except (OSError, ValueError, Unavailable) as error:
+        log(f"ERROR: the blocklists could not be replaced at runtime: {error}")
+        return EXIT_UNAVAILABLE
+    finally:
+        os.close(held_lock)
+
+
 #
 # The reason a block stores in the table's `gpt(1)` when it was placed by hand
 # or through the API (B424): `generate.BLOCK_REASONS`' last. The limits that
@@ -770,6 +916,8 @@ def main(argv: list[str]) -> int:
         return command_reapply()
     if argv[:1] == ["update-certs"]:
         return command_update_certs(argv[1:])
+    if argv[:1] == ["update-lists"]:
+        return command_update_lists(argv[1:])
     if len(argv) >= 3 and argv[0] == "unblock":
         return command_unblock(argv[1], argv[2:])
     if len(argv) >= 3 and argv[0] == "block":

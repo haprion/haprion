@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import io
+import ipaddress
 import json
 import os
 import re
@@ -580,6 +581,145 @@ class TheHelperReplacesACertificateWithoutAReload(unittest.TestCase):
             ("update-certs", "Shop"),
         ):
             with self.subTest(argv):
+                self.assertEqual(self.run_helper(*argv)[0], self.helper.EXIT_USAGE)
+
+
+@unittest.skipUnless(HAPROXY, "haproxy is not installed where the tests run")
+class TheHelperSwapsABlocklistWithoutAReload(unittest.TestCase):
+    """`update-lists` against a real HAProxy: two frontends, one list (B500)."""
+
+    PORTS = (18596, 18597)
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="srvlists-"))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.lists = self.root / "blocklists"
+        self.lists.mkdir()
+        self.path = self.lists / "crowdsec.lst"
+        self.path.write_text("192.0.2.0/24\n")
+        lines = [
+            "global",
+            f"    stats socket {self.root}/manager.sock mode 600 level admin",
+            "defaults",
+            "    mode http",
+            "    timeout connect 2s",
+            "    timeout client 5s",
+            "    timeout server 5s",
+        ]
+        for index, port in enumerate(self.PORTS):
+            lines += [
+                f"frontend fe{index}",
+                f"    bind 127.0.0.1:{port}",
+                f"    acl mgd-shop{index}-deny-from src -f {self.path}",
+                f"    http-request deny deny_status 403 if mgd-shop{index}-deny-from",
+                "    http-request return status 200",
+            ]
+        config = self.root / "haproxy.cfg"
+        config.write_text("\n".join(lines) + "\n")
+        self.helper = load_helper()
+        for name, value in (
+            ("ADMIN_SOCKET", str(self.root / "manager.sock")),
+            ("LOCK_FILE", str(self.root / "lock")),
+            ("BLOCKLISTS_DIR", self.lists),
+        ):
+            setattr(self.helper, name, value)
+        self.process = subprocess.Popen(  # fixed binary, scratch configuration
+            [HAPROXY, "-W", "-f", str(config), "-p", str(self.root / "pid")],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.addCleanup(self.stop)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                if "Pid:" in self.helper.ask(["show info"]):
+                    break
+            except self.helper.Unavailable:
+                time.sleep(0.05)
+        self.pid = self.helper.worker_pid(self.helper.ask(["show info"]))
+
+    def stop(self) -> None:
+        self.process.send_signal(signal.SIGTERM)
+        try:
+            self.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait(timeout=10)
+
+    def run_helper(self, *argv: str) -> tuple[int, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = self.helper.main(list(argv))
+        return code, out.getvalue() + err.getvalue()
+
+    def statuses(self) -> list[int]:
+        found = []
+        for port in self.PORTS:
+            with socket_module.create_connection(("127.0.0.1", port), timeout=5) as sock:
+                sock.sendall(b"GET / HTTP/1.0\r\n\r\n")
+                found.append(int(sock.recv(64).split()[1]))
+        return found
+
+    def test_the_new_list_is_matched_by_every_object_by_the_same_worker(self) -> None:
+        self.assertEqual(self.statuses(), [200, 200])
+        self.path.write_text("192.0.2.0/24\n127.0.0.1\n2001:db8::/32\n")
+
+        code, out = self.run_helper("update-lists", "crowdsec")
+
+        self.assertEqual(code, 0, out)
+        self.assertIn("3 entries", out)
+        self.assertEqual(self.statuses(), [403, 403])
+        self.assertEqual(self.helper.worker_pid(self.helper.ask(["show info"])), self.pid)
+
+    def test_a_hundred_thousand_entries_swap(self) -> None:
+        entries = [str(ipaddress.ip_address("2001:db8::") + 2 * n) for n in range(100_000)]
+        self.path.write_text("\n".join([*entries, "127.0.0.1"]) + "\n")
+        started = time.monotonic()
+
+        code, out = self.run_helper("update-lists", "crowdsec")
+
+        self.assertEqual(code, 0, out)
+        self.assertLess(time.monotonic() - started, 20)
+        self.assertEqual(self.statuses(), [403, 403])
+
+    def test_an_entry_haproxy_refuses_leaves_the_old_list_matched(self) -> None:
+        """A commit after a failed add empties the list (measured); none is made."""
+
+        self.path.write_text("127.0.0.1\n999.0.0.1\n")
+        before = self.helper.held_lists()[str(self.path)]
+
+        code, out = self.run_helper("update-lists", "crowdsec")
+
+        self.assertEqual(code, self.helper.EXIT_REFUSED, out)
+        self.assertEqual(self.helper.held_lists()[str(self.path)], before)
+        self.assertEqual(self.statuses(), [200, 200])
+        shown = self.helper.ask([f"show acl {self.path}"])
+        self.assertIn("192.0.2.0/24", shown)
+
+    def test_a_line_that_is_not_an_address_is_refused_before_haproxy_is_asked(self) -> None:
+        self.path.write_text("127.0.0.1\nadd acl x y\n")
+
+        code, out = self.run_helper("update-lists", "crowdsec")
+
+        self.assertEqual(code, self.helper.EXIT_UNAVAILABLE, out)
+        self.assertEqual(self.statuses(), [200, 200])
+
+    def test_a_list_no_configuration_loads_is_left_to_the_next_reload(self) -> None:
+        (self.lists / "drop.lst").write_text("127.0.0.1\n")
+
+        code, out = self.run_helper("update-lists", "drop")
+
+        self.assertEqual(code, 0, out)
+        self.assertIn("not loaded", out)
+
+    def test_the_names_are_checked(self) -> None:
+        for argv in (
+            ("update-lists",),
+            ("update-lists", "../x"),
+            ("update-lists", "Crowdsec"),
+            ("update-lists", *[f"l{n}" for n in range(33)]),
+        ):
+            with self.subTest(argv=argv):
                 self.assertEqual(self.run_helper(*argv)[0], self.helper.EXIT_USAGE)
 
 

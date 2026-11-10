@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "blocklist_apply",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "name": "spamhaus-drop",
+    "revision": 4,
+    "refresh_started": false,
+    "removed": true
+  },
+  "warnings": [],
+  "error": null
+}

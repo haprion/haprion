@@ -782,6 +782,20 @@ def check_cert_publish_semantics(document: dict[str, object], path: Path) -> Non
             raise AssertionError(f"{path}: done envelope carries a failed deployment")
 
 
+def check_blocklist_apply_semantics(document: dict[str, object], path: Path) -> None:
+    """A done apply names the list and its revision; a refusal names nothing it applied."""
+
+    result = document["result"]
+    if document["outcome"] == "done" and not isinstance(result, dict):
+        raise AssertionError(f"{path}: a done blocklist_apply carries a result")
+    if document["outcome"] != "done" and result is not None:
+        raise AssertionError(f"{path}: a blocklist_apply that was not done carries no result")
+    if document["outcome"] == "blocked":
+        error = document["error"]
+        if not isinstance(error, dict) or error.get("code") != "binding_mismatch":
+            raise AssertionError(f"{path}: a blocked blocklist_apply is a binding mismatch")
+
+
 def check_dns_profile_apply_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -1482,6 +1496,7 @@ SEMANTIC_CHECKS = {
     "cert_import": check_cert_import_semantics,
     "cert_request": check_cert_request_semantics,
     "dns_profile_apply": check_dns_profile_apply_semantics,
+    "blocklist_apply": check_blocklist_apply_semantics,
     "ndes_profile_apply": check_dns_profile_apply_semantics,
     "cert_publish": check_cert_publish_semantics,
     "cert_target": check_cert_target_semantics,
@@ -1607,6 +1622,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["domains"] = ["*." + str(result["domains"][0])]
     elif operation in {"dns_profile_apply", "ndes_profile_apply"}:
         result["plugin"] = "dns_example_login = leaked-example"
+    elif operation == "blocklist_apply":
+        invalid["outcome"] = "failed"
     elif operation == "cert_target":
         result["changed"] = ["a-certificate-no-row-names"]
     elif operation == "cert_delete":

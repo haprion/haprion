@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "blocklist_apply",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "name": "crowdsec",
+    "revision": 2,
+    "refresh_started": true
+  },
+  "warnings": [],
+  "error": null
+}

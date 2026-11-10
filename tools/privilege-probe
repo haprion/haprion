@@ -44,7 +44,8 @@ declare -A GROUPS_EXPECTED=(
 )
 
 WORKER_HELPERS="deploy cert-deploy revert changes-publish cert-issue cert-publish cert-target
-    dns-profile-apply cert-delete ndes-profile-apply cert-scep cert-import cert-request server-state"
+    dns-profile-apply cert-delete blocklist-apply ndes-profile-apply cert-scep cert-import cert-request
+    server-state"
 POLLER_HELPERS="status inventory readings cluster-list"
 
 declare -A SOCKET_GROUP=(

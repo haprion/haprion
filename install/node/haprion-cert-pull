@@ -81,6 +81,11 @@ PENDING="/run/haprion-cert-pull.pending"
 # same way.
 #
 CA_PENDING="/run/haprion-ca-pull.pending"
+#
+# And for the blocklists (B500): files installed and not yet swapped into the
+# running HAProxy.
+#
+BLOCKLIST_PENDING="/run/haprion-blocklist-pull.pending"
 
 ID_PATTERN='^[a-z0-9][a-z0-9._-]{0,254}$'
 
@@ -99,14 +104,24 @@ fail() {
 # `ca/` under the certificate directory - beside the certificates, not among
 # them, so nothing that reads `*.pem` there takes one for a certificate.
 #
+#
+# `--blocklist` (B500): the names are blocklists, fetched from `blocklists/`
+# under the cluster's distribution directory - the manager writes them there
+# with the cluster's exceptions taken out - and swapped into the running
+# HAProxy through the admin socket, without a reload.
+#
 AUTHORITY=0
+BLOCKLIST=0
 if [[ "${1:-}" == "--authority" ]]; then
     AUTHORITY=1
+    shift
+elif [[ "${1:-}" == "--blocklist" ]]; then
+    BLOCKLIST=1
     shift
 fi
 
 (( $# > 0 )) || {
-    echo "Usage: haprion-cert-pull [--authority] <certificate-id> [...]" >&2
+    echo "Usage: haprion-cert-pull [--authority | --blocklist] <id> [...]" >&2
     exit 64
 }
 
@@ -297,6 +312,133 @@ pull_authorities() {
 
 if (( AUTHORITY )); then
     pull_authorities "$@"
+fi
+
+#
+# The blocklists, start to end. Every file is fetched and checked before any is
+# installed. A file is one address or network to a line and nothing else - the
+# swap sends each line to the admin socket as a word of a command - and no
+# larger than the manager can write (B500: 100 000 entries from the source,
+# which an exception can split into more).
+#
+BLOCKLIST_PATTERN='^[a-z][a-z0-9-]{0,39}$'
+BLOCKLIST_MAX_BYTES=8388608
+BLOCKLIST_MAX_LINES=200000
+
+pull_blocklists() {
+    local list_dir="${HAPROXY_DIR}/blocklists" pending="$BLOCKLIST_PENDING"
+    local work backup name candidate dest
+    for name in "$@"; do
+        [[ "$name" =~ $BLOCKLIST_PATTERN ]] || fail "invalid blocklist name"
+    done
+    [[ -d "$list_dir" ]] || mkdir -m 700 "$list_dir"
+    rm -f "${list_dir}"/.haprion-cert-pull.*
+    work="$(mktemp -d -t haproxy-list.XXXXXX)"
+    # shellcheck disable=SC2064 # the path is fixed now, on purpose
+    trap "rm -rf '${work}'" EXIT
+    backup="${work}/backup"
+    mkdir -p "$backup"
+    local -a changed=() unread=()
+    mapfile -t unread < <(marker_ids "$pending")
+
+    for name in "$@"; do
+        candidate="${work}/${name}.lst"
+        dest="${list_dir}/${name}.lst"
+        log "Fetching blocklist ${name}..."
+        rsync -t --timeout=120 \
+            -e "ssh -i ${SSH_KEY} -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4" \
+            "${REMOTE_USER}@${MANAGER}:blocklists/${name}.lst" \
+            "$candidate" \
+            || fail "blocklist ${name} could not be fetched"
+        (( $(stat -c %s "$candidate") <= BLOCKLIST_MAX_BYTES )) \
+            || fail "blocklist ${name} is larger than a list can be; refused"
+        (( $(wc -l < "$candidate") <= BLOCKLIST_MAX_LINES )) \
+            || fail "blocklist ${name} has more lines than a list can have; refused"
+        if LC_ALL=C grep -qvE '^[0-9A-Fa-f:./]{2,49}$' "$candidate"; then
+            fail "blocklist ${name} holds a line that is not an address; refused"
+        fi
+        if [[ -f "$dest" ]] && cmp -s "$candidate" "$dest"; then
+            log "Blocklist ${name} is unchanged."
+            continue
+        fi
+        changed+=("$name")
+    done
+
+    swap_all() {
+        local wanted
+        for wanted in "$@"; do
+            "$SERVER_STATE" update-lists "$wanted" || return 1
+        done
+    }
+
+    if (( ${#changed[@]} == 0 )); then
+        if (( ${#unread[@]} > 0 )); then
+            log "An earlier run installed blocklists it never swapped in. Swapping now..."
+            swap_all "${unread[@]}" || reload_checked
+            rm -f "$pending"
+            log "Blocklist deployment complete."
+            exit 0
+        fi
+        log "Nothing changed. No swap needed."
+        exit 0
+    fi
+
+    log "New blocklists: ${changed[*]}"
+    write_marker "$pending" "${unread[@]}" "${changed[@]}"
+    local staged
+    for name in "${changed[@]}"; do
+        dest="${list_dir}/${name}.lst"
+        [[ -f "$dest" ]] && cp -a "$dest" "${backup}/${name}.lst"
+        staged="${list_dir}/.haprion-cert-pull.${name}.lst"
+        install -o root -g root -m 600 "${work}/${name}.lst" "$staged"
+        mv -f "$staged" "$dest"
+    done
+
+    restore_blocklists() {
+        for name in "${changed[@]}"; do
+            if [[ -f "${backup}/${name}.lst" ]]; then
+                staged="${list_dir}/.haprion-cert-pull.${name}.lst"
+                install -o root -g root -m 600 "${backup}/${name}.lst" "$staged"
+                mv -f "$staged" "${list_dir}/${name}.lst"
+            else
+                rm -f "${list_dir}/${name}.lst"
+            fi
+        done
+        restore_marker "$pending" "${unread[@]}"
+    }
+
+    #
+    # The helper swaps each list HAProxy loads, and says 0 for one it does not
+    # load yet: no running configuration names it, and the reload that brings
+    # one reads the file. Anything else falls back to that reload.
+    #
+    log "Swapping the blocklists into the running HAProxy..."
+    if swap_all "${unread[@]}" "${changed[@]}"; then
+        rm -f "$pending"
+        log "Blocklist deployment complete."
+        exit 0
+    fi
+    log "The running HAProxy did not take them. Validating and reloading instead..."
+    if ! haproxy -c -f /etc/haproxy/haproxy.cfg -f /etc/haproxy/conf.d; then
+        log "ERROR: HAProxy validation failed. Restoring the previous blocklists."
+        restore_blocklists
+        exit 1
+    fi
+    if ! "$SERVER_STATE" reload; then
+        log "ERROR: HAProxy reload failed. Rolling back."
+        restore_blocklists
+        if "$SERVER_STATE" reload; then
+            restore_marker "$pending"
+        fi
+        exit 1
+    fi
+    rm -f "$pending"
+    log "Blocklist deployment complete."
+    exit 0
+}
+
+if (( BLOCKLIST )); then
+    pull_blocklists "$@"
 fi
 
 #

@@ -98,6 +98,11 @@ if [ "$1" = update-certs ]; then
     echo "$*" >> "$RECORD"
     exit "${RUNTIME:-3}"
 fi
+# `update-lists` (B500) answers what `$LISTS` says: 0 swapped, 70 refused.
+if [ "$1" = update-lists ]; then
+    echo "$*" >> "$RECORD"
+    exit "${LISTS:-0}"
+fi
 exit 64
 """
 
@@ -516,6 +521,135 @@ class CaPull(PullHarness):
         self.assertEqual(code, 1)
         self.assertIn("private key", output)
         self.assertFalse((self.certs / "ca" / "corp-root.pem").exists())
+
+
+class BlocklistPull(PullHarness):
+    """`--blocklist` (B500): lists under `blocklists/`, swapped in without a reload."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.list_pending = self.root / "run" / "list.pending"
+        self.script.write_text(
+            self.script.read_text(encoding="utf-8").replace(
+                'BLOCKLIST_PENDING="/run/haprion-blocklist-pull.pending"',
+                f'BLOCKLIST_PENDING="{self.list_pending}"',
+            ),
+            encoding="utf-8",
+        )
+        (self.offered / "blocklists").mkdir()
+        self.lists = self.tree.haproxy / "blocklists"
+
+    def offer_list(self, content: bytes, name: str = "crowdsec") -> None:
+        (self.offered / "blocklists" / f"{name}.lst").write_bytes(content)
+
+    def run_lists(self, *names: str, lists: int = 0, fail: bool = False) -> tuple[int, str]:
+        marker = self.root / "fail"
+        if fail:
+            marker.touch()
+        else:
+            marker.unlink(missing_ok=True)
+        finished = subprocess.run(
+            ["/bin/bash", str(self.script), "--blocklist", *(names or ("crowdsec",))],
+            capture_output=True,
+            text=True,
+            env={
+                "LISTS": str(lists),
+                "PATH": f"{self.bin}:/usr/bin:/bin",
+                "OFFERED": str(self.offered),
+                "RECORD": str(self.record),
+                "UNITS": str(self.tree.units),
+                "KILL_AT_CHECK": "/nonexistent",
+                "FAIL_CHECK": str(marker),
+                "TMPDIR": str(self.root),
+            },
+            check=False,
+        )
+        return finished.returncode, finished.stdout + finished.stderr
+
+    def recorded(self) -> list[str]:
+        return self.record.read_text().splitlines() if self.record.exists() else []
+
+    def test_a_new_list_is_installed_and_swapped_without_a_reload(self) -> None:
+        self.offer_list(b"192.0.2.0/24\n2001:db8::1\n")
+
+        code, output = self.run_lists()
+
+        self.assertEqual(code, 0, output)
+        self.assertEqual((self.lists / "crowdsec.lst").read_bytes(), b"192.0.2.0/24\n2001:db8::1\n")
+        self.assertEqual(self.recorded(), ["update-lists crowdsec"])
+        self.assertEqual(self.reloads(), 0)
+        self.assertFalse(self.list_pending.exists())
+
+    def test_an_unchanged_list_is_left_alone(self) -> None:
+        self.offer_list(b"192.0.2.0/24\n")
+        self.run_lists()
+
+        code, output = self.run_lists()
+
+        self.assertEqual(code, 0, output)
+        self.assertIn("unchanged", output)
+        self.assertEqual(self.recorded(), ["update-lists crowdsec"])
+
+    def test_a_swap_haproxy_refuses_is_checked_and_reloaded(self) -> None:
+        self.offer_list(b"192.0.2.0/24\n")
+
+        code, output = self.run_lists(lists=70)
+
+        self.assertEqual(code, 0, output)
+        self.assertIn("check", self.recorded())
+        self.assertEqual(self.reloads(), 1)
+        self.assertFalse(self.list_pending.exists())
+
+    def test_a_refused_check_restores_the_old_list(self) -> None:
+        self.lists.mkdir()
+        (self.lists / "crowdsec.lst").write_bytes(b"192.0.2.0/24\n")
+        self.offer_list(b"198.51.100.0/24\n")
+
+        code, output = self.run_lists(lists=70, fail=True)
+
+        self.assertEqual(code, 1, output)
+        self.assertEqual((self.lists / "crowdsec.lst").read_bytes(), b"192.0.2.0/24\n")
+        self.assertEqual(self.reloads(), 0)
+        self.assertFalse(self.list_pending.exists())
+
+    def test_a_line_that_is_not_an_address_is_refused_before_anything_is_installed(self) -> None:
+        for body in (b"192.0.2.1\nadd acl x y\n", b"192.0.2.1;clear acl\n", b"\n"):
+            with self.subTest(body=body):
+                self.offer_list(body)
+                code, output = self.run_lists()
+                self.assertEqual(code, 1, output)
+                self.assertIn("not an address", output)
+                self.assertFalse((self.lists / "crowdsec.lst").exists())
+                self.assertEqual(self.recorded(), [])
+
+    def test_an_empty_list_is_a_list(self) -> None:
+        """Every address excepted leaves an empty file, which is still what the manager wrote."""
+
+        self.offer_list(b"")
+
+        code, output = self.run_lists()
+
+        self.assertEqual(code, 0, output)
+        self.assertEqual((self.lists / "crowdsec.lst").read_bytes(), b"")
+
+    def test_a_list_an_earlier_run_left_unswapped_is_swapped_by_the_next(self) -> None:
+        self.offer_list(b"192.0.2.0/24\n")
+        self.lists.mkdir()
+        (self.lists / "crowdsec.lst").write_bytes(b"192.0.2.0/24\n")
+        self.list_pending.write_text("crowdsec\n")
+
+        code, output = self.run_lists()
+
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.recorded(), ["update-lists crowdsec"])
+        self.assertFalse(self.list_pending.exists())
+
+    def test_a_name_that_is_not_a_blocklist_is_refused(self) -> None:
+        for name in ("Crowdsec", "a.b", "a_b"):
+            with self.subTest(name=name):
+                code, output = self.run_lists(name)
+                self.assertEqual(code, 1, output)
+                self.assertRegex(output, "invalid (blocklist name|certificate ID)")
 
 
 if __name__ == "__main__":

@@ -247,6 +247,16 @@ class CaFilesOnTheNode(ScriptFixture):
         self.assertEqual(code, 0, output)
         self.assertEqual(self.record.read_text().strip(), f"{self.pull} --authority corp-root")
 
+    def test_blocklist_pull_reaches_the_pull_helper_with_its_flag(self) -> None:
+        """B500: the blocklists go to the nodes the way the CA files do."""
+
+        code, output = self.run_trigger("blocklist-pull crowdsec spamhaus-drop")
+
+        self.assertEqual(code, 0, output)
+        self.assertEqual(
+            self.record.read_text().strip(), f"{self.pull} --blocklist crowdsec spamhaus-drop"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

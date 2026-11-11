@@ -11,4 +11,8 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/opt/haprion/current/bin/haprion-blocklist-refresh
+# Two lists of 100 000 entries in four clusters peaked at 145 MB (26-11-11); the
+# deploy it starts afterwards, haprion-cert-deploy, runs in this unit too.
+MemoryMax=512M
+MemorySwapMax=0
 PrivateTmp=true

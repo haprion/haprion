@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import base64
 import ipaddress
+import random
 import ssl
 import threading
+import tracemalloc
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -94,6 +96,59 @@ class TheFormatIsOneAddressToALine(unittest.TestCase):
         self.assertEqual(blocklists.render(()), b"")
 
 
+class CollapsedAsTheStandardLibraryDoes(unittest.TestCase):
+    """The list's networks merged without an object per address (26-11-11).
+
+    `ipaddress.collapse_addresses` made an address object for every entry and
+    cached more on each network: 100 000 entries, a list of 1.4 MB, took the
+    reading to 194 MB and a test with exceptions in four clusters to 299 MB.
+    The merge is now done on integers, and must answer exactly as it did.
+    """
+
+    def random_list(self, seed: int) -> bytes:
+        rng = random.Random(seed)  # noqa: S311 - the same lists every run, not a secret
+        lines = []
+        for _ in range(3000):
+            if rng.random() < 0.8:
+                base = rng.randrange(0, 1 << 12) << 4
+                prefix = rng.choice((28, 29, 30, 31, 32, 32, 32))
+                lines.append(f"{ipaddress.IPv4Address((10 << 24) + base)}/{prefix}")
+            else:
+                base = rng.randrange(0, 1 << 12) << 8
+                prefix = rng.choice((120, 124, 127, 128, 128))
+                lines.append(f"{ipaddress.IPv6Address((0x20010DB8 << 96) + base)}/{prefix}")
+        return ("\n".join(lines) + "\n").encode()
+
+    def test_the_same_networks_in_the_same_order(self) -> None:
+        for seed in range(20):
+            with self.subTest(seed=seed):
+                body = self.random_list(seed)
+                read = [ipaddress.ip_network(line, strict=False) for line in body.decode().split()]
+                expected = (
+                    *ipaddress.collapse_addresses(n for n in read if n.version == 4),
+                    *ipaddress.collapse_addresses(n for n in read if n.version == 6),
+                )
+                self.assertEqual(blocklists.parse(body).networks, expected)
+
+    def test_a_large_list_is_read_in_little_memory(self) -> None:
+        rng = random.Random(1)  # noqa: S311 - the same list every run, not a secret
+        body = (
+            "\n".join(
+                str(ipaddress.IPv4Address(rng.randrange(1 << 24, 223 << 24)))
+                for _ in range(blocklists.MAX_ENTRIES)
+            )
+            + "\n"
+        ).encode()
+        tracemalloc.start()
+        try:
+            parsed = blocklists.parse(body)
+            _current, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertGreater(len(parsed.networks), 99_000)
+        self.assertLess(peak, 80 * 1024 * 1024, f"{peak // (1024 * 1024)} MB")
+
+
 class AnExceptionIsTakenOut(unittest.TestCase):
     def test_an_address_inside_a_network_splits_it(self) -> None:
         result = blocklists.subtract(_networks("192.0.2.0/30"), ("192.0.2.1",), {})
@@ -117,6 +172,20 @@ class AnExceptionIsTakenOut(unittest.TestCase):
     def test_another_family_is_left_alone(self) -> None:
         result = blocklists.subtract(_networks("2001:db8::/32"), ("192.0.2.0/24",), {})
         self.assertEqual((result.networks, result.excepted), (_networks("2001:db8::/32"), 0))
+
+    def test_counting_alone_counts_what_subtract_counts(self) -> None:
+        networks = blocklists.parse(
+            b"192.0.2.0/24\n198.51.100.0/24\n203.0.113.7\n2001:db8::/32\n"
+        ).networks
+        groups = {"partners": ["198.51.100.128/25", "2001:db8::1"]}
+        excepts = ("192.0.2.9", "partners", "elsewhere")
+
+        done = blocklists.subtract(networks, excepts, groups)
+
+        self.assertEqual(
+            blocklists.excepted(networks, excepts, groups), (done.excepted, done.unknown_groups)
+        )
+        self.assertEqual(done.excepted, 3)
 
     def test_contains_names_the_network(self) -> None:
         networks = _networks("192.0.2.0/24", "2001:db8::/32")

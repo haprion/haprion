@@ -216,7 +216,12 @@ def parse(body: bytes) -> Parsed:
     if len(body) > MAX_BYTES:
         raise BlocklistError("too_large", f"the list is over {MAX_BYTES // (1024 * 1024)} MiB")
     text = body.decode("utf-8", errors="replace")
-    networks: list[Network] = []
+    #
+    # Kept as ranges, not as the network objects read: an object per entry
+    # held for the whole list is most of what reading one cost.
+    #
+    ranges: dict[int, list[tuple[int, int]]] = {4: [], 6: []}
+    read = 0
     skipped = 0
     for line in text.splitlines():
         entry = re.split(r"[#;]", line, maxsplit=1)[0].strip()
@@ -226,23 +231,55 @@ def parse(body: bytes) -> Parsed:
         if network is None:
             skipped += 1
             continue
-        networks.append(network)
-        if len(networks) > MAX_ENTRIES:
+        ranges[network.version].append(_span(network))
+        read += 1
+        if read > MAX_ENTRIES:
             raise BlocklistError(
                 "too_many", f"the list holds more than {MAX_ENTRIES:,} addresses".replace(",", " ")
             )
-    if not networks:
+    if not read:
         raise BlocklistError("empty", "the list holds no address")
-    return Parsed(networks=_collapsed(networks), skipped=skipped)
+    return Parsed(networks=_merged(ranges), skipped=skipped)
+
+
+def _span(network: Network) -> tuple[int, int]:
+    """The first and last address of a network, as integers.
+
+    From the prefix length rather than `broadcast_address`, which is cached on
+    the network object and would keep an address object per entry alive.
+    """
+
+    first = int(network.network_address)
+    return first, first + (1 << (network.max_prefixlen - network.prefixlen)) - 1
+
+
+def _merged(ranges: Mapping[int, list[tuple[int, int]]]) -> tuple[Network, ...]:
+    """The fewest networks covering the ranges, IPv4 first, each family in address order.
+
+    What `ipaddress.collapse_addresses` answers, worked out on integers: it
+    made an address object for every entry, and 100 000 entries took 160 MB
+    (26-11-11). Overlapping and touching ranges merge; each merged range is
+    then cut into the networks that cover exactly it.
+    """
+
+    found: list[Network] = []
+    for version, kind in ((4, ipaddress.IPv4Address), (6, ipaddress.IPv6Address)):
+        merged: list[list[int]] = []
+        for first, last in sorted(ranges.get(version, ())):
+            if merged and first <= merged[-1][1] + 1:
+                merged[-1][1] = max(merged[-1][1], last)
+            else:
+                merged.append([first, last])
+        for first, last in merged:
+            found.extend(ipaddress.summarize_address_range(kind(first), kind(last)))
+    return tuple(found)
 
 
 def _collapsed(networks: Iterable[Network]) -> tuple[Network, ...]:
-    v4 = [network for network in networks if network.version == 4]
-    v6 = [network for network in networks if network.version == 6]
-    return (
-        *ipaddress.collapse_addresses(v4),
-        *ipaddress.collapse_addresses(v6),
-    )
+    ranges: dict[int, list[tuple[int, int]]] = {4: [], 6: []}
+    for network in networks:
+        ranges[network.version].append(_span(network))
+    return _merged(ranges)
 
 
 def except_networks(
@@ -264,6 +301,34 @@ def except_networks(
     return _collapsed(networks), tuple(unknown)
 
 
+def _outs(taken: Sequence[Network]) -> list[tuple[int, int, int, Network]]:
+    return [(out.version, *_span(out), out) for out in taken]
+
+
+def _hits(
+    version: int, first: int, last: int, outs: Sequence[tuple[int, int, int, Network]]
+) -> list[Network]:
+    """The exceptions a range overlaps, compared as integers: `overlaps` caches
+    an address object on every network it is asked about, which is the memory
+    `_merged` saved."""
+
+    return [
+        out for kind, low, high, out in outs if kind == version and low <= last and first <= high
+    ]
+
+
+def excepted(
+    networks: Sequence[Network], excepts: Sequence[str], groups: Mapping[str, Sequence[str]]
+) -> tuple[int, tuple[str, ...]]:
+    """What `subtract` counts, without making the list: the entries an exception
+    takes out or cuts into, and the groups the cluster does not define."""
+
+    taken, unknown = except_networks(excepts, groups)
+    outs = _outs(taken)
+    count = sum(1 for network in networks if _hits(network.version, *_span(network), outs))
+    return count, unknown
+
+
 def subtract(
     networks: Sequence[Network], excepts: Sequence[str], groups: Mapping[str, Sequence[str]]
 ) -> Excepted:
@@ -273,27 +338,28 @@ def subtract(
     """
 
     taken, unknown = except_networks(excepts, groups)
-    kept: list[Network] = []
+    outs = _outs(taken)
+    ranges: dict[int, list[tuple[int, int]]] = {4: [], 6: []}
     excepted = 0
     for network in networks:
+        first, last = _span(network)
+        hits = _hits(network.version, first, last, outs)
+        if not hits:
+            ranges[network.version].append((first, last))
+            continue
+        excepted += 1
         pieces: list[Network] = [network]
-        touched = False
-        for out in taken:
-            if out.version != network.version:
-                continue
+        for out in hits:
             next_pieces: list[Network] = []
             for piece in pieces:
                 if not piece.overlaps(out):
                     next_pieces.append(piece)
-                    continue
-                touched = True
-                if piece.subnet_of(out):  # type: ignore[arg-type]
-                    continue
-                next_pieces.extend(piece.address_exclude(out))  # type: ignore[arg-type]
+                elif not piece.subnet_of(out):  # type: ignore[arg-type]
+                    next_pieces.extend(piece.address_exclude(out))  # type: ignore[arg-type]
             pieces = next_pieces
-        excepted += touched
-        kept.extend(pieces)
-    return Excepted(networks=_collapsed(kept), excepted=excepted, unknown_groups=unknown)
+        for piece in pieces:
+            ranges[piece.version].append(_span(piece))
+    return Excepted(networks=_merged(ranges), excepted=excepted, unknown_groups=unknown)
 
 
 def render(networks: Sequence[Network]) -> bytes:

@@ -28,6 +28,8 @@ LIMITED = {
     "haprion-poller.service.example": ("1152M", 524 + 45),
     "haprion-traffic-collector.service.example": ("512M", 212),
     "haprion-node-restore-helper@.service.example": ("512M", 84),
+    # Two lists of 100 000 entries in four clusters, before the deploy it starts (26-11-11).
+    "haprion-blocklist-refresh.service.example": ("512M", 145),
     **{
         f"haprion-{name}-helper@.service.example": ("256M", 84)
         for name in (

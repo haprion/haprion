@@ -28,6 +28,7 @@ import os
 import unittest
 from collections.abc import Iterator
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
 from unittest import mock
 
@@ -372,12 +373,10 @@ class ADeployBehindTheLine(TheChartInABrowser):
 
     def setUp(self) -> None:
         super().setUp()
-        from datetime import UTC, datetime, timedelta
-
         from tests.test_deploy_bands import deploy_job, deployed
 
         failed = deploy_job(
-            began=datetime.now(UTC) - timedelta(minutes=50),
+            began=self.began(datetime.now(UTC)),
             state="failed",
             result=deployed(("node-a", "updated"), ("node-b", "failed")),
             cluster="edge-demo",
@@ -388,6 +387,13 @@ class ADeployBehindTheLine(TheChartInABrowser):
         )
         patch.start()
         self.addCleanup(patch.stop)
+
+    @staticmethod
+    def began(now: datetime) -> datetime:
+        """Where in the ten-minute buckets the two-minute deploy falls depends
+        on the clock here, so `ADeployAcrossABucketEdge` pins the other case."""
+
+        return now - timedelta(minutes=50)
 
     @staticmethod
     def wired(page: Any) -> None:
@@ -440,3 +446,15 @@ class ADeployBehindTheLine(TheChartInABrowser):
             page.mouse.move(2, 2)
             page.wait_for_function("() => !document.querySelector('.deploy-tip:not([hidden])')")
             self.assertEqual(self.shown(page), 0)
+
+
+class ADeployAcrossABucketEdge(ADeployBehindTheLine):
+    """A deploy that crossed a bucket edge covers two buckets, and the band's
+    middle is the edge between them. The two targets left a tenth between
+    them there, and the box never came (26-11-11): the test above met it only
+    in the two minutes of every ten when its own deploy crossed an edge."""
+
+    @staticmethod
+    def began(now: datetime) -> datetime:
+        edge = now.replace(minute=now.minute - now.minute % 10, second=0, microsecond=0)
+        return edge - timedelta(minutes=41)

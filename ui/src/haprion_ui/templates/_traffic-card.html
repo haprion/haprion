@@ -55,7 +55,7 @@
           was clicked and a single rectangle would have to re-derive their
           edges to land on them.
         #}
-        {% for point in backend.points %}{% if point.selected %}<rect class="traffic-marked" x="{{ '%.1f'|format(point.x - backend.hit_width / 2) }}" y="0" width="{{ '%.1f'|format(backend.hit_width) }}" height="{{ spark_height }}"></rect>{% endif %}{% endfor %}
+        {% for point in backend.points %}{% if point.selected %}<rect class="traffic-marked" x="{{ '%.1f'|format(point.left) }}" y="0" width="{{ '%.1f'|format(point.right - point.left) }}" height="{{ spark_height }}"></rect>{% endif %}{% endfor %}
         {% for level in backend.levels %}<line class="traffic-level" x1="0" y1="{{ level.y }}" x2="{{ spark_width }}" y2="{{ level.y }}" stroke="var(--line-strong)" stroke-width="1" vector-effect="non-scaling-stroke"></line>{% endfor %}
         {#
           The cluster's deploys (B496, 8), above the guides and behind the
@@ -79,7 +79,7 @@
           back. The figures a hover shows are carried on the element rather
           than parsed back out of the title sentence.
         #}
-        {% for point in backend.points %}<a class="traffic-pick" href="{{ traffic_link(point.stamp) }}"{% if point.selected %} data-selected="1"{% endif %} data-when="{{ point.moment }}" data-note="{{ point.note }}" data-figures='{{ point.figures|tojson }}'><rect class="traffic-hit" x="{{ '%.1f'|format(point.x - backend.hit_width / 2) }}" y="0" width="{{ '%.1f'|format(backend.hit_width) }}" height="{{ spark_height }}"><title>{{ point.reading }}</title></rect></a>{% endfor %}
+        {% for point in backend.points %}<a class="traffic-pick" href="{{ traffic_link(point.stamp) }}"{% if point.selected %} data-selected="1"{% endif %} data-when="{{ point.moment }}" data-note="{{ point.note }}" data-figures='{{ point.figures|tojson }}'><rect class="traffic-hit" x="{{ '%.1f'|format(point.left) }}" y="0" width="{{ '%.1f'|format(point.right - point.left) }}" height="{{ spark_height }}"><title>{{ point.reading }}</title></rect></a>{% endfor %}
       </svg>
       {#
         What pointing at a band shows: the deploy, and the job and version it

@@ -14,10 +14,12 @@ cards within a section share one scale so their sizes can be compared.
 
 from __future__ import annotations
 
+import itertools
 import re
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from unittest import mock
 
@@ -511,6 +513,51 @@ class MarkingARangeOnThePage(ReadingACluster):
 
         self.assertEqual(answer.status_code, 200)  # type: ignore[attr-defined]
         self.assertNotIn('class="traffic-marked"', answer.text)  # type: ignore[attr-defined]
+
+
+class NoSlitBetweenTheBuckets(ReadingACluster):
+    """Each bucket's target ends where the next one begins (26-11-11).
+
+    The edges were written as the bucket's middle less half a width, and the
+    width, each rounded to a tenth on its own. Between some neighbours that
+    left a tenth of a unit belonging to neither: a pointer there met the line
+    underneath, the row stopped answering, and a deploy band whose middle fell
+    on it showed nothing at all.
+    """
+
+    RECT = r'<rect class="{kind}" x="([0-9.]+)" y="0" width="([0-9.]+)"'
+
+    def edges(self, text: str, kind: str) -> list[tuple[Decimal, Decimal]]:
+        return [
+            (Decimal(x), Decimal(x) + Decimal(width))
+            for x, width in re.findall(self.RECT.format(kind=kind), text)
+        ]
+
+    def assert_tiled(self, found: list[tuple[Decimal, Decimal]]) -> None:
+        self.assertGreater(len(found), 1)
+        for (_, end), (start, _) in itertools.pairwise(found):
+            self.assertEqual(end, start)
+
+    def test_the_targets_tile_the_drawing_in_every_window(self) -> None:
+        for window in ("", "?traffic=1h", "?traffic=7d"):
+            with self.subTest(window=window or "default"):
+                text = self.page(window).text  # type: ignore[attr-defined]
+                #
+                # One card's worth: every card draws the same buckets.
+                #
+                card = text.split('class="traffic-card', 2)[1]
+                self.assert_tiled(self.edges(card, "traffic-hit"))
+
+    def test_the_marked_buckets_tile_their_range(self) -> None:
+        now = datetime.now(UTC)
+        marks = (
+            f"?from={int((now - timedelta(minutes=120)).timestamp())}"
+            f"&to={int((now - timedelta(minutes=20)).timestamp())}"
+        )
+        text = self.page(marks).text  # type: ignore[attr-defined]
+        card = text.split('class="traffic-card', 2)[1]
+
+        self.assert_tiled(self.edges(card, "traffic-marked"))
 
 
 class TheWayBackAndForth(ReadingACluster):

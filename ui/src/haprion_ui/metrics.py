@@ -15,11 +15,12 @@ days the samples are worth having.
 
 from __future__ import annotations
 
+import itertools
 import math
 import re
 from collections.abc import Collection, Mapping, Sequence
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
@@ -832,6 +833,16 @@ class Point:
     # nobody sampled. Empty when the bucket has figures.
     #
     note: str = ""
+    #
+    # The bucket's edges in the drawing, to the tenth it is written in: where
+    # its hover target and its marked shading stand. `right` is the next
+    # bucket's `left`, the same number rather than one worked out again, so
+    # neighbours share an edge. Rounding the middle less half a width and the
+    # width each on their own left a tenth between some of them that belonged
+    # to neither, and a pointer there found nothing to answer it (26-11-11).
+    #
+    left: float = 0.0
+    right: float = 0.0
 
 
 #
@@ -1262,6 +1273,8 @@ def spark(
         position = min(max((at - start).total_seconds() / seconds, 0.0), 1.0)
         x = position * width
         point_x = min(x + bucket_width / 2, width)
+        left = round(x, 1)
+        right = round(min(x + bucket_width, width), 1)
         if value is None:
             if current:
                 runs.append(current)
@@ -1279,6 +1292,8 @@ def spark(
                     figures=tuple((label, None) for _name, label in figures.counters),
                     moment=shown(at).strftime(TIMESTAMP),
                     note=gap_note(share),
+                    left=left,
+                    right=right,
                 )
             )
             continue
@@ -1302,10 +1317,18 @@ def spark(
                 ),
                 moment=shown(at).strftime(TIMESTAMP),
                 note="" if measured else "No samples at this time",
+                left=left,
+                right=right,
             )
         )
     if current:
         runs.append(current)
+    #
+    # Each bucket ends where the next begins: see `Point.left`.
+    #
+    points = [
+        replace(point, right=following.left) for point, following in itertools.pairwise(points)
+    ] + points[-1:]
 
     return [" ".join(run) for run in runs], points, peak
 
@@ -1660,11 +1683,6 @@ class BackendTraffic:
     # shape is read at a glance and a number is read on purpose.
     #
     points: tuple[Point, ...] = ()
-    #
-    # How wide one bucket is in the drawing's own units, so a hover target can
-    # be the width of what it represents rather than of the line.
-    #
-    hit_width: float = 0.0
     #
     # How many intervals the drawing was built from, as opposed to `intervals`,
     # which counts what the figures were measured from. See `measured`.
@@ -2069,7 +2087,6 @@ def backend_traffic(
         chosen=chosen,
         figures=figures,
     )
-    buckets = max((end - start) / bucket, 1) if bucket else 1
     drawn = peak if ceiling is None else ceiling
     return BackendTraffic(
         series=series,
@@ -2090,7 +2107,6 @@ def backend_traffic(
         totals=measurement.totals,
         paths=tuple(paths),
         points=tuple(points),
-        hit_width=SPARK_WIDTH / buckets,
         ticks=tuple(spark_ticks(start=start, end=end, fmt=tick_format)),
         levels=levels_for(ceiling_for(drawn) if ceiling is None else drawn, height=SPARK_HEIGHT),
         peak=peak,

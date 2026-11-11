@@ -43,9 +43,9 @@ from haprion.debian_package import package, write  # the path above comes first
 # Each package counts its own revision: it moves when our part of the package
 # changes (the unit, the build), not when the other package does.
 #
-CORAZA_REVISION = "2"
+CORAZA_REVISION = "3"
 CRS_REVISION = "1"
-GO_VERSION = "go1.27.3"
+GO_VERSION = "go1.27.4"
 GOVULNCHECK_VERSION = "v1.9.0"
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 DIGEST = re.compile(r"[0-9a-f]{64}")

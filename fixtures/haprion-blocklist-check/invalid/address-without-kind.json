@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "operation": "blocklist_check",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "error": null,
+  "result": {
+    "address": "198.51.100.4",
+    "lists": [],
+    "unfetched": []
+  }
+}

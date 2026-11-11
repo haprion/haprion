@@ -78,6 +78,7 @@ READS = frozenset(
 # The reading commands answer in a contract too; their usage is held to the same rule.
 #
 READ_PROGRAMS = (
+    "haprion-blocklist-check",
     "haprion-cert-list",
     "haprion-inventory",
     "haprion-list",
@@ -423,6 +424,7 @@ HELPER_ENDS = frozenset(
         "haprion-backup-job-helper",
         "haprion-block-api-helper",
         "haprion-blocklist-apply-helper",
+        "haprion-blocklist-check-helper",
         "haprion-cert-delete-helper",
         "haprion-cert-deploy-helper",
         "haprion-cert-export-helper",

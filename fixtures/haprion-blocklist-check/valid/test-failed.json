@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "operation": "blocklist_check",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "error": null,
+  "result": {
+    "kind": "list",
+    "name": "community",
+    "answer": "failed",
+    "entries": 0,
+    "skipped": 0,
+    "excepts": [],
+    "clusters": [],
+    "problem": "https://lists.example.com/raw answered 401"
+  }
+}

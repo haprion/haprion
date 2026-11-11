@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "operation": "blocklist_check",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": false,
+  "outcome": "failed",
+  "error": {
+    "code": "bad_input",
+    "message": "not an address is not an IPv4 or IPv6 address",
+    "details": {}
+  },
+  "result": null
+}

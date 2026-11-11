@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "operation": "blocklist_check",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "error": null,
+  "result": {
+    "kind": "list",
+    "name": "community",
+    "answer": "fetched",
+    "entries": 14812,
+    "skipped": 2,
+    "excepts": [
+      "192.0.2.10",
+      "partner-sites"
+    ],
+    "clusters": [
+      {
+        "cluster": "alpha",
+        "excepted": 3,
+        "unknown_groups": []
+      },
+      {
+        "cluster": "beta",
+        "excepted": 1,
+        "unknown_groups": [
+          "partner-sites"
+        ]
+      }
+    ],
+    "problem": null
+  }
+}

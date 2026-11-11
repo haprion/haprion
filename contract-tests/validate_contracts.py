@@ -796,6 +796,36 @@ def check_blocklist_apply_semantics(document: dict[str, object], path: Path) -> 
             raise AssertionError(f"{path}: a blocked blocklist_apply is a binding mismatch")
 
 
+def check_blocklist_check_semantics(document: dict[str, object], path: Path) -> None:
+    """A result only when done; a test says why exactly when it failed, and an
+    address is excepted only on clusters its list goes to."""
+
+    result = document["result"]
+    if document["outcome"] == "done" and not isinstance(result, dict):
+        raise AssertionError(f"{path}: a done blocklist_check carries no result")
+    if document["outcome"] != "done" and result is not None:
+        raise AssertionError(f"{path}: a {document['outcome']} blocklist_check carries a result")
+    if not isinstance(result, dict):
+        return
+    if result["kind"] == "list":
+        failed = result["answer"] == "failed"
+        if (result["problem"] is not None) != failed:
+            raise AssertionError(f"{path}: a {result['answer']} test with the wrong problem")
+        if failed and (result["entries"] or result["skipped"] or result["clusters"]):
+            raise AssertionError(f"{path}: a failed test counts what it did not read")
+        if result["clusters"] and not result["excepts"]:
+            raise AssertionError(f"{path}: a test without exceptions counts what they took")
+        return
+    names = [item["name"] for item in result["lists"]]
+    if len(set(names)) != len(names) or set(names) & set(result["unfetched"]):
+        raise AssertionError(f"{path}: a list is named twice in an address check")
+    for item in result["lists"]:
+        if not set(item["excepted_on"]) <= set(item["clusters"]):
+            raise AssertionError(
+                f"{path}: {item['name']} is excepted on a cluster it does not go to"
+            )
+
+
 def check_dns_profile_apply_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -1497,6 +1527,7 @@ SEMANTIC_CHECKS = {
     "cert_request": check_cert_request_semantics,
     "dns_profile_apply": check_dns_profile_apply_semantics,
     "blocklist_apply": check_blocklist_apply_semantics,
+    "blocklist_check": check_blocklist_check_semantics,
     "ndes_profile_apply": check_dns_profile_apply_semantics,
     "cert_publish": check_cert_publish_semantics,
     "cert_target": check_cert_target_semantics,
@@ -1624,6 +1655,15 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["plugin"] = "dns_example_login = leaked-example"
     elif operation == "blocklist_apply":
         invalid["outcome"] = "failed"
+    elif operation == "blocklist_check":
+        if result is None:
+            invalid["outcome"] = "done"
+        elif result["kind"] == "list":
+            result["problem"] = None if result["answer"] == "failed" else "it was read"
+        elif result["lists"]:
+            result["lists"][0]["excepted_on"].append("a-cluster-the-list-does-not-go-to")
+        else:
+            invalid["outcome"] = "failed"
     elif operation == "cert_target":
         result["changed"] = ["a-certificate-no-row-names"]
     elif operation == "cert_delete":

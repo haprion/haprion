@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-blocklist-check.schema.json",
+  "title": "haprion-blocklist-check-helper JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "blocklist_check" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/tested" },
+            { "$ref": "#/$defs/checked" },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" },
+    "cluster": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "tested": {
+      "description": "A list as the form holds it, fetched once and read as the timer would; nothing kept (B496 nr 13, B500).",
+      "type": "object",
+      "required": ["kind", "name", "answer", "entries", "skipped", "excepts", "clusters", "problem"],
+      "properties": {
+        "kind": { "const": "list" },
+        "name": { "$ref": "#/$defs/name" },
+        "answer": {
+          "description": "fetched: the list was read; failed: it could not be fetched or read, and problem says why.",
+          "enum": ["fetched", "failed"]
+        },
+        "entries": { "type": "integer", "minimum": 0, "maximum": 100000 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "excepts": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 64 } },
+        "clusters": {
+          "description": "What the exceptions take out in each cluster; empty without exceptions or when the list was not read.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["cluster", "excepted", "unknown_groups"],
+            "properties": {
+              "cluster": { "$ref": "#/$defs/cluster" },
+              "excepted": { "type": "integer", "minimum": 0 },
+              "unknown_groups": { "type": "array", "items": { "$ref": "#/$defs/name" } }
+            },
+            "additionalProperties": false
+          }
+        },
+        "problem": { "oneOf": [{ "type": "string", "minLength": 1, "maxLength": 1024 }, { "type": "null" }] }
+      },
+      "additionalProperties": false
+    },
+    "checked": {
+      "description": "Which kept lists hold one address, looked up without fetching (B496 nr 13, B500).",
+      "type": "object",
+      "required": ["kind", "address", "lists", "unfetched"],
+      "properties": {
+        "kind": { "const": "address" },
+        "address": { "type": "string", "minLength": 2, "maxLength": 45 },
+        "lists": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "network", "fetched_at", "excepted_on", "clusters"],
+            "properties": {
+              "name": { "$ref": "#/$defs/name" },
+              "network": { "description": "The list's entry the address is in: the address itself, or a network.", "type": "string", "minLength": 2, "maxLength": 49 },
+              "fetched_at": { "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] },
+              "excepted_on": { "type": "array", "items": { "$ref": "#/$defs/cluster" } },
+              "clusters": { "type": "array", "items": { "$ref": "#/$defs/cluster" } }
+            },
+            "additionalProperties": false
+          }
+        },
+        "unfetched": { "description": "Lists with no good fetch kept yet.", "type": "array", "items": { "$ref": "#/$defs/name" } }
+      },
+      "additionalProperties": false
+    }
+  }
+}

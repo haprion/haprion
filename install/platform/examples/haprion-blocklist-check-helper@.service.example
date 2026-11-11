@@ -1,0 +1,62 @@
+# Answers Test and Check address for Settings -> Blocklists, then exits
+# (B496 nr 13, B500).
+#
+# Started by haprion-blocklist-check-helper.socket, one instance per
+# connection. The connection is this process's stdin and stdout.
+#
+# What it may do with root
+# ------------------------
+# Read: the runtime policy and the clusters' network groups, which an
+# exception may name; the saved definitions in /etc/haprion/blocklists, for
+# the password or token of a list tested unchanged; and the lists the timer
+# keeps in /var/lib/haprion/blocklists, which Check address looks in. Write:
+# nothing - a test fetches the list once and keeps nothing, and no path is
+# opened for writing.
+#
+# Why it has the network and CAP_DAC_READ_SEARCH: Test fetches the list from
+# its URL, and the clusters' repositories are read whoever owns them, as the
+# timer reads them for the same exceptions.
+#
+# Installed as /etc/systemd/system/haprion-blocklist-check-helper@.service.
+
+[Unit]
+Description=Check blocklists for the Haprion interface
+Documentation=file:///opt/haprion/current
+CollectMode=inactive-or-failed
+
+[Service]
+Type=exec
+ExecStart=/opt/haprion/current/bin/haprion-blocklist-check-helper
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+MemoryMax=256M
+MemorySwapMax=0
+# With Type=exec the start timeout ends once the helper runs; RuntimeMaxSec
+# bounds the rest. The fetch has 30 s in all; a source that drips its answer
+# is ended here, under the web's 50 s.
+TimeoutStartSec=60
+RuntimeMaxSec=45
+TimeoutStopSec=10
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@obsolete
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH

@@ -483,6 +483,13 @@ it over the name the way the CA would, and removes it again. The webroot is the 
 path its unit can write; with no webroot in the policy, nothing is. The CLI release
 must carry `haprion-http01-check-helper`.
 
+And the web's way to test a blocklist and look an address up:
+`haprion-blocklist-check-helper.socket` (`/run/haprion/blocklist-check.sock`, group
+`_haprion-web`) and the per-request `haprion-blocklist-check-helper@.service`, root with
+the network. It fetches a list as the form holds it and keeps nothing, or says which of
+the lists the timer keeps hold an address. It reads the saved secrets and the kept lists
+and writes nothing. The CLI release must carry `haprion-blocklist-check-helper`.
+
 ## Step 6 — backups that have been read back
 
 `./06-platform-backup` installs a daily dump timer and a weekly restore check for

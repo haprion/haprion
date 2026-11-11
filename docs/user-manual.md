@@ -9064,6 +9064,7 @@ reaches a helper over a local socket instead:
 | `/run/haprion/resolve.sock` | a temporary account | looking up the names of DNS servers |
 | `/run/haprion/ndes-server.sock` | root | confirming an NDES server from its CA, and writing it into the runtime policy |
 | `/run/haprion/http01-check.sock` | root | *Check HTTP-01*: a test file written in the webroot, fetched over the name, removed again |
+| `/run/haprion/blocklist-check.sock` | root | *Test* and *Check address* on *Blocklists*: a list fetched once and kept nowhere, or an address looked up in the kept lists |
 
 The probe shows why it works this way. A health check needs root, because the probe identity's key
 is owned by root - no application account may hold a key that reaches a node. The obvious way to
@@ -9101,7 +9102,7 @@ unavailable rather than showing an empty result.
 
 ##### The worker's way to the receiver helper
 
-The worker *can* use `sudo` - fourteen of its helpers go that way. The receiver helper does not,
+The worker *can* use `sudo` - fifteen of its helpers go that way. The receiver helper does not,
 for a reason on the other side of the boundary:
 
 - A helper the worker starts inherits the worker unit's view of the filesystem (its mount

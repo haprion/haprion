@@ -430,6 +430,7 @@ class TheListsAreTheSteps(unittest.TestCase):
             "node-restore",
             "ndes-server",
             "http01-check",
+            "blocklist-check",
         )
         for suffix in ("@.service", ".socket")
     }

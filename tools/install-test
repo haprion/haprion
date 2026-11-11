@@ -1056,6 +1056,45 @@ class Run:
                 check=False,
             )
 
+    def blocklist_checked(self) -> None:
+        """Check address over the web's socket and from the command (B500).
+
+        No list is defined yet, so the answer is that the address is on none:
+        what this proves is the way there - the socket the web may connect
+        to, the unit's sandbox reading the policy and every cluster's groups
+        as root, and the command answering the same from a terminal.
+        """
+
+        request = json.dumps(
+            {
+                "schema_version": 1,
+                "operation": "blocklist_check",
+                "cluster": None,
+                "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                "parameters": {"address": "192.0.2.77"},
+            }
+        )
+        ask = (
+            "import socket, sys; s = socket.socket(socket.AF_UNIX); "
+            "s.connect('/run/haprion/blocklist-check.sock'); "
+            "s.sendall(sys.stdin.buffer.read()); s.shutdown(socket.SHUT_WR); "
+            "print(s.makefile().read())"
+        )
+        _, answer = self.on(
+            "mgr",
+            f"runuser -u _haprion-web -- python3 -c {shlex.quote(ask)}",
+            stdin=request + "\n",
+        )
+        try:
+            document = json.loads(answer)
+        except ValueError as exc:
+            raise Failed(f"the web's socket did not answer with JSON:\n{answer}") from exc
+        if document.get("outcome") != "done" or document["result"]["lists"]:
+            raise Failed(f"the web's socket did not say the address is on no list:\n{answer}")
+        _, said = self.on("mgr", "haprion-blocklist-check 192.0.2.77")
+        if said.strip() != "192.0.2.77 is on no blocklist.":
+            raise Failed(f"haprion-blocklist-check did not say the address is on no list:\n{said}")
+
     def every_function_has_what_it_needs(self) -> None:
         missing = [
             f"{role}: {what}"
@@ -1350,6 +1389,10 @@ def run_one(
         step(
             "HTTP-01 checked for a name, as the web and the command do",
             run.http01_checked,
+        )
+        step(
+            "an address checked against the blocklists, as the web and the command do",
+            run.blocklist_checked,
         )
         step("an object published", run.publish)
 

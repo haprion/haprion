@@ -1,0 +1,30 @@
+# The socket the interface asks Test and Check address of the blocklists through
+# (B496 nr 13, B500).
+#
+# Owned by root, connectable by the web's account. Each connection starts one
+# instance of haprion-blocklist-check-helper@.service, which reads one request -
+# a list as the form holds it, or one address - and writes one answer.
+#
+# Installed as /etc/systemd/system/haprion-blocklist-check-helper.socket, with
+# WEB_USER rendered by 07-platform-services.
+
+[Unit]
+Description=Socket the Haprion interface checks blocklists through
+Documentation=file:///opt/haprion/current
+
+[Socket]
+ListenStream=/run/haprion/blocklist-check.sock
+SocketUser=root
+SocketGroup=WEB_USER
+SocketMode=0660
+
+Accept=yes
+
+# One person pressing a button now and then; a few at once is plenty, and
+# each holds a list of up to 100 000 entries for as long as it runs.
+MaxConnections=4
+
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

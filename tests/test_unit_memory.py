@@ -28,7 +28,9 @@ LIMITED = {
     "haprion-poller.service.example": ("1152M", 524 + 45),
     "haprion-traffic-collector.service.example": ("512M", 212),
     "haprion-node-restore-helper@.service.example": ("512M", 84),
-    # Two lists of 100 000 entries in four clusters, before the deploy it starts (26-11-11).
+    # A list of 100 000 entries tested with exceptions in four clusters (26-11-11).
+    "haprion-blocklist-check-helper@.service.example": ("256M", 90),
+    # Two such lists in four clusters, before the deploy it starts (26-11-11).
     "haprion-blocklist-refresh.service.example": ("512M", 145),
     **{
         f"haprion-{name}-helper@.service.example": ("256M", 84)

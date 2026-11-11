@@ -15,8 +15,8 @@ intrusion equal to worker access, which is deploy rights.
 
 | Account | What it is | Root helpers it may reach | Private keys it holds | Database role |
 |---|---|---|---|---|
-| `_haprion-web` | the web interface | seven sockets: probe, name lookup, certificate export, sign-in, NDES servers, HTTP-01 check, block | none stored | `app_web` |
-| `_haprion-worker` | runs the jobs the interface queues | fourteen sudo helpers and five sockets (below) | none | `app_worker` |
+| `_haprion-web` | the web interface | eight sockets: probe, name lookup, certificate export, sign-in, NDES servers, HTTP-01 check, blocklist check, block | none stored | `app_web` |
+| `_haprion-worker` | runs the jobs the interface queues | fifteen sudo helpers and five sockets (below) | none | `app_worker` |
 | `_haprion-poller` | reads status, metrics and listings in the background | four read-only sudo helpers | none | `app_poller` |
 | `_haprion-collector` | fetches the traffic log from the nodes | none | one read-only key to the nodes' logs | `app_collector` |
 | `_haprion-oidc` | talks to the sign-in provider for the web | is itself the helper behind the sign-in socket | the key that opens the stored client secret | none |
@@ -142,6 +142,10 @@ never hold a transaction open across a CLI command.
   the poller are not in that group.
 - The certificate distribution trees and the node archives are never readable to an interface
   account. The certificate tree is readable to `_haprion-cert-pull`, which the nodes fetch as.
+- A blocklist's definition, with its password or token, is root's alone: one file in
+  `/etc/haprion/blocklists`, mode 0600 in a 0700 directory, written by its helper from a sealed box the
+  web cannot open. The lists the timer keeps in `/var/lib/haprion/blocklists` are root's; the timer and
+  the blocklist check helper read them.
 - The traffic log mirror is written by the collector and readable, never writable, by the web.
 - The answers the socket helpers keep for recovery are in `/var/lib/haprion/answers`, root's and
   readable by the worker's group, never writable by it. A helper locks its answer while it runs; the
@@ -206,9 +210,9 @@ the caller dies. Once a helper has read its request, it moves that stream aside 
 | Reached by | Helpers |
 |---|---|
 | the poller, through sudo | status, inventory, readings, cluster list - read only |
-| the worker, through sudo | deploy, certificate deploy, revert, changes publish, certificate issue, publish, target, import, request, delete, NDES enrollment, DNS profile apply, NDES profile apply, server state |
+| the worker, through sudo | deploy, certificate deploy, revert, changes publish, certificate issue, publish, target, import, request, delete, NDES enrollment, DNS profile apply, NDES profile apply, blocklist apply, server state |
 | the worker, through a socket | certificate receivers, backup jobs, node restore, the interface certificate, nodes and clusters |
-| the web, through a socket | health probe, name lookup, certificate export, sign-in, confirming an NDES server from its CA, checking HTTP-01 for a name, placing a block for an API token |
+| the web, through a socket | health probe, name lookup, certificate export, sign-in, confirming an NDES server from its CA, checking HTTP-01 for a name, testing a blocklist and looking an address up in the kept lists, placing a block for an API token |
 
 A helper that writes `/etc` - accounts, sshd, nginx - answers on a socket from a unit of its own
 rather than through sudo: the worker's sandbox keeps `/etc` read-only, and a helper started through

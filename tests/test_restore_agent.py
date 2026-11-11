@@ -946,6 +946,7 @@ class Finish(AgentTest):
             "run": RUN,
             "certificates": ["cert-a", "cert-b"],
             "authorities": ["corp-root"],
+            "blocklists": ["community"],
             "keepalived": keepalived,
         }
 
@@ -963,10 +964,29 @@ class Finish(AgentTest):
                 ["systemctl", "start", "haproxy"],
                 ["/usr/sbin/haprion-cert-pull", "--authority", "corp-root"],
                 ["/usr/sbin/haprion-cert-pull", "cert-a", "cert-b"],
+                # The lists an object's *Denied* names, before the configuration
+                # that loads them: without the file it does not validate (26-11-11).
+                ["/usr/sbin/haprion-cert-pull", "--blocklist", "community"],
                 ["/usr/sbin/haprion-pull-deploy"],
             ],
         )
         self.assertEqual(self.host.path("/root/.ssh/authorized_keys").read_text(), "operator key\n")
+
+    def test_a_cluster_without_lists_pulls_none(self) -> None:
+        self.host.active.update(
+            {f"haprion-restore-rollback-{RUN}.timer": "active", "haproxy": "active"}
+        )
+        header = {key: value for key, value in self.header().items() if key != "blocklists"}
+        result = self.serve(header, payload(self.KEYS))
+        self.assertTrue(result["ok"], result)
+        self.assertNotIn("--blocklist", [arg for argv in self.host.commands for arg in argv])
+
+    def test_a_list_name_is_read_as_the_engine_reads_it(self) -> None:
+        """The agent imports nothing from the package; its pattern is held to the engine's."""
+
+        from haprion import blocklists
+
+        self.assertEqual(restore_agent.BLOCKLIST_NAME.pattern, blocklists.NAME.pattern)
 
     def listening(self, *drop_ins: tuple[str, str]) -> dict[str, Any]:
         for name, text in (
@@ -1027,7 +1047,12 @@ class Finish(AgentTest):
 
     def test_an_unusable_id_is_refused_before_anything_runs(self) -> None:
         self.host.active.update({f"haprion-restore-rollback-{RUN}.timer": "active"})
-        for key, value in (("certificates", ["../x"]), ("authorities", ["../x"])):
+        for key, value in (
+            ("certificates", ["../x"]),
+            ("authorities", ["../x"]),
+            ("blocklists", ["../x"]),
+            ("blocklists", "community"),
+        ):
             with self.subTest(key=key):
                 header = {**self.header(), key: value}
                 result = self.serve(header, payload(self.KEYS))

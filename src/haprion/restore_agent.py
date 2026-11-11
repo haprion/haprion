@@ -245,6 +245,11 @@ RUN_KEPT_DAYS = 30
 DATED_RUN = re.compile(r"^r(\d{6})-")
 NAME = re.compile(r"^[a-z_][a-z0-9_-]{0,31}\$?$")
 CERTIFICATE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,254}$")
+#
+# A blocklist's name, as `haprion.blocklists.NAME` has it; this agent imports
+# nothing from the package, and a test holds the two alike.
+#
+BLOCKLIST_NAME = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
 MAX_HEADER = 1024 * 1024
 MAX_PAYLOAD = 64 * 1024 * 1024
 ENVIRONMENT = {
@@ -1720,6 +1725,15 @@ def finish(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, 
         not CERTIFICATE_ID.fullmatch(str(value)) for value in authorities
     ):
         raise Refused("a CA ID is not usable")
+    #
+    # The lists an object's *Denied* names (B500): the published configuration
+    # loads each from /etc/haproxy/blocklists and does not validate without it.
+    #
+    lists = header.get("blocklists", [])
+    if not isinstance(lists, list) or any(
+        not isinstance(value, str) or not BLOCKLIST_NAME.fullmatch(value) for value in lists
+    ):
+        raise Refused("a blocklist name is not usable")
     if header["keepalived"] not in {"start", "mask"}:
         raise Refused("keepalived must be started or masked")
     if header.get("address") is not None and not _ipv4(header["address"]):
@@ -1743,10 +1757,10 @@ def finish(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, 
         _listen_final(host, run, header.get("address"), report)
 
     if not header.get("overwrite"):
-        _start(host, header, certificates, authorities, report)
+        _start(host, header, certificates, authorities, lists, report)
     else:
         try:
-            _start(host, header, certificates, authorities, report)
+            _start(host, header, certificates, authorities, lists, report)
         except OVERWRITE_FAILURES as exc:
             raise _rolled_back(host, run, report, exc) from exc
 
@@ -1761,6 +1775,7 @@ def _start(
     header: dict[str, Any],
     certificates: list[str],
     authorities: list[str],
+    lists: list[str],
     report: Report,
     *,
     sleep: Callable[[float], None] = time.sleep,
@@ -1776,6 +1791,9 @@ def _start(
     if certificates:
         host.run(["/usr/sbin/haprion-cert-pull", *certificates])
     report.step("certificates", pulled=list(certificates))
+    if lists:
+        host.run(["/usr/sbin/haprion-cert-pull", "--blocklist", *lists])
+        report.step("blocklists", pulled=list(lists))
     host.run(["/usr/sbin/haprion-pull-deploy"])
     if host.path(LEFT_MARKER).exists():
         try:

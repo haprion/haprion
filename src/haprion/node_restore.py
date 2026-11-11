@@ -43,7 +43,7 @@ import sys
 import tarfile
 import time
 import zlib
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, TextIO
@@ -1206,8 +1206,13 @@ def run(
     break_traffic: bool = False,
     lock_root: Path = cluster_lock.DEFAULT_LOCK_ROOT,
     fetch_access: FetchAccess | None = None,
+    blocklists: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Carry out the previewed plan, holding the run's directory throughout.
+
+    `blocklists` are the lists the cluster's nodes are sent, by name - the
+    caller reads them where publishing does - and the restored node pulls them
+    before the configuration that loads them.
 
     The hour is checked once, here at the start: a run that has begun is
     carried to its end however long its sessions take.
@@ -1243,6 +1248,7 @@ def run(
                         backup_failed_ok=backup_failed_ok,
                         break_traffic=break_traffic,
                         fetch_access=fetch_access,
+                        blocklists=tuple(blocklists),
                     )
                     return carried
                 finally:
@@ -1322,6 +1328,7 @@ def _run(
     backup_failed_ok: bool,
     break_traffic: bool,
     fetch_access: FetchAccess | None,
+    blocklists: tuple[str, ...],
 ) -> dict[str, Any]:
     stream = progress or sys.stderr
     request = Request.from_dict(read_json(directory / "request.json"))
@@ -1540,6 +1547,7 @@ def _run(
                 finish_with,
                 stream,
                 network=False,
+                blocklists=blocklists,
             )
 
         stage = "network"
@@ -1586,7 +1594,16 @@ def _run(
 
         stage = "finish"
         return _finish(
-            session, directory, checked, cluster, final, result, finish_with, stream, network=True
+            session,
+            directory,
+            checked,
+            cluster,
+            final,
+            result,
+            finish_with,
+            stream,
+            network=True,
+            blocklists=blocklists,
         )
     except (RestoreError, OSError) as exc:
         result["sessions"].setdefault(stage, {})
@@ -1638,6 +1655,7 @@ def _finish(
     stream: TextIO,
     *,
     network: bool,
+    blocklists: tuple[str, ...],
 ) -> dict[str, Any]:
     plan = checked.plan
     stream.write(f"finish on {final}\n")
@@ -1648,6 +1666,7 @@ def _finish(
             "run": directory.name,
             "certificates": list(cluster.certificate_ids),
             "authorities": list(cluster.authority_ids),
+            "blocklists": list(blocklists),
             "keepalived": plan.keepalived,
             "overwrite": plan.mode == "overwrite",
             "network": network,

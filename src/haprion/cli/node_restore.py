@@ -27,6 +27,7 @@ from typing import Any, TextIO
 
 from haprion import exit_codes, labels, node_restore, restore_fetch
 from haprion.backup_archive import ArchiveError
+from haprion.certificates import blocklist_names
 from haprion.cli import node_restore_helper
 from haprion.cli.caller import help_asked
 from haprion.config import (
@@ -612,6 +613,7 @@ def _step(
             backup_failed_ok=bool(parameters.get("backup_failed_ok")),
             break_traffic=bool(parameters.get("break_traffic")),
             fetch_access=restore_fetch.for_policy(policy),
+            blocklists=blocklist_names(policy.certificate_directory(request.cluster)),
         )
         _text_result(result, out)
         return 0 if result["outcome"] == "done" else 1

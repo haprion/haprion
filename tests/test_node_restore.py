@@ -483,7 +483,7 @@ class Run(RestoreTest):
 
     def test_three_sessions_in_order_at_the_right_addresses(self) -> None:
         run = self.previewed()
-        result = self.carry_out(run)
+        result = self.carry_out(run, blocklists=("community",))
         self.assertEqual(result["outcome"], "done", result)
         self.assertEqual(
             [(address, header["op"]) for address, header, _ in FakeSession.calls],
@@ -502,6 +502,8 @@ class Run(RestoreTest):
         self.assertEqual(FakeSession.calls[3][1]["certificates"], ["cert-a"])
         # The CA files its pools verify against go with it (lab 26-10-26).
         self.assertEqual(FakeSession.calls[3][1]["authorities"], ["corp-root"])
+        # And the lists the cluster's nodes are sent (26-11-11).
+        self.assertEqual(FakeSession.calls[3][1]["blocklists"], ["community"])
         self.assertEqual(FakeSession.calls[3][1]["keepalived"], "mask")
 
     def test_a_cluster_busy_with_another_operation_is_refused_before_anything_is_written(

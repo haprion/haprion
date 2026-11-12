@@ -250,6 +250,30 @@ server.socket = context.wrap_socket(server.socket, server_side=True)
 server.serve_forever()
 """
 NDES_ENDPOINT = "https://mgr:8443/certsrv/mscep/mscep.dll"
+#
+# A blocklist's source (B500): the list over https, given only to the bearer
+# of the token, as a provider's paid list is.
+#
+FAKE_BLOCKLIST = """\
+import http.server, ssl
+class Source(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        wanted = open("/root/blocklist-fake/bearer").read().strip()
+        if self.headers.get("Authorization") != "Bearer " + wanted:
+            self.send_error(401)
+            return
+        body = open("/root/blocklist-fake/community.txt", "rb").read()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+server = http.server.HTTPServer(("0.0.0.0", 8445), Source)
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.load_cert_chain("/root/blocklist-fake/tls.pem", "/root/blocklist-fake/tls.key")
+server.socket = context.wrap_socket(server.socket, server_side=True)
+server.serve_forever()
+"""
 
 
 @dataclass(frozen=True)
@@ -1095,6 +1119,152 @@ class Run:
         if said.strip() != "192.0.2.77 is on no blocklist.":
             raise Failed(f"haprion-blocklist-check did not say the address is on no list:\n{said}")
 
+    def blocklist_chain(self) -> None:
+        """B496, 13; B500: a blocklist from its source to a refusal on the virtual address.
+
+        Defined with `haprion-blocklists`, which seals the token and queues the
+        apply job; the timer the job starts fetches the list from a source that
+        answers only with the token, sends it to the nodes, and the object that
+        names it refuses the manager's own address. An exception then lets the
+        address through without a publish or a deploy - the node swaps the
+        list in place. The poller's row says what the timer fetched. The
+        object, the list and the source are put back after.
+        """
+
+        mgr = self.address("mgr")
+        with tempfile.TemporaryDirectory() as raw:
+            work = Path(raw)
+
+            def openssl(*arguments: str) -> None:
+                subprocess.run(  # noqa: S603 - the host's openssl, arguments built here
+                    ["/usr/bin/openssl", *arguments], cwd=work, check=True, capture_output=True
+                )
+
+            openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key",
+                    "-out", "ca.pem", "-days", "2", "-subj", "/CN=Install Test Blocklist CA",
+                    "-addext", "basicConstraints=critical,CA:TRUE",
+                    "-addext", "keyUsage=critical,keyCertSign,cRLSign")  # fmt: skip
+            openssl("req", "-newkey", "rsa:2048", "-nodes", "-keyout", "tls.key",
+                    "-out", "tls.csr", "-subj", "/CN=mgr")  # fmt: skip
+            (work / "tls.ext").write_text("subjectAltName=DNS:mgr\n")
+            openssl("x509", "-req", "-in", "tls.csr", "-CA", "ca.pem", "-CAkey", "ca.key",
+                    "-CAcreateserial", "-days", "2", "-extfile", "tls.ext",
+                    "-out", "tls.pem")  # fmt: skip
+            (work / "serve.py").write_text(FAKE_BLOCKLIST)
+            bearer = secrets.token_hex(16)
+            (work / "bearer").write_text(bearer + "\n")
+            (work / "community.txt").write_text(
+                f"# install test\n{mgr}\n198.51.100.0/24 ; a network\nnot an address\n"
+            )
+            self.on("mgr", "mkdir -p /root/blocklist-fake")
+            for name in ("tls.pem", "tls.key", "serve.py", "community.txt", "bearer"):
+                self.podman(
+                    "cp", str(work / name), f"{self.container('mgr')}:/root/blocklist-fake/{name}"
+                )
+            self.podman(
+                "cp",
+                str(work / "ca.pem"),
+                f"{self.container('mgr')}:/usr/local/share/ca-certificates/install-test-blocklist.crt",
+            )
+
+        def until(what: str, check: Callable[[], bool], seconds: int = 120) -> None:
+            deadline = time.monotonic() + seconds
+            while time.monotonic() < deadline:
+                if check():
+                    return
+                time.sleep(2)
+            raise Failed(f"{what} after {seconds} s")
+
+        def status_on_the_vip() -> str:
+            _, code = self.on(
+                "mgr",
+                "curl -s -o /dev/null -w '%{http_code}' --max-time 5 "
+                f"-H 'Host: shop.example.com' http://{self.address('vip')}/",
+                check=False,
+            )
+            return code.strip()
+
+        def listed_on_the_manager() -> bool:
+            _, said = self.on("mgr", f"haprion-blocklist-check {mgr}", check=False)
+            return f"{mgr} is on community" in said
+
+        def received(role: str) -> bool:
+            _, held = self.on(role, "cat /etc/haproxy/blocklists/community.lst", check=False)
+            return mgr in held
+
+        def recorded() -> bool:
+            _, row = self.on(
+                "mgr",
+                "sudo -u postgres psql -d haprion -tAc \"select entries || ' ' || skipped "
+                "from blocklist_state where name = 'community' and fetched_at is not null\"",
+                check=False,
+            )
+            return row.strip() == "2 1"
+
+        def apply_list(excepts: list[str]) -> None:
+            listed = {
+                "name": "community",
+                "url": "https://mgr:8445/community.txt",
+                "every_hours": 24,
+                "authorization": "bearer",
+                "secret": bearer,
+                "except": excepts,
+            }
+            self.on(
+                "mgr",
+                "umask 077 && cat > /root/install/blocklists.yaml && "
+                "haprion-blocklists apply /root/install/blocklists.yaml",
+                stdin=json.dumps({"blocklists": [listed]}) + "\n",
+            )
+
+        denied = OBJECT.format(backend=mgr) + "deny_from:\n  mode: deny\n  sources: [community]\n"
+        try:
+            self.on(
+                "mgr",
+                "update-ca-certificates >/dev/null && systemd-run --unit=install-test-blocklist "
+                "python3 /root/blocklist-fake/serve.py && sleep 2",
+            )
+            apply_list([])
+            until("the timer did not fetch the list", listed_on_the_manager)
+            for role in NODES:
+                until(f"{role} did not receive the list", functools.partial(received, role))
+            self.on("mgr", "cat > /root/install/objects/shop.yaml", stdin=denied)
+            self.on(
+                "mgr",
+                f"haprion-objects apply -c {CLUSTER} /root/install/objects -m 'install test: blocklist'",
+            )
+            self.deploy()
+            until(
+                "the list in Denied did not refuse the manager",
+                lambda: status_on_the_vip() == "403",
+            )
+            apply_list([mgr])
+            until(
+                "the exception did not let the manager through without a deploy",
+                lambda: status_on_the_vip() == "200",
+            )
+            until("the poller did not write what the timer fetched", recorded)
+        finally:
+            self.on(
+                "mgr", "cat > /root/install/objects/shop.yaml", stdin=OBJECT.format(backend=mgr)
+            )
+            self.on(
+                "mgr",
+                f"haprion-objects apply -c {CLUSTER} /root/install/objects -m 'install test: blocklist off' "
+                f"&& haprion-deploy -c {CLUSTER} >/dev/null",
+                check=False,
+            )
+            self.on("mgr", "haprion-blocklists remove community", check=False)
+            self.on(
+                "mgr",
+                "systemctl stop install-test-blocklist; rm -rf /root/blocklist-fake "
+                "/root/install/blocklists.yaml "
+                "/usr/local/share/ca-certificates/install-test-blocklist.crt; "
+                "update-ca-certificates --fresh >/dev/null",
+                check=False,
+            )
+        self.answers_on_the_vip()
+
     def every_function_has_what_it_needs(self) -> None:
         missing = [
             f"{role}: {what}"
@@ -1431,6 +1601,10 @@ def run_one(
         step(
             "the traffic log reaches the manager",
             lambda: run.traffic_log_reaches_the_manager(holder),
+        )
+        step(
+            "a blocklist fetched with its token, refusing on the virtual address, excepted in place",
+            run.blocklist_chain,
         )
 
         def failover() -> None:

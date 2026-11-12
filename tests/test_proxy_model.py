@@ -585,6 +585,22 @@ class WhoMayReachAnObject(unittest.TestCase):
 
         self.assertIn("neither a group name nor an address", str(raised.exception))
 
+    def test_a_group_is_named_by_the_network_s_rule_for_a_group(self) -> None:
+        from haprion import blocklists, config, proxy_model
+
+        self.assertEqual(proxy_model.GROUP.pattern, config.NAME.pattern)
+        long_name = "g" + "-" * 62
+        self.assertTrue(config.NAME.fullmatch(long_name))
+        self.allow(long_name)
+        for refused in ("office_net", "g" + "-" * 63):
+            with self.subTest(refused=refused), self.assertRaises(ModelError):
+                self.allow(refused)
+        #
+        # Every blocklist name is a group name.
+        #
+        self.assertTrue(config.NAME.pattern.endswith("{0,62}$"))
+        self.assertTrue(blocklists.NAME.pattern.endswith("{0,39}$"))
+
 
 class WhoAndWhatAnObjectRefuses(unittest.TestCase):
     """`deny_from`, `deny_rules` and `max_request_body` (Fas 21, B227)."""

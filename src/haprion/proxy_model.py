@@ -72,6 +72,14 @@ MAX_MODEL_BYTES = 256 * 1024
 #
 NAME_BODY = r"[a-z][a-z0-9_-]{0,39}"
 NAME = re.compile(rf"^{NAME_BODY}$")
+#
+# A group named where an object names sources: the network description's own
+# rule for a group's name (`config.NAME`), which a blocklist's name
+# (`blocklists.NAME`) keeps within. It read as an object's name once, so a
+# group of 41 to 63 characters could be defined and never named, and a name
+# with `_` could be named and never defined (26-11-12).
+#
+GROUP = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 
 
 def server_name(index: int) -> str:
@@ -2735,7 +2743,7 @@ def _sources(value: Any, location: str, verb: str) -> tuple[str, ...]:
                 raise ModelError(f"{location} may not {verb} an entire address family")
             entries.append(str(network))
             continue
-        if not NAME.fullmatch(entry):
+        if not GROUP.fullmatch(entry):
             raise ModelError(
                 f"{location} contains {entry!r}, which is neither a group name nor an "
                 f"address or range"

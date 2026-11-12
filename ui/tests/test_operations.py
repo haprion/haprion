@@ -1147,6 +1147,27 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
         ends = [end for end in (text.find(";", start), text.find("CONSTRAINT", start)) if end > 0]
         return text[start : min(ends)]
 
+    def test_the_clusterless_operations_are_the_ones_the_table_lets_go_without_one(self) -> None:
+        """`job_cluster_presence` names the operations that carry no cluster, and the code's are those.
+
+        Held apart from `job_operation_allowed`: `blocklist_apply` was allowed
+        and queued with no cluster as every certificate job is, and the
+        presence constraint, which nobody widened, refused every save (26-11-12).
+        """
+
+        versions = Path(__file__).resolve().parents[1] / "migrations" / "versions"
+        speaking = [
+            path
+            for path in sorted(versions.glob("[0-9]*.py"))
+            if "job_cluster_presence" in path.read_text(encoding="utf-8")
+        ]
+        text = speaking[-1].read_text(encoding="utf-8")
+        start = text.rindex("job_cluster_presence")
+        named = text[start : text.index("(cluster", start)]
+        self.assertEqual(
+            set(re.findall(r"'([a-z_]+)'::text", named)), set(operations.CERTIFICATE_OPERATIONS)
+        )
+
     def test_every_operation_has_an_answer_the_worker_will_accept(self) -> None:
         """Otherwise the operation runs, takes effect, and is recorded as unknown.
 

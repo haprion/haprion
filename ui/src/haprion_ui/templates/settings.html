@@ -195,6 +195,35 @@
   What this installation offers (B193). Off hides a feature; node backups off
   also stops the clusters' timers, so that one asks first on its own page.
 #}
+{#
+  Blocklists (B496, 13; B500): lists the manager fetches and sends to every
+  cluster, each a group objects may name under Denied. Check address asks
+  the lists kept now, without fetching.
+#}
+<section class="cluster-card settings-card" id="blocklists">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Blocklists</h3></div></div>
+    <div class="cluster-state">{% if blocklists %}<form class="check-address" method="get" action="/settings#blocklists"><input name="address" value="{{ asked_address }}" maxlength="45" aria-label="Address to check" placeholder="203.0.113.7" spellcheck="false" required><button class="secondary-button" type="submit">Check address</button></form>{% endif %}<a class="secondary-button" href="/settings/blocklists/new">Add blocklist</a></div>
+  </header>
+  {% if address_answer %}<p class="check-answer"><span class="status-dot status-{{ address_answer[0] }}" aria-hidden="true"></span>{{ address_answer[1] }}</p>{% endif %}
+  {% if blocklists %}
+  <div class="table-scroll"><table class="node-table settings-cluster-table blocklist-table">
+    <thead><tr><th>Name</th><th>Source</th><th>Every</th><th>Addresses</th><th>Last fetched</th><th class="settings-actions"><span class="visually-hidden">Action</span></th></tr></thead>
+    <tbody>
+      {% for row in blocklists %}
+      <tr data-href="{{ row.href }}">
+        <td data-label="Name"><a class="proxy-link" href="{{ row.href }}"><strong>{{ row.name }}</strong></a></td>
+        <td data-label="Source"><code>{{ row.source }}</code></td>
+        <td data-label="Every">{{ row.every }}</td>
+        <td data-label="Addresses"{% if not row.addresses %} class="table-empty"{% endif %}>{{ row.addresses or 'None yet' }}</td>
+        <td data-label="Last fetched"{% if row.fetched_title %} title="{{ row.fetched_title }}"{% endif %}>{% if row.status %}<a class="status-badge status-badge-{{ 'critical' if row.status_tone == 'critical' else 'info' }}" href="{{ row.job_href }}">{{ row.status }}</a>{% elif row.fetched_tone == 'warning' %}<span class="warning-text">{{ row.fetched }}</span>{% elif row.fetched_tone == 'muted' %}<span class="table-empty">{{ row.fetched }}</span>{% else %}{{ row.fetched }}{% endif %}</td>
+        <td data-label="" class="settings-actions"><a class="secondary-button settings-edit" href="{{ row.href }}">Edit</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+</section>
+
 {% if features %}
 <section class="cluster-card settings-card" id="features">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Features</h3></div></div></header>

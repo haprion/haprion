@@ -189,6 +189,7 @@ TOOLS = (
 COMMANDS = (
     "api-token",
     "backup",
+    "blocklists",
     "drain",
     "export",
     "profiles",

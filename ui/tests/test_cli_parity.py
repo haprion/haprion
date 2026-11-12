@@ -115,6 +115,8 @@ REFUSED_CALLS: dict[str, list[str]] = {
     "haprion-api-token extend": ["extend", "no-such-token"],
     "haprion-api-token remove": ["remove", "no-such-token"],
     "haprion-api-token revoke": ["revoke", "no-such-token"],
+    "haprion-blocklists apply": ["apply", "/nonexistent.yaml"],
+    "haprion-blocklists remove": ["remove", "Bad Name!"],
     "haprion-backup-schedule": [*BAD_CLUSTER, "--time", "03:00"],
     "haprion-cert-delete": ["Bad ID!"],
     "haprion-cert-deploy": [*BAD_CLUSTER],
@@ -263,6 +265,13 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
         "haprion-cert-receiver secret", "haprion-cert-receiver"
     ),
     "/certificates/receivers/key": Command("haprion-cert-receiver key", "haprion-cert-receiver"),
+    "/settings/blocklists/new": Command("haprion-blocklists apply", "haprion-blocklists-apply"),
+    "/settings/blocklists/{name}/edit": Command(
+        "haprion-blocklists apply", "haprion-blocklists-apply"
+    ),
+    "/settings/blocklists/{name}/remove": Command(
+        "haprion-blocklists remove", "haprion-blocklists-apply"
+    ),
     "/dns-profiles/new": Command("haprion-profiles apply", "haprion-profiles-apply"),
     "/dns-profiles/{profile_id}/replace": Command(
         "haprion-profiles apply", "haprion-profiles-apply"

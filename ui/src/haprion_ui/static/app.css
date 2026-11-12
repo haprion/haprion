@@ -2784,3 +2784,19 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .guide-body .form-grid { padding: 0; }
 .guide-joined { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .guide-joined code { color: var(--muted); font-size: 12px; }
+
+/* Settings → Blocklists (B500) */
+.blocklist-table th:nth-child(1), .blocklist-table td:nth-child(1) { width: 200px; }
+.blocklist-table th:nth-child(2), .blocklist-table td:nth-child(2) { width: auto; }
+.blocklist-table th:nth-child(3), .blocklist-table td:nth-child(3) { width: 80px; }
+.blocklist-table th:nth-child(4), .blocklist-table td:nth-child(4) { width: 170px; }
+.blocklist-table th:nth-child(5), .blocklist-table td:nth-child(5) { width: 250px; }
+.blocklist-table th:nth-child(6), .blocklist-table td:nth-child(6) { width: 230px; text-align: right; }
+.check-address { display: flex; gap: 8px; margin: 0; }
+.check-address input { width: 170px; height: 32px; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel-soft); color: var(--text); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.check-answer { margin: 0; padding: 10px 20px; border-bottom: 1px solid var(--line); color: var(--text-primary); font-size: 13px; }
+.check-answer .status-dot, .test-answer .status-dot { margin-right: 8px; vertical-align: 1px; }
+.blocklist-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.blocklist-grid .field-span3 { grid-column: span 3; }
+.blocklist-grid .field-span4 { grid-column: 1 / -1; }
+.test-answer { margin: 4px 20px 0; color: var(--text-primary); font-size: 13px; }

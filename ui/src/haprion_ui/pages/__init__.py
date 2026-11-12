@@ -9,6 +9,7 @@ from haprion_ui.config import Config
 from haprion_ui.pages import (
     api_tokens,
     backups,
+    blocklists,
     certificates,
     dashboard,
     first_cluster,
@@ -25,6 +26,7 @@ def build_router(config: Config) -> APIRouter:
     router = APIRouter(dependencies=[Depends(hidden_by_a_switch)])
     router.include_router(certificates.build_router(config))
     router.include_router(settings.build_router(config))
+    router.include_router(blocklists.build_router(config))
     router.include_router(api_tokens.build_router(config))
     router.include_router(proxies.build_router(config))
     router.include_router(traffic.build_router(config))

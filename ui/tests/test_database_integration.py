@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -4628,6 +4629,88 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
             found = db.receiver_fetches(web)
 
         self.assertEqual(found, {"lb-02.example.net": early, "192.0.2.40": early})
+
+    def test_a_blocklist_is_saved_by_the_web_fenced_on_its_revision(self) -> None:
+        """B500, 0119: insert, the next revision with the box kept or replaced, and a stale save refused."""
+
+        def clear() -> None:
+            with self.connection.cursor() as cursor:
+                cursor.execute("delete from blocklist")
+                cursor.execute("delete from blocklist_state")
+                cursor.execute("delete from job")
+            self.connection.commit()
+
+        self.addCleanup(clear)
+        fields: dict[str, Any] = {
+            "name": "community",
+            "description": "",
+            "url": "https://lists.example.com/community.txt",
+            "auth": "bearer",
+            "username": "",
+            "every_hours": 24,
+            "excepts": ("192.0.2.10/32", "partner-sites"),
+            "key_id": "0123456789abcdef",
+            "ciphertext": b"b" * 64,
+            "keep_secret": False,
+            "actor": "admin",
+        }
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as web:
+            first = db.save_blocklist(web, previous=None, **fields)
+            web.commit()
+            with self.assertRaises(db.BlocklistChanged):
+                db.save_blocklist(web, previous=None, **fields)
+            kept = db.save_blocklist(
+                web,
+                previous=1,
+                **{**fields, "every_hours": 6, "ciphertext": None, "keep_secret": True},
+            )
+            with self.assertRaises(db.BlocklistChanged):
+                db.save_blocklist(web, previous=1, **{**fields, "every_hours": 12})
+            job = db.queue_job(
+                web,
+                operation="blocklist_apply",
+                cluster=None,
+                payload={"name": "community", "revision": kept.revision},
+                idempotency_key=uuid4(),
+            )
+            web.commit()
+            latest = db.latest_blocklist_jobs(web)
+            listed = db.blocklists(web)
+
+        self.assertEqual((first.revision, kept.revision, kept.every_hours), (1, 2, 6))
+        self.assertEqual(kept.excepts, ["192.0.2.10/32", "partner-sites"])
+        self.assertEqual(list(latest), ["community"])
+        self.assertEqual(latest["community"].id, job.id)
+        self.assertEqual([row.name for row in listed], ["community"])
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as worker:
+            sealed = db.sealed_blocklist(worker, "community")
+        self.assertEqual(sealed.ciphertext if sealed else None, b"b" * 64)
+
+    def test_the_poller_writes_the_blocklists_state_whole_and_the_web_reads_it(self) -> None:
+        """B500, 0119: a list the timer no longer keeps state for goes."""
+
+        def clear() -> None:
+            with self.connection.cursor() as cursor:
+                cursor.execute("delete from blocklist_state")
+            self.connection.commit()
+
+        self.addCleanup(clear)
+        at = datetime(2026, 11, 12, 6, 0, tzinfo=UTC)
+
+        def state(name: str) -> db.BlocklistState:
+            return db.BlocklistState(name, at, at, None, "", 10, 0, at)
+
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as poller_connection:
+            db.record_blocklist_states(poller_connection, [state("community"), state("drop")])
+            db.record_blocklist_states(
+                poller_connection, [replace(state("community"), entries=12, error="x" * 600)]
+            )
+            poller_connection.commit()
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as web:
+            found = db.blocklist_states(web)
+
+        self.assertEqual([(row.name, row.entries) for row in found], [("community", 12)])
+        self.assertEqual(len(found[0].error), 500)
 
     def test_the_traffic_cards_read_the_deploys_that_overlap_their_window(self) -> None:
         """B496, 8: the deploy jobs of the clusters asked, started and not over before the window."""

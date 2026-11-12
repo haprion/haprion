@@ -15,7 +15,9 @@ from fastapi.responses import (
     PlainTextResponse,
     RedirectResponse,
 )
+from haprion import blocklist_check, blocklist_check_socket
 from haprion import cluster_settings as cluster_settings_module
+from haprion.blocklist_check import CheckError
 from haprion.config import CLUSTER_ID, ConfigError
 from haprion.digits import is_digits
 
@@ -23,6 +25,7 @@ from haprion_ui import (
     api_token_apply,
     attention,
     auth,
+    blocklist_form,
     certificates,
     cluster_identity,
     cluster_nodes,
@@ -84,6 +87,16 @@ def _unpublished(connection: Any, cluster: str) -> list[str]:
     names = [draft.object_id for draft in db.cluster_drafts(connection, cluster)]
     names += [f"the saved {kind}" for kind in db.cluster_changes(connection, cluster)]
     return names
+
+
+def _address_answer(address: str) -> tuple[str, str]:
+    """*Check address* (B500): which kept lists hold the address, as a tone and a sentence."""
+
+    try:
+        found = blocklist_check_socket.check_address(blocklist_check.checked_address(address))
+    except CheckError as problem:
+        return "critical", blocklist_form.sentence(problem)
+    return ("warning" if found.lists else "healthy"), found.sentence()
 
 
 def build_router(config: Config) -> APIRouter:
@@ -192,7 +205,14 @@ def build_router(config: Config) -> APIRouter:
             status_access = db.status_access(connection)
             update_row = db.update_check(connection)
             token_rows = db.api_tokens(connection)
+            blocklist_rows = blocklist_form.rows(
+                db.blocklists(connection),
+                db.blocklist_states(connection),
+                db.latest_blocklist_jobs(connection),
+                writes=config.management_writes,
+            )
         creation_rows = cluster_creations(request, recent)
+        asked_address = request.query_params.get("address", "").strip()[:64]
         response = TEMPLATES.TemplateResponse(
             request,
             "settings.html",
@@ -203,6 +223,12 @@ def build_router(config: Config) -> APIRouter:
                 # Who may ask /status/ what needs doing (B274).
                 #
                 "status_access": status_access,
+                #
+                # The blocklists, and what Check address answered (B500).
+                #
+                "blocklists": blocklist_rows,
+                "asked_address": asked_address,
+                "address_answer": _address_answer(asked_address) if asked_address else None,
                 #
                 # Who may call the API: how many tokens work, how many end soon (B416).
                 #

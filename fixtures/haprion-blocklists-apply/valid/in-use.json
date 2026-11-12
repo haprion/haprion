@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "blocked",
+  "operation": "blocklists_apply",
+  "cluster": null,
+  "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "result": null,
+  "warnings": [],
+  "error": {"code": "in_use", "message": "community: community is under Denied in web on alpha. Take it out there first, then remove it.", "details": null, "node": null}
+}

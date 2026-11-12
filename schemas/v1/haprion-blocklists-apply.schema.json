@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-blocklists-apply.schema.json",
+  "title": "haprion-blocklists apply and remove JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "blocklists_apply" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "partial", "failed", "blocked"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/blocklists_apply_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "enum": ["done", "partial"] } } }, "then": { "properties": { "result": { "$ref": "#/$defs/blocklists_apply_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" },
+    "action": { "enum": ["create", "replace", "apply", "remove"] },
+    "blocklists_apply_result": {
+      "type": "object",
+      "required": ["changed", "check", "changes", "jobs", "unchanged"],
+      "properties": {
+        "changed": { "type": "boolean" },
+        "check": { "type": "boolean" },
+        "changes": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "object",
+            "required": ["name", "action"],
+            "properties": {
+              "name": { "$ref": "#/$defs/name" },
+              "action": { "$ref": "#/$defs/action" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "jobs": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "object",
+            "required": ["name", "action", "job", "state"],
+            "properties": {
+              "name": { "$ref": "#/$defs/name" },
+              "action": { "$ref": "#/$defs/action" },
+              "job": { "type": "integer", "minimum": 1 },
+              "state": { "enum": ["done", "partial", "failed", "blocked", "unknown", "pending", "running"] }
+            },
+            "additionalProperties": false
+          }
+        },
+        "unchanged": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/name" } }
+      },
+      "additionalProperties": false
+    }
+  }
+}

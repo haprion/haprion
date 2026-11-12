@@ -1,0 +1,46 @@
+{% extends "layout.html" %}
+{% from "_back.html" import back_button %}
+{% from "_certificate_job.html" import certificate_job_notice %}
+{% block title %}{% if existing %}{{ existing.name }}{% else %}New blocklist{% endif %} — Haprion{% endblock %}
+{% block head_extra %}<script defer src="{{ url_for('static', path='/blocklist-form.js') }}?v={{ asset_token }}"></script>{% endblock %}
+{% block content %}
+{#
+  One blocklist (B496, 13; B500). Test fetches the list as the form holds it
+  and keeps nothing; Save stores it and applies it with one job, after which
+  the refresh timer fetches it. The password or token is sealed and never
+  drawn back: empty keeps the stored one.
+#}
+{% set action = '/settings/blocklists/' ~ existing.name ~ '/edit' if existing else '/settings/blocklists/new' %}
+<section class="page-heading">
+  <div class="heading-title">{{ back_button('/settings#blocklists', 'Settings') }}<h1>{% if existing %}{{ existing.name }}{% else %}New blocklist{% endif %}</h1></div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+{% if certificate_job %}{% call certificate_job_notice(certificate_job) %}Saving waits for it to finish.{% endcall %}{% endif %}
+
+<form method="post" action="{{ action }}" class="preview-form" autocomplete="off" data-blocklist-form>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+  <section class="cluster-card">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Blocklist</h3><p>The name is the group's name under <em>Denied — groups</em>.</p></div></div></header>
+    <div class="form-grid blocklist-grid">
+      <label><span class="field-title">Name</span><input name="name" value="{{ form.name }}" maxlength="40" spellcheck="false" required{% if existing %} readonly{% endif %}></label>
+      <label class="field-span3"><span class="field-title">URL</span><input name="url" value="{{ form.url }}" maxlength="2048" spellcheck="false" placeholder="https://" required><small>One address or network to a line. Text after # or ; is skipped.</small></label>
+      <label><span class="field-title">Authorization</span><select name="auth" data-blocklist-auth>{% for value, label in auth_labels.items() %}<option value="{{ value }}"{% if form.auth == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <label data-for-auth="basic"{% if form.auth != 'basic' %} hidden{% endif %}><span class="field-title">Username</span><input name="username" value="{{ form.username }}" maxlength="200" spellcheck="false"{% if form.auth != 'basic' %} disabled{% endif %}></label>
+      {% for kind, label in secret_labels.items() %}
+      <label data-for-auth="{{ kind }}"{% if form.auth != kind %} hidden{% endif %}><span class="field-title">{{ label }}</span><input name="secret" type="password" autocomplete="new-password" maxlength="4096"{% if existing and existing.auth == kind %} placeholder="unchanged"{% endif %}{% if form.auth != kind %} disabled{% endif %}></label>
+      {% endfor %}
+      <label><span class="field-title">Fetch every</span><select name="every_hours">{% for hour in hours %}<option value="{{ hour }}"{% if form.every_hours == hour|string %} selected{% endif %}>{{ hour }} h</option>{% endfor %}</select></label>
+      <label class="field-span4"><span class="field-title">Description <span class="optional">(optional)</span></span><input name="description" value="{{ form.description }}" maxlength="200"></label>
+      <label class="field-span4"><span class="field-title">Except <span class="optional">(optional)</span></span><textarea name="excepts" rows="3" spellcheck="false">{{ form.excepts }}</textarea><small>Addresses, networks or groups never taken from the list.</small></label>
+    </div>
+    <p class="test-answer" data-test-answer{% if not tested %} hidden{% endif %}>{% if tested %}<span class="status-dot status-{{ tested[0] }}" aria-hidden="true"></span>{{ tested[1] }}{% endif %}</p>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons">{% if existing %}<a class="danger-button" href="/settings/blocklists/{{ existing.name }}/remove">Remove…</a>{% endif %}<button type="submit" class="secondary-button" name="action" value="test" formnovalidate data-blocklist-test>Test</button><a class="secondary-button" href="/settings#blocklists">Cancel</a><button type="submit" class="secondary-button deploy-button" name="action" value="save"{% if not public_key or certificate_job %} disabled{% endif %}>Save</button></div>
+    </div>
+  </section>
+</form>
+{% endblock %}

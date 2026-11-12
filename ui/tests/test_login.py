@@ -187,6 +187,8 @@ class LoginTestCase(unittest.TestCase):
         #
         self.switches: dict[str, Any] = {}
         self.acks: set[tuple[str, str, str, str, str]] = set()
+        self.blocklists: list[Any] = []
+        self.blocklist_states: list[Any] = []
         # The getting started list (B316) is shown until a test hides it.
         self.getting_started_hidden_at: datetime | None = None
         self.hidden_by: list[str] = []
@@ -365,6 +367,12 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haprion_ui.db.deploy_jobs", return_value=[]),
             # No receiver has been seen fetching (B498) unless a test says so.
             mock.patch("haprion_ui.db.receiver_fetches", return_value={}),
+            # No blocklist (B500) unless a test says so.
+            mock.patch("haprion_ui.db.blocklists", side_effect=lambda _c: list(self.blocklists)),
+            mock.patch(
+                "haprion_ui.db.blocklist_states", side_effect=lambda _c: list(self.blocklist_states)
+            ),
+            mock.patch("haprion_ui.db.latest_blocklist_jobs", return_value={}),
         ]
         for patch in self.patches:
             patch.start()

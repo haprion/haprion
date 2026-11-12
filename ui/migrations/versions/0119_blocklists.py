@@ -19,7 +19,9 @@ removes the rows of lists that are gone; the web reads it for Settings, the
 Network page and *Needs attention*.
 
 `job_operation_allowed` takes `blocklist_apply`. The constraint stays `not
-valid`, as 0109 left it for the retired `block_client` rows.
+valid`, as 0109 left it for the retired `block_client` rows. And
+`job_cluster_presence` names it among the operations queued with no cluster,
+as the certificate jobs are: a list is the manager's, sent to every cluster.
 
 Haprion 1.0.1's web, poller and worker never name either table, and its worker
 refuses a `blocklist_apply` job as an operation it does not know.
@@ -152,4 +154,21 @@ def upgrade() -> None:
         "'revert'::text, "
         "'server_state'::text"
         "]))) not valid;"
+    )
+    op.execute("alter table public.job drop constraint job_cluster_presence")
+    op.execute(
+        "alter table public.job add constraint job_cluster_presence "
+        "check (((operation = any (array["
+        "'blocklist_apply'::text, "
+        "'cert_issue'::text, "
+        "'cert_publish'::text, "
+        "'cert_target'::text, "
+        "'dns_profile_apply'::text, "
+        "'cert_delete'::text, "
+        "'ndes_profile_apply'::text, "
+        "'cert_scep'::text, "
+        "'cert_receiver'::text, "
+        "'cert_import'::text, "
+        "'cert_request'::text"
+        "])) = (cluster is null)))"
     )

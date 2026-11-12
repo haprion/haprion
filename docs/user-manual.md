@@ -34,6 +34,7 @@ names used below, that is a bug in the software, not in this guide.
 - [Features and advanced configuration](#features-and-advanced-configuration)
   - [What the advanced layer does, line by line](#what-the-advanced-layer-does-line-by-line)
 - [Access rules](#access-rules)
+  - [Blocklists](#blocklists)
 - [Dynamic blocking](#dynamic-blocking)
 - [The WAF engine](#the-waf-engine)
 - [Certificates](#certificates)
@@ -1568,7 +1569,7 @@ proxy*), below *Reachable from*, *Rate limit* and *Rate window*
 ([An http or https object, field by field](#an-http-or-https-object-field-by-field)):
 
 - **Denied** (http, https and tcp). *Denied — groups* and *Denied — addresses* name who is refused: groups
-  from the *Network* page, and addresses, ranges or countries, one per line. *Denied — mode* is *log only* or
+  from the *Network* page and [blocklists](#blocklists), and addresses, ranges or countries, one per line. *Denied — mode* is *log only* or
   *deny*; it starts as *log only*, so nobody is refused until it is *deny*.
 - **Max request body** (http and https) is the largest body a request may declare, such as `10m`.
 - **Deny rules** (http and https) are tried in order, and any one of them is enough. *Add rule* adds one
@@ -1683,6 +1684,55 @@ A chunked request states no length, and HAProxy sees only what fits in its buffe
 through and marked `body-unbounded:log`. Browsers send the length with forms and uploads, so the mark shows
 whether anything else reaches the object. The hard limit for a chunked body is the backend server's own,
 such as nginx's `client_max_body_size`.
+
+### Blocklists
+
+A blocklist is a list of addresses someone else keeps - a threat feed such as a community list, or a
+provider's list of networks that send only abuse. The manager fetches it on a schedule and sends it to
+every cluster. An object refuses the addresses on it by naming the list under *Denied — groups*. The list
+changes without a publish or a deploy: the nodes swap it in place.
+
+**Adding one.** *Settings → Blocklists → Add blocklist*:
+
+- *Name* is the group's name under *Denied — groups*: lowercase letters, digits and `-`, at most 40.
+- *URL* is where the list is, over https. The list has one address or network per line; text after `#`
+  or `;` is skipped. CrowdSec's raw IP list, Spamhaus DROP and FireHOL's lists read as they are.
+- *Authorization* is *None*, *Basic* (a *Username* and a *Password*) or *Bearer* (a *Token*). The password
+  or token is sealed when it is saved and is never shown again; leave it empty to keep the one stored.
+- *Fetch every* is 1, 6, 12 or 24 hours.
+- *Except* names addresses, networks or groups never taken from the list. It takes effect when the list is
+  saved, without waiting for a fetch.
+
+*Test* fetches the list as the form holds it and says how many addresses it holds, how many lines it
+skipped and how many *Except* takes out. Nothing is kept. *Save* stores the list and applies it, and the first
+fetch follows right away.
+
+**Using one.** A new object has every blocklist chosen under *Denied — groups*. *Denied — mode* decides
+what happens: *log only* records the match and serves the request, *deny* refuses it. For the objects
+that exist, *Add to all proxies* on the list's row adds it to every http, https and tcp object, as saved
+changes. Each cluster's changes go out with its next publish. An object with a draft is left as it is,
+and the page says which.
+
+A list is offered under *Denied* only. Under *Reachable from* or a rule's *Source* it would let in, or
+match, whoever a stranger decides.
+
+**When a fetch fails,** the last good list stays in effect, and the row under *Last fetched* says
+*Failed* with the list kept. The reason is on the row and under *Needs attention*. A failed list is tried
+again after an hour. An empty answer is a failure too: an empty list would refuse nobody.
+
+**Is this address on a list?** *Check address* on *Settings → Blocklists* looks it up in the lists kept
+now, without fetching. The answer names the list, the entry that holds the address, when the list was
+fetched, and the clusters whose *Except* keeps it off.
+
+**Limits.** A list is at most 4 MiB and 100 000 addresses; a larger one is refused as a failed fetch. The
+*Network* page shows each list among the groups, with its size and when it was fetched.
+
+**Removing one** is refused while an object names it under *Denied*: take it out there first. The list's
+file then leaves every cluster.
+
+**From the terminal.** `haprion-blocklists apply <file>` stores and applies the lists in a file, as the
+form does, and `haprion-blocklists remove <name>` removes one. `haprion-blocklist-check <address>` is
+*Check address*, and `haprion-blocklist-check --list <name>` is *Test* for a stored list.
 
 ## Dynamic blocking
 
@@ -5170,6 +5220,7 @@ are audited and versioned the same way.
 | *Node backups*: schedule, run, restore | `haprion-backup-schedule`, `haprion-state-backup -c <cluster> --json`, `haprion-node-restore` |
 | *Settings → Users* | `haprion-user` |
 | *External monitoring*, *Features*, OIDC | `haprion-settings` |
+| *Settings → Blocklists* | `haprion-blocklists`, `haprion-blocklist-check` |
 | The interface's own certificate | `haprion-tls` |
 
 What they have in common:

@@ -320,7 +320,7 @@ def remove(
     return job
 
 
-# - Add to all objects -------------------------------------------------------
+# - Add to all proxies -------------------------------------------------------
 
 #
 # The objects HAProxy serves: a dns or syslog object refuses no sender by
@@ -354,7 +354,7 @@ def with_list(list_name: str, name: str, document: str) -> str:
 
 @dataclass(frozen=True)
 class Added:
-    """What *Add to all objects* did in one cluster."""
+    """What *Add to all proxies* did in one cluster."""
 
     cluster: str
     added: tuple[str, ...]

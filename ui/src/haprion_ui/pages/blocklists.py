@@ -312,8 +312,8 @@ def build_router(config: Config) -> APIRouter:
         _await(request, job.id)
         return RedirectResponse(CARD, status_code=303)
 
-    @router.post("/settings/blocklists/{name}/add-to-objects", response_class=HTMLResponse)
-    def blocklist_add_to_objects(
+    @router.post("/settings/blocklists/{name}/add-to-proxies", response_class=HTMLResponse)
+    def blocklist_add_to_proxies(
         request: Request,
         name: str,
         csrf_token: Annotated[str, Form(max_length=128)],

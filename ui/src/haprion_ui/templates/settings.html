@@ -197,7 +197,7 @@
 #}
 {#
   Blocklists (B496, 13; B500): lists the manager fetches and sends to every
-  cluster, each a group objects may name under Denied. Check address asks
+  cluster, each a group a proxy may name under Denied. Check address asks
   the lists kept now, without fetching.
 #}
 <section class="cluster-card settings-card" id="blocklists">
@@ -216,7 +216,7 @@
         <td data-label="Every">{{ row.every }}</td>
         <td data-label="Addresses"{% if not row.addresses %} class="table-empty"{% endif %}>{{ row.addresses or 'None yet' }}</td>
         <td data-label="Last fetched"{% if row.fetched_title %} title="{{ row.fetched_title }}"{% endif %}>{% if row.status %}<a class="status-badge status-badge-{{ 'critical' if row.status_tone == 'critical' else 'info' }}" href="{{ row.job_href }}">{{ row.status }}</a>{% elif row.fetched_tone == 'warning' %}<span class="warning-text">{{ row.fetched }}</span>{% elif row.fetched_tone == 'muted' %}<span class="table-empty">{{ row.fetched }}</span>{% else %}{{ row.fetched }}{% endif %}</td>
-        <td data-label="" class="settings-actions"><form method="post" action="/settings/blocklists/{{ row.name }}/add-to-objects" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="secondary-button settings-edit">Add to all objects</button></form> <a class="secondary-button settings-edit" href="{{ row.href }}">Edit</a></td>
+        <td data-label="" class="settings-actions"><form method="post" action="/settings/blocklists/{{ row.name }}/add-to-proxies" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="secondary-button settings-edit">Add to all proxies</button></form> <a class="secondary-button settings-edit" href="{{ row.href }}">Edit</a></td>
       </tr>
       {% endfor %}
     </tbody>

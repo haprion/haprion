@@ -709,13 +709,13 @@ class AddToAllObjectsRoute(BlocklistRouteTestCase):
             ) as saved,
         ):
             page = client.post(
-                "/settings/blocklists/community/add-to-objects",
+                "/settings/blocklists/community/add-to-proxies",
                 data={auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE])},
             ).text
 
         self.assertEqual([call.kwargs["name"] for call in saved.call_args_list], ["shop", "ssh"])
         self.assertEqual(saved.call_args_list[0].kwargs["detail"], {"blocklist_added": "community"})
-        self.assertIn("Added to 1 object, saved for the next publish.", page)
+        self.assertIn("Added to 1 proxy, saved for the next publish.", page)
         self.assertIn("ssh has a draft", page)
         self.assertIn('href="/proxies?cluster=alpha"', page)
 

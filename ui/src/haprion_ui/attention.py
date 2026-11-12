@@ -1180,7 +1180,9 @@ def from_blocklists(states: Sequence[BlocklistState], defined: Iterable[str]) ->
                 message=message,
                 since=state.failed_at,
                 link="/settings#blocklists",
-                variant=state.fetched_at.astimezone(UTC).isoformat() if state.fetched_at else "never",
+                variant=state.fetched_at.astimezone(UTC).isoformat()
+                if state.fetched_at
+                else "never",
             )
         )
     return items

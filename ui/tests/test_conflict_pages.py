@@ -45,7 +45,16 @@ CAUGHT = {
     ("saved_work.py", "_discard_shown"): "a newer draft is kept, not refused",
     ("saved_work.py", "settled_changes"): "a newer saved change is kept, not refused",
     ("editor_flow.py", "advanced_submit"): "the dialog answers in its own document",
-    ("waf_work.py", "_waf_save"): "the dialog answers in its own document",
+    ("finished_change.py", "save"): "the WAF dialog and Add to all proxies say it per object",
+    (
+        "blocklist_form.py",
+        "save",
+    ): "the form is drawn again as it was typed; the command answers in its contract",
+    (
+        "blocklist_form.py",
+        "remove",
+    ): "the question is drawn again; the command answers in its contract",
+    ("blocklist_form.py", "apply_again"): "the command answers in its own contract",
     # Found when the scan widened from pages/ and views.py to the package (K01).
     ("feature_switch.py", "switch"): "the switch is refused with its own sentence",
     ("profile_apply.py", "_queue"): "the command answers in its own contract",

@@ -2800,3 +2800,5 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .blocklist-grid .field-span3 { grid-column: span 3; }
 .blocklist-grid .field-span4 { grid-column: 1 / -1; }
 .test-answer { margin: 4px 20px 0; color: var(--text-primary); font-size: 13px; }
+.blocklist-group td:nth-child(2) { color: var(--text-secondary); }
+.blocklist-table .inline-form { display: inline; margin: 0; }

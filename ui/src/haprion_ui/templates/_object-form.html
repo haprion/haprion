@@ -152,7 +152,7 @@
       <label><span class="field-title">Denied — groups <span class="optional">(optional)</span></span>
         <select name="deny_from" multiple size="5">
           <option value="" {% if form.deny_ranges|trim %}hidden{% elif not form.deny_from %}selected{% endif %}>Nobody</option>
-          {% for network in choices.networks %}<option value="{{ network }}"{% if network in form.deny_from %} selected{% endif %}>{{ network }}</option>{% endfor %}
+          {% for network in (choices.networks + (choices.blocklists or []))|sort %}<option value="{{ network }}"{% if network in form.deny_from %} selected{% endif %}>{{ network }}</option>{% endfor %}
         </select>
       </label>
       <label><span class="field-title">Denied — addresses <span class="optional">(optional)</span></span><textarea name="deny_ranges" rows="5" placeholder="203.0.113.0/24">{{ form.deny_ranges }}</textarea><small>One address, range or <code>country:SE</code> per line.</small></label>

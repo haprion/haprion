@@ -221,7 +221,7 @@ def object_health_check(
         source, document = stored.document, "published"
     else:
         raise NOT_FOUND
-    fields, problem = _opened(source, state.choices.networks)
+    fields, problem = _opened(source, state.choices.group_names)
     if fields is None:
         report = probe.ProbeReport(
             ran=False,

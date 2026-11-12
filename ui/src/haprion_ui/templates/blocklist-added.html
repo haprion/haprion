@@ -1,0 +1,28 @@
+{% extends "layout.html" %}
+{% from "_back.html" import back_button %}
+{% block title %}{{ name }} added — Haprion{% endblock %}
+{% block content %}
+{#
+  What Add to all objects did (B496, 13): the list under Denied in each
+  object HAProxy serves, saved for the cluster's next publish.
+#}
+<section class="page-heading">
+  <div class="heading-title">{{ back_button('/settings#blocklists', 'Settings') }}<h1>{{ name }} under Denied</h1></div>
+</section>
+
+{% for result in results %}
+<section class="cluster-card">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>{{ result.cluster }}</h3><p>{% if result.added %}Added to {{ result.added | length }} object{{ '' if result.added | length == 1 else 's' }}, saved for the next publish.{% elif not result.skipped %}Every object already has it.{% else %}Added to none.{% endif %}</p></div></div>
+    {% if result.added %}<div class="cluster-state"><a class="secondary-button" href="/proxies?{{ {'cluster': result.cluster} | urlencode }}">Publish…</a></div>{% endif %}
+  </header>
+  {% if result.skipped %}
+  <div class="table-scroll"><table class="node-table">
+    <thead><tr><th>Not changed</th><th>Why</th></tr></thead>
+    <tbody>{% for object, why in result.skipped %}<tr><td data-label="Not changed"><a href="/proxies/{{ result.cluster }}/{{ object }}">{{ object }}</a></td><td data-label="Why">{{ why }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</section>
+{% else %}
+<p class="table-empty">No cluster yet.</p>
+{% endfor %}
+{% endblock %}

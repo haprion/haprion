@@ -26,6 +26,7 @@ from uuid import UUID, uuid4
 
 from haprion import blocklist_store, blocklists
 from haprion.dns_profile_keys import DnsProfilePublicKey
+from haprion.proxy_model import dump_document, read_document
 
 from haprion_ui import db, moments, network, objects, refusals
 from haprion_ui import jobs as queue
@@ -319,6 +320,48 @@ def remove(
     return job
 
 
+# - Add to all objects -------------------------------------------------------
+
+#
+# The objects HAProxy serves: a dns or syslog object refuses no sender by
+# address (`proxy_model`), so a list has nothing to do there.
+#
+DENIED_PROTOCOLS = ("http", "https", "tcp")
+
+
+def with_list(list_name: str, name: str, document: str) -> str:
+    """The object's document with the list under Denied; unchanged where it is, or cannot be."""
+
+    data: dict[str, Any] = dict(read_document(name, document.encode()))
+    listen = data.get("listen")
+    protocol = listen.get("protocol") if isinstance(listen, dict) else None
+    if protocol not in DENIED_PROTOCOLS:
+        return document
+    denied = data.get("deny_from")
+    if not isinstance(denied, dict):
+        #
+        # A new refusal starts by only looking (B227), except on tcp, where
+        # nothing would show what it saw.
+        #
+        data["deny_from"] = {"mode": "deny" if protocol == "tcp" else "log", "sources": [list_name]}
+        return dump_document(data)
+    sources = list(denied.get("sources") or [])
+    if list_name in sources:
+        return document
+    data["deny_from"] = {**denied, "sources": [*sources, list_name]}
+    return dump_document(data)
+
+
+@dataclass(frozen=True)
+class Added:
+    """What *Add to all objects* did in one cluster."""
+
+    cluster: str
+    added: tuple[str, ...]
+    skipped: tuple[tuple[str, str], ...]
+    """`(object, why)` for each object the list could not be added to."""
+
+
 # - the card ----------------------------------------------------------------
 
 
@@ -373,6 +416,31 @@ def _status(row: db.Blocklist, job: db.Job | None, *, writes: bool) -> tuple[str
     if job.state != "done" and (removing or job.payload.get("revision") == row.revision):
         return ("Remove failed" if removing else "Apply failed"), "critical", f"/jobs/{job.id}"
     return "", "", ""
+
+
+@dataclass(frozen=True)
+class NetworkRow:
+    """One list among a cluster's groups on *Network*: what it holds, and when it was fetched."""
+
+    name: str
+    summary: str
+
+
+def network_rows(
+    lists: Iterable[db.Blocklist], states: Iterable[db.BlocklistState]
+) -> list[NetworkRow]:
+    by_name = {state.name: state for state in states}
+    found: list[NetworkRow] = []
+    for item in sorted(lists, key=lambda entry: entry.name):
+        state = by_name.get(item.name)
+        if state is None or state.fetched_at is None:
+            said = "not fetched yet"
+        else:
+            said = (
+                f"{_figure(state.entries)} addresses · fetched {moments.moment(state.fetched_at)}"
+            )
+        found.append(NetworkRow(item.name, f"Blocklist · {said}"))
+    return found
 
 
 def rows(

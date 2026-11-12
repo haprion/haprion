@@ -135,7 +135,8 @@
             "host_name",
             "traffic_stream",
             "api_token",
-            "regeneration"
+            "regeneration",
+            "blocklist"
           ],
           "description": "Code. What kind of fault the row reports."
         },

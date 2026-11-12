@@ -272,6 +272,9 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
     "/settings/blocklists/{name}/remove": Command(
         "haprion-blocklists remove", "haprion-blocklists-apply"
     ),
+    "/settings/blocklists/{name}/add-to-objects": Command(
+        "haprion-objects apply", "haprion-objects-apply"
+    ),
     "/dns-profiles/new": Command("haprion-profiles apply", "haprion-profiles-apply"),
     "/dns-profiles/{profile_id}/replace": Command(
         "haprion-profiles apply", "haprion-profiles-apply"

@@ -102,6 +102,18 @@ class EditorCluster:
     # (review 26-10-24, 15-07).
     #
     reservations: Reservations = NOTHING_RESERVED
+    #
+    # The blocklists under Settings (B500): groups an object may name under
+    # Denied only, whose addresses are a file on the nodes. Every cluster
+    # gets every list.
+    #
+    blocklists: tuple[str, ...] = ()
+
+    @property
+    def group_names(self) -> tuple[str, ...]:
+        """Every name an object may give as a group somewhere: the network's and the lists'."""
+
+        return (*self.networks, *self.blocklists)
 
 
 def reservations_from_inventory(result: Mapping[str, object] | None) -> Reservations:
@@ -138,6 +150,7 @@ def editor_cluster(
     network: NetworkClusterView | None,
     certificates: CertificateClusterView | None,
     reservations: Reservations = NOTHING_RESERVED,
+    blocklists: Iterable[str] = (),
 ) -> EditorCluster:
     """Assemble one cluster's real choices out of the cached readings."""
 
@@ -166,6 +179,7 @@ def editor_cluster(
         complete=bool(vips) and network is not None and not network.stale,
         authority_ids=tuple(sorted(certificates.authorities)) if certificates else (),
         reservations=reservations,
+        blocklists=tuple(sorted(blocklists)),
     )
 
 
@@ -183,6 +197,7 @@ def choices(cluster: EditorCluster) -> dict[str, object]:
         "authorities": list(cluster.authority_ids),
         "sources": named_addresses(cluster.sources),
         "networks": sorted(cluster.networks),
+        "blocklists": list(cluster.blocklists),
         "balances": BALANCE_CHOICES,
         "health_types": CHECK_TYPES,
         "query_types": QUERY_TYPES,
@@ -263,6 +278,7 @@ def check_document(
             certificate_sans=cluster.certificate_sans,
             countries=unchecked_countries([edited, *neighbours]),
             reservations=cluster.reservations,
+            blocklists=cluster.blocklists,
         ).configuration
     except GeneratorError as exc:
         return Preview(document=document, problem=str(exc))

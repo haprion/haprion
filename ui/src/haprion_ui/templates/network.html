@@ -96,9 +96,13 @@
       <tbody>
         {% for group in cluster.groups %}
         <tr><td data-label="Name"><code>{{ group.name }}</code></td><td data-label="Members">{% for member in group.members %}<code>{{ member }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</td><td data-label="Used by">{{ used_by(used, used.groups.get(group.name, ()) if used else (), cluster.cluster, 'group', group.name) }}</td></tr>
-        {% else %}
-        <tr><td colspan="3" class="table-empty">None. Every proxy here is reachable from anywhere that can route to its VIP.</td></tr>
         {% endfor %}
+        {% for listed in blocklists %}
+        <tr class="blocklist-group"><td data-label="Name"><code>{{ listed.name }}</code></td><td data-label="Members">{{ listed.summary }}{% if role == 'admin' %} · <a href="/settings#blocklists">Settings</a>{% endif %}</td><td data-label="Used by">{{ used_by(used, used.groups.get(listed.name, ()) if used else (), cluster.cluster, 'group', listed.name) }}</td></tr>
+        {% endfor %}
+        {% if not cluster.groups and not blocklists %}
+        <tr><td colspan="3" class="table-empty">None. Every proxy here is reachable from anywhere that can route to its VIP.</td></tr>
+        {% endif %}
       </tbody>
     </table></div>
     <p class="table-note">Named client addresses a proxy can be restricted to.</p>

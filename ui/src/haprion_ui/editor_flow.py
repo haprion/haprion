@@ -173,6 +173,7 @@ def editor_state(request: Request, config: Config, cluster: str) -> EditorState:
     #
     with request.app.state.pool.connection() as connection:
         network_rows, _saved = saved_network_rows(connection, list(network_rows))
+        blocklist_names = [row.name for row in db.blocklists(connection)]
     described = next(
         (
             view
@@ -244,6 +245,7 @@ def editor_state(request: Request, config: Config, cluster: str) -> EditorState:
                     None,
                 )
             ),
+            blocklist_names,
         ),
         available=reading is not None and reading.outcome == "done" and not reading.poll_error,
     )
@@ -295,7 +297,7 @@ def object_backend(
         # in the logs somebody will read next.
         #
         addresses=str(fields.get("servers", "")).splitlines(),
-        deployed=_published_servers(stored, state.choices.networks),
+        deployed=_published_servers(stored, state.choices.group_names),
         held_only=fields.get("protocol") in SENDERS_ADDRESS,
         hostless_check=_published_check_hostless(stored),
     )
@@ -486,10 +488,22 @@ def editor_page(
         elif copy_from and not name:
             notice = f"{copy_from} is not stored in {cluster}, so nothing was copied."
         if not source:
-            fields = dict(preview_module.DEFAULTS, **preview_module.NEW_POOL_CHECK, name=name)
+            #
+            # Every blocklist is chosen under Denied for a new object (B496,
+            # 13): a list is meant for every site, and taking it out is one
+            # click where adding it to each object would be a chore.
+            #
+            fields = dict(
+                preview_module.DEFAULTS,
+                **preview_module.NEW_POOL_CHECK,
+                name=name,
+                deny_from=state.choices.blocklists,
+            )
         else:
             try:
-                fields = preview_module.form_from_document(source, networks=state.choices.networks)
+                fields = preview_module.form_from_document(
+                    source, networks=state.choices.group_names
+                )
             except preview_module.Unexpressible as exc:
                 fields = dict(preview_module.DEFAULTS, name=name)
                 if original is not None:
@@ -543,7 +557,7 @@ def editor_page(
         editor_module.moved(
             draft.base_document,
             published_document(state, draft.replaces or name),
-            networks=state.choices.networks,
+            networks=state.choices.group_names,
         )
         if draft is not None and object_moved(state, draft) and draft.base_document is not None
         else ()

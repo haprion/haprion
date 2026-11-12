@@ -32,7 +32,7 @@ from haprion.node_package import short_version
 from haprion_ui import api_tokens, labels, moments
 from haprion_ui import jobs as jobs_module
 from haprion_ui.cluster_identity import card_link as cluster_card_link
-from haprion_ui.db import ApiToken, ClaimPause, Job, PackageWaiting
+from haprion_ui.db import ApiToken, BlocklistState, ClaimPause, Job, PackageWaiting
 
 type Severity = Literal["critical", "warning"]
 SEVERITIES: tuple[Severity, ...] = ("critical", "warning")
@@ -229,6 +229,7 @@ PAGES = {
     "traffic_stream": "Dashboard",
     "api_token": "Settings",
     "regeneration": "Versions",
+    "blocklist": "Settings",
 }
 KINDS = tuple(PAGES)
 
@@ -1141,6 +1142,45 @@ def from_api_tokens(rows: Sequence[ApiToken], *, now: datetime) -> list[Item]:
                 since=None,
                 link="/settings/api-tokens",
                 variant=variant,
+            )
+        )
+    return items
+
+
+def from_blocklists(states: Sequence[BlocklistState], defined: Iterable[str]) -> list[Item]:
+    """Blocklists whose last fetch failed (B496, 13; B500), as the poller last read the timer.
+
+    The nodes keep the last good list, so a failure refuses nobody new and
+    lets nobody through who was refused; it is a warning. The list kept is
+    the variant, so an acknowledged row comes back after the next good fetch
+    fails in its turn. A list Settings no longer defines says nothing.
+    """
+
+    named = set(defined)
+    items: list[Item] = []
+    for state in sorted(states, key=lambda row: row.name):
+        if state.name not in named or state.failed_at is None:
+            continue
+        if state.failed_at != state.attempted_at:
+            continue
+        reason = state.error.rstrip(".") or "no reason was given"
+        if state.fetched_at is None:
+            message = f"blocklist has never been fetched: {reason}"
+        else:
+            message = (
+                f"blocklist could not be fetched: {reason}; "
+                f"the list fetched {moments.moment(state.fetched_at)} is kept"
+            )
+        items.append(
+            Item(
+                kind="blocklist",
+                severity="warning",
+                cluster=None,
+                subject=state.name,
+                message=message,
+                since=state.failed_at,
+                link="/settings#blocklists",
+                variant=state.fetched_at.astimezone(UTC).isoformat() if state.fetched_at else "never",
             )
         )
     return items

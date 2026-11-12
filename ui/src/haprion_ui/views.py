@@ -35,6 +35,7 @@ from haprion_ui import (
     attention,
     auth,
     backups,
+    blocklist_form,
     certificate_activity,
     certificates,
     dashboard,
@@ -609,6 +610,13 @@ def network_page(request: Request, config: Config) -> Response:
     #
     with request.app.state.pool.connection() as connection:
         network_rows, saved_network = saved_network_rows(connection, list(network_rows))
+        #
+        # The blocklists are groups too, the same in every cluster (B500):
+        # shown among them, read-only, with where they are changed.
+        #
+        listed = blocklist_form.network_rows(
+            db.blocklists(connection), db.blocklist_states(connection)
+        )
     overview = network.build_network_overview(
         clusters,
         network_rows,
@@ -671,6 +679,7 @@ def network_page(request: Request, config: Config) -> Response:
             "section": "network",
             "clusters": overview,
             "usage": used,
+            "blocklists": listed,
             "saved_network": saved_network,
             "awaiting_deploy": awaiting,
             "deployment": state,
@@ -806,6 +815,9 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
         )
         items += attention.from_packages(db.package_waiting(connection))
         items += attention.from_api_tokens(db.api_tokens(connection), now=now)
+        items += attention.from_blocklists(
+            db.blocklist_states(connection), (row.name for row in db.blocklists(connection))
+        )
         items += attention.from_regeneration(regeneration_rows)
         if config.traffic_logs.enabled:
             items += attention.from_waf(

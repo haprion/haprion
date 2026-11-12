@@ -4447,8 +4447,8 @@ haprion_status_age_seconds{cluster="beta"} 14
 haprion_fresh 1
 ```
 
-`kind` is one of `api_token`, `backup`, `certificate`, `cluster`, `forwarding`, `host_name`, `job`, `logs`, `manager`, `node`,
-`node_package`, `preparation`, `reading`, `regeneration`, `service`, `traffic_stream` and `waf`. Every kind and
+`kind` is one of `api_token`, `backup`, `blocklist`, `certificate`, `cluster`, `forwarding`, `host_name`, `job`, `logs`, `manager`,
+`node`, `node_package`, `preparation`, `reading`, `regeneration`, `service`, `traffic_stream` and `waf`. Every kind and
 severity pair is present, even at 0, so an alert expression never meets a missing series.
 
 #### Uptime Kuma

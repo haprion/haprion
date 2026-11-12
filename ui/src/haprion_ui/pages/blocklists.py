@@ -10,6 +10,7 @@ with the answer and without the password.
 
 from __future__ import annotations
 
+from functools import partial
 from time import monotonic, sleep
 from typing import Annotated, Any
 from uuid import UUID
@@ -19,10 +20,12 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Red
 from haprion import blocklist_check_socket
 from haprion.blocklist_check import CheckError
 
-from haprion_ui import auth, blocklist_form, db, jobs
+from haprion_ui import auth, blocklist_form, db, finished_change, jobs
 from haprion_ui.access import admin_write_gate, forbidden_page
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
+from haprion_ui.editor_flow import editor_state
+from haprion_ui.reading import listed_clusters
 from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import posted_form, read_dns_public_key
 
@@ -308,5 +311,60 @@ def build_router(config: Config) -> APIRouter:
             )
         _await(request, job.id)
         return RedirectResponse(CARD, status_code=303)
+
+    @router.post("/settings/blocklists/{name}/add-to-objects", response_class=HTMLResponse)
+    def blocklist_add_to_objects(
+        request: Request,
+        name: str,
+        csrf_token: Annotated[str, Form(max_length=128)],
+    ) -> Response:
+        """The list under Denied in every object HAProxy serves, as saved changes (B496, 13).
+
+        Saved, not published: each cluster's changes go out with its next
+        publish, as an edit's do. An object with a draft is left as it is.
+        """
+
+        gate = admin_write_gate(config, request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return forbidden_page(request, config)
+        if _existing(request, name) is None:
+            return PlainTextResponse("Not found", status_code=404)
+        results: list[blocklist_form.Added] = []
+        for cluster in listed_clusters(request, config):
+            state = editor_state(request, config, cluster)
+            added: list[str] = []
+            skipped: list[tuple[str, str]] = []
+            for view in state.stored:
+                if view.protocol not in blocklist_form.DENIED_PROTOCOLS:
+                    continue
+                problem = finished_change.save(
+                    request,
+                    gate,
+                    state,
+                    name=view.name,
+                    change=partial(blocklist_form.with_list, name, view.name),
+                    detail={"blocklist_added": name},
+                )
+                if problem:
+                    skipped.append((view.name, problem))
+                else:
+                    added.append(view.name)
+            results.append(blocklist_form.Added(cluster, tuple(added), tuple(skipped)))
+        return TEMPLATES.TemplateResponse(
+            request,
+            "blocklist-added.html",
+            {
+                "username": gate.username,
+                "role": gate.role,
+                "csrf_token": auth.csrf_token(token),
+                "section": "settings",
+                "management_writes": config.management_writes,
+                "name": name,
+                "results": results,
+            },
+        )
 
     return router

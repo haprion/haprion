@@ -29,7 +29,7 @@ from haprion import blocklist_store
 from haprion.blocklist_check import AddressCheck, CheckError, Listed, Tested
 from haprion.dns_profile_keys import generate, render_public_key
 
-from haprion_ui import auth, blocklist_apply, blocklist_form, db, poller
+from haprion_ui import attention, auth, blocklist_apply, blocklist_form, db, editor, poller, preview
 from tests.test_login import LoginTestCase, configuration
 from tests.test_poller import document
 from tests.test_queue_route import queued
@@ -605,6 +605,144 @@ class TheCommand(unittest.TestCase):
                 stored,
                 {},
             )
+
+
+class TheListAsAGroup(unittest.TestCase):
+    """B496, 13: a list is a group an object may name under Denied, and nowhere else."""
+
+    def setUp(self) -> None:
+        from tests.test_preview import PREVIEW_EDITOR, form
+
+        self.cluster = replace(PREVIEW_EDITOR, blocklists=("community",))
+        self.form = form
+
+    def test_it_is_offered_under_denied_and_checked_by_the_generator(self) -> None:
+        choices = editor.choices(self.cluster)
+        self.assertEqual(choices["blocklists"], ["community"])
+        self.assertEqual(choices["networks"], sorted(self.cluster.networks))
+        self.assertIn("community", self.cluster.group_names)
+
+        denied = editor.check(self.form(deny_from=("community",), deny_mode="deny"), self.cluster)
+        self.assertIsNone(denied.problem)
+        self.assertIn("community", denied.document)
+
+        allowed = editor.check(self.form(allow_from=("community",)), self.cluster)
+        self.assertIsNotNone(allowed.problem)
+
+    def test_a_stored_object_naming_it_opens_with_it_chosen(self) -> None:
+        written = editor.check(self.form(deny_from=("community",), deny_mode="deny"), self.cluster)
+        fields = preview.form_from_document(written.document, networks=self.cluster.group_names)
+        self.assertEqual(fields["deny_from"], ("community",))
+        self.assertEqual(fields["deny_ranges"], "")
+
+    def test_a_dns_object_never_carries_the_denied_it_did_not_show(self) -> None:
+        for protocol in ("dns", "syslog"):
+            with self.subTest(protocol=protocol):
+                document = preview.build_document(
+                    self.form(protocol=protocol, deny_from=("community",), certificate="")
+                )
+                self.assertNotIn("deny_from", document)
+        self.assertIn("deny_from", preview.build_document(self.form(deny_from=("community",))))
+
+
+class TheNetworkRow(unittest.TestCase):
+    def test_says_the_count_and_when_or_that_it_was_not_fetched(self) -> None:
+        listed = blocklist_form.network_rows(
+            [blocklist_row(name="drop"), blocklist_row()], [state_row()]
+        )
+        self.assertEqual([row.name for row in listed], ["community", "drop"])
+        self.assertTrue(listed[0].summary.startswith("Blocklist · 14 812 addresses · fetched "))
+        self.assertEqual(listed[1].summary, "Blocklist · not fetched yet")
+
+
+def object_document(protocol: str, deny: str = "") -> str:
+    listen = {
+        "http": "  protocol: http\n",
+        "tcp": "  protocol: tcp\n  port: 2222\n",
+        "dns": "  protocol: dns\n  port: 53\n",
+    }[protocol]
+    head = "hostnames: [app.example.com]\n" if protocol == "http" else ""
+    routes = "routes:\n- path: /\n  backend: app\n" if protocol == "http" else "backend: app\n"
+    return (
+        f"schema: 1\nname: app\n{head}listen:\n{listen}{routes}"
+        "backends:\n  app:\n    servers:\n    - host: 198.51.100.10\n      port: 8080\n"
+        f"{deny}"
+    )
+
+
+class AddingToEveryObject(unittest.TestCase):
+    def test_a_site_starts_by_looking_and_a_port_by_refusing(self) -> None:
+        site = blocklist_form.with_list("community", "app", object_document("http"))
+        self.assertIn("deny_from:\n  mode: log\n  sources:\n  - community", site)
+        port = blocklist_form.with_list("community", "app", object_document("tcp"))
+        self.assertIn("mode: deny", port)
+
+    def test_a_list_joins_the_sources_once_and_dns_is_left_alone(self) -> None:
+        denied = object_document("http", "deny_from:\n  mode: deny\n  sources: [office]\n")
+        joined = blocklist_form.with_list("community", "app", denied)
+        self.assertIn("- office\n  - community", joined)
+        self.assertIn("mode: deny", joined)
+        self.assertEqual(blocklist_form.with_list("community", "app", joined), joined)
+        dns = object_document("dns")
+        self.assertEqual(blocklist_form.with_list("community", "app", dns), dns)
+
+
+class AddToAllObjectsRoute(BlocklistRouteTestCase):
+    def test_each_object_is_a_saved_change_and_a_draft_is_said(self) -> None:
+        self.blocklists = [blocklist_row()]
+        views = [
+            mock.Mock(name="v1", protocol="http"),
+            mock.Mock(name="v2", protocol="dns"),
+            mock.Mock(name="v3", protocol="tcp"),
+        ]
+        for view, name in zip(views, ("shop", "resolver", "ssh"), strict=True):
+            view.name = name
+        state = mock.Mock(stored=views, cluster="alpha")
+        answers = {"shop": None, "ssh": "ssh has a draft. Save or discard it in the editor first."}
+        client = self.admin()
+        with (
+            mock.patch("haprion_ui.pages.blocklists.listed_clusters", return_value=("alpha",)),
+            mock.patch("haprion_ui.pages.blocklists.editor_state", return_value=state),
+            mock.patch(
+                "haprion_ui.finished_change.save",
+                side_effect=lambda *_a, name, **_k: answers[name],
+            ) as saved,
+        ):
+            page = client.post(
+                "/settings/blocklists/community/add-to-objects",
+                data={auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE])},
+            ).text
+
+        self.assertEqual([call.kwargs["name"] for call in saved.call_args_list], ["shop", "ssh"])
+        self.assertEqual(saved.call_args_list[0].kwargs["detail"], {"blocklist_added": "community"})
+        self.assertIn("Added to 1 object, saved for the next publish.", page)
+        self.assertIn("ssh has a draft", page)
+        self.assertIn('href="/proxies?cluster=alpha"', page)
+
+
+class NeedsAttention(unittest.TestCase):
+    def test_a_failed_fetch_says_why_and_what_is_kept(self) -> None:
+        failed = NOW + timedelta(hours=12)
+        states = [
+            state_row(attempted_at=failed, failed_at=failed, error="the source answered 503"),
+            state_row(
+                name="drop", fetched_at=None, attempted_at=NOW, failed_at=NOW, error="no address"
+            ),
+            state_row(name="fine"),
+            state_row(name="gone", attempted_at=failed, failed_at=failed),
+        ]
+        items = attention.from_blocklists(states, ["community", "drop", "fine"])
+
+        self.assertEqual([item.subject for item in items], ["community", "drop"])
+        self.assertIn("the source answered 503; the list fetched ", items[0].message)
+        self.assertEqual(items[0].link, "/settings#blocklists")
+        self.assertEqual(items[1].message, "blocklist has never been fetched: no address")
+        self.assertEqual(items[1].variant, "never")
+        self.assertIn("blocklist", attention.KINDS)
+
+    def test_a_good_fetch_after_a_failure_says_nothing(self) -> None:
+        recovered = state_row(failed_at=NOW - timedelta(hours=1))
+        self.assertEqual(attention.from_blocklists([recovered], ["community"]), [])
 
 
 if __name__ == "__main__":

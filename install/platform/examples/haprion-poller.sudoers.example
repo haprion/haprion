@@ -25,8 +25,9 @@
 # network description, the cluster settings and the stored objects; and, with
 # the certificates, when each certificate receiver last fetched (B498): sshd's
 # accepted logins in the journal and nginx's receivers log, of which only one
-# time per receiver reaches its output. So the
-# poller cannot choose what the interface is told is current, cannot show an
+# time per receiver reaches its output; and what the blocklist timer last did
+# with each list (B500): its state file's times, error and counts, never a
+# list's addresses or its source's secret. So the poller cannot choose what the interface is told is current, cannot show an
 # unpublished draft as live, and cannot block a deploy.
 #
 # NOPASSWD because a service has no terminal to type a password at.

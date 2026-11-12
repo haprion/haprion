@@ -19,8 +19,9 @@ The caller names a cluster and, per reading, the parameters that reading's
 helper takes - the diffs the version listing is asked for, the fingerprint the
 object listing may be unchanged since. Which readings exist is fixed here. A
 null cluster asks for the manager's own readings: `cert_list` (B304), which
-every pass makes whether or not a cluster exists yet, and `receiver_fetches`
-(B498), when each certificate receiver last fetched.
+every pass makes whether or not a cluster exists yet, `receiver_fetches`
+(B498), when each certificate receiver last fetched, and `blocklist_states`
+(B500), what the blocklist timer last did with each list.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from typing import Any, BinaryIO, TextIO
 
 from haprion import exit_codes, labels
 from haprion.cli import (
+    blocklist_states_helper,
     cert_list_helper,
     cluster_settings_helper,
     list_backups_helper,
@@ -84,6 +86,7 @@ READINGS: Mapping[str, Helper] = {
     objects_helper.OPERATION: objects_helper.main,
     regeneration_helper.OPERATION: regeneration_helper.main,
     receiver_fetches_helper.OPERATION: receiver_fetches_helper.main,
+    blocklist_states_helper.OPERATION: blocklist_states_helper.main,
 }
 #
 # The readings that answer for the manager when the cluster is null. Each of
@@ -91,7 +94,11 @@ READINGS: Mapping[str, Helper] = {
 # are refused here first so the answer names the reading.
 #
 MANAGER_READINGS: frozenset[str] = frozenset(
-    {cert_list_helper.OPERATION, receiver_fetches_helper.OPERATION}
+    {
+        cert_list_helper.OPERATION,
+        receiver_fetches_helper.OPERATION,
+        blocklist_states_helper.OPERATION,
+    }
 )
 
 

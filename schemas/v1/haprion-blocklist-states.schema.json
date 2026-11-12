@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-blocklist-states.schema.json",
+  "title": "haprion-readings-helper blocklist_states reading",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "blocklist_states" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/states" },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "time": { "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] },
+    "states": {
+      "description": "What the refresh timer's last pass did with each blocklist, from its state file (B496, 13; B500). `fetched_at` is the last good fetch and `entries` the networks of the list kept from it; `failed_at` equals `attempted_at` while the last attempt failed, and `error` says why. Nothing of the lists themselves.",
+      "type": "object",
+      "required": ["lists"],
+      "properties": {
+        "lists": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "required": ["name", "fetched_at", "attempted_at", "failed_at", "error", "entries", "skipped"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" },
+              "fetched_at": { "$ref": "#/$defs/time" },
+              "attempted_at": { "$ref": "#/$defs/time" },
+              "failed_at": { "$ref": "#/$defs/time" },
+              "error": { "type": "string", "maxLength": 500 },
+              "entries": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+              "skipped": { "type": "integer", "minimum": 0, "maximum": 1000000 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1112,15 +1112,64 @@ class ReceiverFetchWatch:
             self.since = at - self.MARGIN
 
 
+def record_blocklist_states(pool: Any, completed: Any, *, asked: str, at: datetime) -> None:
+    """What the blocklist timer last did with each list (B496, 13; B500), into `blocklist_state`.
+
+    Asked in the manager's readings call with the certificates. Written whole:
+    a list the timer no longer keeps state for goes. A reading that did not
+    answer leaves the rows as they were, so Settings keeps saying what was last
+    known rather than that nothing was. Never raises.
+    """
+
+    reading = _judge(
+        completed, cluster=None, operation="blocklist_states", accept_partial=False, asked=asked
+    )
+    if reading["outcome"] != "done":
+        logger.warning(
+            "blocklist states: %s%s",
+            reading["outcome"],
+            f" ({reading['poll_error']})" if reading.get("poll_error") else "",
+        )
+        return
+
+    def when(value: Any) -> datetime | None:
+        return (
+            datetime.fromisoformat(value.replace("Z", "+00:00")) if isinstance(value, str) else None
+        )
+
+    try:
+        states = [
+            db.BlocklistState(
+                name=entry["name"],
+                fetched_at=when(entry["fetched_at"]),
+                attempted_at=when(entry["attempted_at"]),
+                failed_at=when(entry["failed_at"]),
+                error=entry["error"],
+                entries=entry["entries"],
+                skipped=entry["skipped"],
+                seen_at=at,
+            )
+            for entry in reading["result"]["lists"]
+        ]
+        with pool.connection() as connection:
+            db.record_blocklist_states(connection, states)
+            connection.commit()
+    except Exception as exc:  # noqa: BLE001 - read again on the next cycle
+        logger.warning("blocklist states were not recorded: %s", exc)
+
+
 def poll_manager(
     pool: Any,
     readings: ReadingsHelper = run_readings_helper,
     fetches: ReceiverFetchWatch | None = None,
+    *,
+    blocklists: bool = False,
 ) -> bool:
     """The manager's own certificate reading; True when it was done. Never raises.
 
     With `fetches`, the receivers' fetches are asked in the same call and
-    recorded on their own (`ReceiverFetchWatch`).
+    recorded on their own (`ReceiverFetchWatch`); with `blocklists`, so is
+    what the blocklist timer last did (`record_blocklist_states`).
     """
 
     sources: tuple[Source, ...] = (MANAGER_CERTIFICATES,)
@@ -1129,8 +1178,17 @@ def poll_manager(
         sources += (
             Source("receiver_fetches", None, _record_nothing, reading=lambda _extra: dict(wanted)),
         )
+    if blocklists:
+        sources += (Source("blocklist_states", None, _record_nothing, reading=lambda _extra: {}),)
     at = datetime.now(UTC)
     asked, answered = _local_readings(pool, None, sources, readings)
+    if blocklists:
+        try:
+            record_blocklist_states(
+                pool, answered["blocklist_states"](None, asked), asked=asked, at=at
+            )
+        except Exception as exc:  # noqa: BLE001 - one failure is one log line
+            logger.warning("blocklist states: the readings helper gave no answer: %s", exc)
     if fetches is not None:
         try:
             fetches.record(pool, answered["receiver_fetches"](None, asked), asked=asked, at=at)
@@ -1436,7 +1494,7 @@ def main(argv: list[str] | None = None) -> int:
                         logger.info("no cluster yet; Settings - Create cluster makes the first")
                     if not lock_held():
                         return exit_codes.BLOCKED
-                    poll_manager(pool, fetches=fetches)
+                    poll_manager(pool, fetches=fetches, blocklists=True)
                     if not lock_held():
                         return exit_codes.BLOCKED
                     packages.poll(pool)

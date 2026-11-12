@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "operation": "blocklist_states",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": false,
+  "outcome": "failed",
+  "result": null,
+  "error": {
+    "code": "state_unreadable",
+    "message": "the blocklist state could not be read",
+    "details": null,
+    "node": null
+  }
+}

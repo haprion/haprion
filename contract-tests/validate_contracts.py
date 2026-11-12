@@ -1203,6 +1203,32 @@ def check_http01_check_semantics(document: dict[str, object], path: Path) -> Non
         raise AssertionError(f"{path}: a {answer} answer with the wrong problem")
 
 
+def check_blocklist_states_semantics(document: dict[str, object], path: Path) -> None:
+    # A result only on success; each list once, by name. A failure or a fetch is
+    # one of the attempts, so neither is later than the last attempt, and a list
+    # never fetched keeps no entries.
+    result = document["result"]
+    if document["outcome"] == "done" and result is None:
+        raise AssertionError(f"{path}: a done blocklist_states carries no result")
+    if document["outcome"] != "done" and result is not None:
+        raise AssertionError(f"{path}: a {document['outcome']} blocklist_states carries a result")
+    if isinstance(result, dict):
+        lists = result["lists"]
+        assert isinstance(lists, list)
+        names = [entry["name"] for entry in lists]
+        if names != sorted(set(names)):
+            raise AssertionError(f"{path}: lists are listed once each, by name")
+        for entry in lists:
+            attempted = entry["attempted_at"]
+            for field in ("fetched_at", "failed_at"):
+                if entry[field] is not None and (attempted is None or entry[field] > attempted):
+                    raise AssertionError(
+                        f"{path}: {entry['name']}'s {field} is after its last attempt"
+                    )
+            if entry["fetched_at"] is None and entry["entries"]:
+                raise AssertionError(f"{path}: {entry['name']} was never fetched but keeps entries")
+
+
 def check_ndes_server_semantics(document: dict[str, object], path: Path) -> None:
     # A result only on success; the CA that issues the server's RA certificate
     # is the first shown, since it is the one the server enrolls for.
@@ -1544,6 +1570,7 @@ SEMANTIC_CHECKS = {
     "oidc": check_oidc_semantics,
     "resolve": check_resolve_semantics,
     "receiver_fetches": check_receiver_fetches_semantics,
+    "blocklist_states": check_blocklist_states_semantics,
     "ndes_server": check_ndes_server_semantics,
     "http01_check": check_http01_check_semantics,
     "probe": check_probe_semantics,
@@ -1693,6 +1720,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["names"][0]["problem"] = "said beside an address"
     elif operation == "receiver_fetches":
         result["receivers"].append(dict(result["receivers"][0]))
+    elif operation == "blocklist_states":
+        result["lists"].append(dict(result["lists"][0]))
     elif operation == "ndes_server":
         if "authorities" in result:
             result["authorities"][0]["issues_ra"] = False

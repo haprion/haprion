@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "operation": "blocklist_states",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "result": {
+    "lists": [
+      {
+        "name": "community",
+        "fetched_at": "2026-11-12T06:00:02Z",
+        "attempted_at": "2026-11-12T06:00:02Z",
+        "failed_at": null,
+        "error": "",
+        "entries": 14812,
+        "skipped": 2
+      },
+      {
+        "name": "drop",
+        "fetched_at": "2026-11-11T18:00:01Z",
+        "attempted_at": "2026-11-12T06:00:01Z",
+        "failed_at": "2026-11-12T06:00:01Z",
+        "error": "the source answered 503",
+        "entries": 1204,
+        "skipped": 0
+      },
+      {
+        "name": "partner",
+        "fetched_at": null,
+        "attempted_at": "2026-11-12T06:00:03Z",
+        "failed_at": "2026-11-12T06:00:03Z",
+        "error": "the list holds no address",
+        "entries": 0,
+        "skipped": 0
+      }
+    ]
+  },
+  "error": null
+}

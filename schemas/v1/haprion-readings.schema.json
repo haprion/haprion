@@ -69,7 +69,8 @@
               "cluster_settings",
               "objects",
               "regeneration",
-              "receiver_fetches"
+              "receiver_fetches",
+              "blocklist_states"
             ]
           },
           "additionalProperties": {

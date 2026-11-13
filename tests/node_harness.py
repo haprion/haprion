@@ -85,6 +85,11 @@ class FakeNode:
     #
     authorities: tuple[tuple[str, str], ...] | None = None
     #
+    # The blocklists the node reports under `blocklists`, the same way: None
+    # leaves the field out, as a node does whose package predates it.
+    #
+    blocklists: tuple[tuple[str, str], ...] | None = None
+    #
     # How this node stands on the keepalived address list its release carries.
     # A release activates HAProxy and the addresses in two steps, so the node
     # can be on the new release with the old list - the state the release hash
@@ -142,6 +147,7 @@ class FakeNode:
             "runtime": {"version": "3.2.1", "uptime_sec": 3600},
             "certificates": self._certificates(),
             **({} if self.authorities is None else {"authorities": self._listed(self.authorities)}),
+            **({} if self.blocklists is None else {"blocklists": self._listed(self.blocklists)}),
             **({} if self.peers is None else {"peers": self.peers}),
             **({"traffic_stream": None} if self.reports_traffic_stream else {}),
         }

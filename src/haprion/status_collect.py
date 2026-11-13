@@ -54,6 +54,7 @@ from haprion.config import DeployIdentity, Node
 from haprion.deploy_plan import NodeObservation, ReleaseTarget, VipState
 from haprion.digits import is_digits
 from haprion.envelope import Message, envelope
+from haprion.generate import BLOCKLISTS_DIRECTORY
 from haprion.object_manifest import (
     CURRENT,
     MANIFEST_FILE,
@@ -231,6 +232,30 @@ def read_traffic_published(publish_path: Path, node_path: str) -> bool | None:
             if path.is_file() and needle in path.read_text(encoding="utf-8", errors="replace"):
                 return True
         return False
+    except OSError:
+        return None
+
+
+def read_blocklists_published(publish_path: Path, node_path: str) -> frozenset[str] | None:
+    """The blocklists the published release loads from the nodes, by name; None when it cannot be read.
+
+    The `-f <directory>/<name>.lst` lines the generator wrote under conf.d. A
+    deploy is judged against these and not against every list the manager
+    holds for the cluster: a list nothing names is a file the release never
+    opens, whether or not a node has it yet.
+    """
+
+    node_root = publish_path / "current" / node_path
+    needle = re.compile(re.escape(BLOCKLISTS_DIRECTORY) + r"/([^/\s]+)\.lst\b")
+    try:
+        if not (node_root / "RELEASE").is_file():
+            return None
+        found: set[str] = set()
+        paths = [node_root / "haproxy.cfg", *sorted((node_root / "conf.d").rglob("*"))]
+        for path in paths:
+            if path.is_file():
+                found.update(needle.findall(path.read_text(encoding="utf-8", errors="replace")))
+        return frozenset(found)
     except OSError:
         return None
 

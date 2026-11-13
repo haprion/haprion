@@ -33,6 +33,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import BinaryIO, TextIO, cast
 
@@ -67,6 +68,7 @@ from haprion.status_collect import (
     STATUS_TIMEOUT_SECONDS,
     ask_node,
     collect,
+    read_blocklists_published,
     read_target,
     read_traffic_published,
 )
@@ -434,6 +436,18 @@ def main(
                     "deploy again.",
                     exit_codes.BLOCKED,
                 )
+            #
+            # Only the lists the published release names are asked of the
+            # nodes: a list nothing uses yet blocks nothing. A release that
+            # cannot be read keeps every list in the check.
+            #
+            if preflight is not None and preflight.target is not None:
+                named = read_blocklists_published(Path(cluster.publish_path), cluster.node_path)
+                if named is not None:
+                    kept = tuple(ref for ref in preflight.target.blocklists if ref.id in named)
+                    preflight = replace(
+                        preflight, target=replace(preflight.target, blocklists=kept)
+                    )
             outcome = run(
                 read,
                 trigger,

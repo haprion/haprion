@@ -687,6 +687,44 @@ class CertificatePreflightTests(HelperFixture):
             ],
         )
 
+    def publish_blocklist_use(self, *, named: bool) -> Path:
+        """A cluster holding the list `crowdsec`, and a release that does or does not load it."""
+
+        policy_path = self.runtime(distributed=REFERENCED)
+        (self.root / "certdist" / "blocklists").mkdir()
+        (self.root / "certdist" / "blocklists" / "crowdsec.lst").write_bytes(b"192.0.2.0/24\n")
+        release = self.root / "published" / "alpha" / "current"
+        (conf := next(release.iterdir()) / "conf.d").mkdir()
+        line = "acl denied src -f /etc/haproxy/blocklists/crowdsec.lst" if named else "# no list"
+        (conf / "shop.cfg").write_text(f"frontend shop\n    {line}\n", encoding="utf-8")
+        for node in self.cluster.nodes:
+            node.certificates = tuple((i, fingerprint(i)) for i in REFERENCED)
+            node.blocklists = ()
+        return policy_path
+
+    def test_a_list_the_release_does_not_name_does_not_block_the_deploy(self) -> None:
+        policy_path = self.publish_blocklist_use(named=False)
+
+        code, out, _ = self.run_helper(request(json=True), policy_path=policy_path)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(self.triggered, ["node-b", "node-a"])
+        self.assertEqual(assert_contract("haprion-deploy", out)["outcome"], "done")
+
+    def test_a_list_the_release_names_blocks_where_a_node_lacks_it(self) -> None:
+        policy_path = self.publish_blocklist_use(named=True)
+
+        code, out, _ = self.run_helper(request(json=True), policy_path=policy_path)
+
+        self.assertEqual(code, exit_codes.BLOCKED)
+        self.assertEqual(self.triggered, [])
+        document = assert_contract("haprion-deploy", out)
+        self.assertEqual(document["error"]["code"], "certificates_not_deployed")
+        self.assertEqual(
+            [node["missing_blocklists"] for node in document["error"]["details"]["nodes"]],
+            [["crowdsec"], ["crowdsec"]],
+        )
+
     def test_the_human_mode_names_the_command_to_run_next(self) -> None:
         self.carry("example.com")
 

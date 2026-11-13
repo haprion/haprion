@@ -15,12 +15,15 @@ name: automatic release
 #   rebuild  the last tag is this workflow's and has no release (the build
 #            failed after the tag was pushed): the tagged commit is built
 #            twice and compared again and the release is made; no new tag
-#   blocked  a person's change is on main since the tag; nothing is released,
-#            and while a security fix waits behind it an issue says so
+#   blocked  a change on main since the tag is not one the watch or Dependabot
+#            made, or could not be checked as one; nothing is released, and an
+#            issue says why for as long as it lasts
 #   wait, nothing
 #
-# The package repository is asked too: when it serves no haprion-cli of the
-# last tag three hours after its release, an issue says so (apt-repo.yml's run
+# A build that fails twice in a row, and a proposal that stays red when it is
+# run again, are issues too. The package repository is asked too: when it
+# serves no haprion-cli of the last tag three hours after its release, an
+# issue says so (apt-repo.yml's run
 # may have been replaced, or failed).
 #
 # A release made by hand starts by building the automatic ones since the last
@@ -44,9 +47,10 @@ concurrency:
 
 env:
   BRANCH: release-watch
-  BLOCKED_TITLE: "A security fix waits for a release made by hand"
+  BLOCKED_TITLE: "The automatic release is blocked"
   UNPUBLISHED_TITLE: "The package repository does not serve the latest release"
-  RED_TITLE: "The version proposal has been red for a day"
+  RED_TITLE: "The version proposal is still red when it is run again"
+  BUILD_TITLE: "The automatic release's build failed twice in a row"
 
 jobs:
   plan:
@@ -62,6 +66,7 @@ jobs:
       outcome: ${{ steps.plan.outputs.outcome }}
       next: ${{ steps.plan.outputs.next }}
       security: ${{ steps.plan.outputs.security }}
+      reason: ${{ steps.plan.outputs.reason }}
       tag_commit: ${{ steps.plan.outputs.tag_commit }}
       repository: ${{ steps.plan.outputs.repository }}
       ready: ${{ steps.gates.outputs.ready }}
@@ -92,14 +97,23 @@ jobs:
           : > "${pulls}"
           for number in $(git log --first-parent --format=%s "${tag}^..HEAD" \
               | sed -n 's/^Merge pull request #\([0-9][0-9]*\) .*/\1/p'); do
-            gh api "repos/${REPOSITORY}/pulls/${number}" \
-              --jq '{number: .number, author: .user.login, merge_commit_sha: .merge_commit_sha}' \
-              >> "${pulls}" || echo "pull request #${number} is not known to GitHub"
+            # Only a 404 says the pull request is not there (the plan blocks on
+            # it); any other answer is no answer, and the step fails.
+            if found=$(gh api "repos/${REPOSITORY}/pulls/${number}" \
+                --jq '{number: .number, author: .user.login, merge_commit_sha: .merge_commit_sha}' \
+                2>"${RUNNER_TEMP}/pull.err"); then
+              echo "${found}" >> "${pulls}"
+            elif grep -q "HTTP 404" "${RUNNER_TEMP}/pull.err"; then
+              echo "pull request #${number} is not known to GitHub"
+            else
+              cat "${RUNNER_TEMP}/pull.err" >&2
+              exit 1
+            fi
           done
           jq -s . "${pulls}" > "${RUNNER_TEMP}/pulls.json"
           known=()
           if release=$(gh api "repos/${REPOSITORY}/releases/tags/${tag}" 2>"${RUNNER_TEMP}/release.err"); then
-            known+=(--last-release present --released-at "$(jq -r .created_at <<<"${release}")")
+            known+=(--last-release present --released-at "$(jq -r .published_at <<<"${release}")")
           elif grep -q "HTTP 404" "${RUNNER_TEMP}/release.err"; then
             known+=(--last-release missing)
           else
@@ -134,6 +148,7 @@ jobs:
             echo "outcome=$(jq -r .outcome "${RUNNER_TEMP}/plan.json")"
             echo "next=$(jq -r '.next // empty' "${RUNNER_TEMP}/plan.json")"
             echo "security=$(jq -r .security "${RUNNER_TEMP}/plan.json")"
+            echo "reason=$(jq -r .reason "${RUNNER_TEMP}/plan.json")"
             echo "tag_commit=$(jq -r '.tag_commit // empty' "${RUNNER_TEMP}/plan.json")"
             echo "pull_head=$(jq -r '.pull_head // empty' "${RUNNER_TEMP}/plan.json")"
             echo "repository=$(jq -r .repository "${RUNNER_TEMP}/plan.json")"
@@ -176,7 +191,7 @@ jobs:
           if-no-files-found: error
 
   report:
-    name: Say when a security fix waits, the proposal stays red or the repository lags
+    name: Say when the release is blocked, the proposal stays red or the repository lags
     needs: plan
     runs-on: ubuntu-26.04
     timeout-minutes: 10
@@ -207,22 +222,33 @@ jobs:
           NOTIFY: ${{ vars.UPSTREAM_WATCH_NOTIFY }}
           OUTCOME: ${{ needs.plan.outputs.outcome }}
           SECURITY: ${{ needs.plan.outputs.security }}
+          REASON: ${{ needs.plan.outputs.reason }}
         run: |
           set -euo pipefail
           open=$(gh issue list --repo "${REPOSITORY}" --state open --search "in:title \"${BLOCKED_TITLE}\"" \
             --json number,title --jq "map(select(.title == env.BLOCKED_TITLE))[0].number // empty")
-          if [[ "${OUTCOME}" == blocked && "${SECURITY}" == true ]]; then
+          if [[ "${OUTCOME}" == blocked ]]; then
             body="${RUNNER_TEMP}/body.md"
-            { echo "A security fix is merged on main, and a change since the last release was not made by"
-              echo "the upstream watch or Dependabot. An automatic release would ship it unreviewed, so"
-              echo "none is made: the fix goes out with the next release made by hand."
+            { echo "No automatic release is made while this stands (the reason comes from the commits,"
+              echo "and is quoted as it is):"
+              echo
+              echo "~~~~"
+              echo "${REASON}"
+              echo "~~~~"
+              echo
+              echo "What waits on main goes out with the next release made by hand."
+              if [[ "${SECURITY}" == true ]]; then
+                echo "A security fix is among it."
+              fi
             } > "${body}"
             if [[ -z "${open}" ]]; then
               gh issue create --repo "${REPOSITORY}" --title "${BLOCKED_TITLE}" --body-file "${body}" \
                 ${NOTIFY:+--assignee "${NOTIFY}"}
+            else
+              gh issue edit "${open}" --repo "${REPOSITORY}" --body-file "${body}"
             fi
           elif [[ -n "${open}" ]]; then
-            gh issue close "${open}" --repo "${REPOSITORY}" --comment "Nothing waits behind a change made by hand."
+            gh issue close "${open}" --repo "${REPOSITORY}" --comment "The release is not blocked."
           fi
 
       - name: Open, keep or close the report on the package repository
@@ -252,8 +278,9 @@ jobs:
           fi
 
       # The failed checks of an unchanged proposal are run again once a day
-      # (the merge job); one that is still red after a day is not the
-      # runner's bad luck.
+      # (the merge job); one that failed again when it was run again (a run's
+      # second attempt) is not the runner's bad luck. The first failure alone
+      # is no report: the run again comes first.
       - name: Open, keep or close the report on a red proposal
         shell: bash
         env:
@@ -273,9 +300,9 @@ jobs:
             head=$(gh pr view "${number}" --repo "${REPOSITORY}" --json headRefOid --jq .headRefOid)
             first_failure=$(GH_TOKEN="${RUN_TOKEN}" gh api --method GET "repos/${REPOSITORY}/actions/runs" \
               -f head_sha="${head}" -f status=failure \
-              --jq '[.workflow_runs[].created_at] | min // empty')
+              --jq '[.workflow_runs[] | select(.run_attempt >= 2) | .created_at] | min // empty')
           fi
-          if [[ -n "${first_failure}" && "${first_failure}" < "$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)" ]]; then
+          if [[ -n "${first_failure}" ]]; then
             if [[ -z "${open}" ]]; then
               body="${RUNNER_TEMP}/red.md"
               { echo "The version proposal #${number} failed a check at ${first_failure}, and it has failed"
@@ -432,7 +459,7 @@ jobs:
           # An unchanged proposal gets no new checks, so a failure from
           # outside would hold it for good. A run that failed more than a day
           # ago is run again, which is once a day at most; a real failure
-          # fails again and stays in view (the report job counts its age).
+          # fails again and stays in view (the report job says so on its second attempt).
           for run in $(GH_TOKEN="${RUN_TOKEN}" gh api --method GET "repos/${REPOSITORY}/actions/runs" \
               -f head_sha="${head}" -f status=failure \
               --jq '.workflow_runs[] | select(.updated_at < (now - 86400 | todate)) | .id'); do
@@ -554,3 +581,63 @@ jobs:
           fi
           gh release create "v${VERSION}" --repo "${REPOSITORY}" --verify-tag --title "v${VERSION}" --latest \
             --notes-file "${BUILDS}/release-note/notes.md" "${BUILDS}"/release-a/*
+
+  # A build or the release failing is run again by the next run (the tag
+  # without a release is `rebuild`); the second failure in a row is not the
+  # runner's bad luck. The previous completed run is asked by its conclusion.
+  build-report:
+    name: Say when the build fails twice in a row
+    needs: [plan, build, release]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    environment:
+      name: upstream-watch
+      deployment: false
+    permissions:
+      contents: read
+      actions: read # the previous run's conclusion
+
+    steps:
+      - name: Act as the app
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.UPSTREAM_WATCH_CLIENT_ID }}
+          private-key: ${{ secrets.UPSTREAM_WATCH_PRIVATE_KEY }}
+          permission-issues: write # the report
+
+      - name: Open, keep or close the report on the build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          RUN_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          NOTIFY: ${{ vars.UPSTREAM_WATCH_NOTIFY }}
+          BUILD: ${{ needs.build.result }}
+          RELEASE: ${{ needs.release.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          open=$(gh issue list --repo "${REPOSITORY}" --state open --search "in:title \"${BUILD_TITLE}\"" \
+            --json number,title --jq "map(select(.title == env.BUILD_TITLE))[0].number // empty")
+          if [[ "${BUILD}" == failure || "${RELEASE}" == failure ]]; then
+            # The current run is not completed, so the first completed one is the one before.
+            previous=$(GH_TOKEN="${RUN_TOKEN}" gh api --method GET \
+              "repos/${REPOSITORY}/actions/workflows/auto-release.yml/runs" \
+              -f status=completed -f per_page=1 --jq '.workflow_runs[0].conclusion // empty')
+            echo "the run before: ${previous:-none}"
+            if [[ "${previous}" == failure && -z "${open}" ]]; then
+              body="${RUNNER_TEMP}/build.md"
+              { echo "The build of the release, or the release itself, failed in this run and in the one"
+                echo "before it: ${RUN_URL}"
+                echo
+                echo "The next run builds it again (a tag without a release is built again, a proposal"
+                echo "merged but not tagged is tagged then). Look at the failed job."
+              } > "${body}"
+              gh issue create --repo "${REPOSITORY}" --title "${BUILD_TITLE}" --body-file "${body}" \
+                ${NOTIFY:+--assignee "${NOTIFY}"}
+            fi
+          elif [[ "${RELEASE}" == success && -n "${open}" ]]; then
+            gh issue close "${open}" --repo "${REPOSITORY}" --comment "A release was made."
+          fi

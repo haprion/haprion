@@ -841,7 +841,59 @@ class TheWorkflowsSayWhatThePlanReads(unittest.TestCase):
         self.assertIn("select(.updated_at < (now - 86400 | todate))", text)
         self.assertIn("/rerun-failed-jobs", text)
         self.assertIn("RED_TITLE", release["env"])
-        self.assertIn("date -u -d '24 hours ago'", text)
+
+    def test_the_repository_guard_counts_from_the_release_s_publication(self) -> None:
+        text = (self.workflows / "auto-release.yml").read_text(encoding="utf-8")
+
+        # `created_at` is the date of the commit the tag stands on; `published_at` is the release's
+        self.assertIn("jq -r .published_at", text)
+        self.assertNotIn(".created_at <<<", text)
+
+    def test_every_blocked_plan_is_an_issue_with_the_plan_s_reason(self) -> None:
+        release = yaml.safe_load((self.workflows / "auto-release.yml").read_text(encoding="utf-8"))
+        text = (self.workflows / "auto-release.yml").read_text(encoding="utf-8")
+        step = next(
+            step
+            for step in release["jobs"]["report"]["steps"]
+            if step.get("name") == "Open, keep or close the report"
+        )
+
+        self.assertIn('"${OUTCOME}" == blocked ]]', step["run"])
+        self.assertNotIn("blocked &&", step["run"])
+        self.assertEqual(step["env"]["REASON"], "${{ needs.plan.outputs.reason }}")
+        self.assertIn('echo "reason=$(jq -r .reason', text)
+        self.assertIn("reason: ${{ steps.plan.outputs.reason }}", text)
+        self.assertIn("gh issue close", step["run"])
+        self.assertNotIn("made by a person", release["env"]["BLOCKED_TITLE"])
+
+    def test_a_pull_request_that_fails_to_read_fails_the_plan_unless_it_is_unknown(self) -> None:
+        release = yaml.safe_load((self.workflows / "auto-release.yml").read_text(encoding="utf-8"))
+        step = next(
+            step for step in release["jobs"]["plan"]["steps"] if step.get("name") == "Decide"
+        )
+        loop = step["run"].split("for number in", 1)[1].split("done", 1)[0]
+
+        self.assertIn('grep -q "HTTP 404"', loop)
+        self.assertIn("exit 1", loop)
+        self.assertNotIn("|| echo", loop)
+
+    def test_a_proposal_is_red_when_it_failed_again_after_being_run_again(self) -> None:
+        text = (self.workflows / "auto-release.yml").read_text(encoding="utf-8")
+
+        self.assertIn("select(.run_attempt >= 2)", text)
+        self.assertNotIn("date -u -d '24 hours ago'", text)
+
+    def test_a_build_that_fails_twice_in_a_row_is_an_issue(self) -> None:
+        release = yaml.safe_load((self.workflows / "auto-release.yml").read_text(encoding="utf-8"))
+        job = release["jobs"]["build-report"]
+        steps = " ".join(step.get("run", "") for step in job["steps"])
+
+        self.assertEqual(set(job["needs"]), {"plan", "build", "release"})
+        self.assertIn("always()", job["if"])
+        self.assertIn("BUILD_TITLE", release["env"])
+        self.assertIn("workflows/auto-release.yml/runs", steps)
+        self.assertIn("-f status=completed", steps)
+        self.assertIn("gh issue close", steps)
 
     def test_ci_starts_the_release_when_its_checks_are_done_and_never_fails_for_it(self) -> None:
         ci = yaml.safe_load((self.workflows / "ci.yml").read_text(encoding="utf-8"))

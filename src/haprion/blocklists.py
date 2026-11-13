@@ -42,6 +42,7 @@ DESCRIPTION_MAX = 200
 URL_MAX = 2048
 USERNAME_MAX = 200
 SECRET_MAX = 4096
+EXCEPT_MAX = 256  # what the blocklist table's excepts column holds (0119)
 
 #
 # B500: a list over either limit is refused, and the last good one stays.
@@ -145,6 +146,8 @@ def checked_except(entries: Iterable[str]) -> tuple[str, ...]:
         if value in seen:
             raise ValueError(f"{entry} is listed twice")
         seen.append(value)
+        if len(seen) > EXCEPT_MAX:
+            raise ValueError(f"Except holds at most {EXCEPT_MAX} entries")
     return tuple(seen)
 
 

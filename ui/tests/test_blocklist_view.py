@@ -185,6 +185,12 @@ class TheForm(unittest.TestCase):
             (replace(good, every_hours="2"), "Fetch every is 1, 6, 12 or 24 hours."),
             (replace(good, excepts="192.0.2.10\n0.0.0.0/0"), "entire address family"),
             (replace(good, auth="basic"), "Basic authorization needs a username"),
+            (
+                replace(
+                    good, excepts="".join(f"198.51.{n // 256}.{n % 256}\n" for n in range(257))
+                ),
+                "Except holds at most 256 entries.",
+            ),
         )
         for form, said in cases:
             with self.subTest(said=said):
@@ -526,6 +532,15 @@ class TheCommand(unittest.TestCase):
         (wanted,) = found
         self.assertEqual(wanted.definition.excepts, ("192.0.2.10/32",))
         self.assertNotIn(GUARD, repr(wanted))
+
+    def test_more_except_entries_than_the_database_takes_is_a_sentence(self) -> None:
+        entries = "".join(f"      - 198.51.{n // 256}.{n % 256}\n" for n in range(257))
+        body = (
+            "blocklists:\n  - name: community\n    url: https://lists.example.com/l.txt\n"
+            f"    every_hours: 24\n    except:\n{entries}"
+        )
+        with self.assertRaisesRegex(blocklist_apply.ApplyError, "at most 256 entries"):
+            blocklist_apply.read_file(self.file(body))
 
     def test_a_secret_others_may_read_or_a_bad_list_is_refused(self) -> None:
         body = (

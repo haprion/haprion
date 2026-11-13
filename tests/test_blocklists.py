@@ -243,6 +243,12 @@ class TheDefinitionIsChecked(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 self._definition(excepts=bad)
 
+    def test_except_holds_at_most_what_the_database_holds(self) -> None:
+        many = [f"198.51.{n // 256}.{n % 256}" for n in range(blocklists.EXCEPT_MAX)]
+        self.assertEqual(len(self._definition(excepts=many).excepts), blocklists.EXCEPT_MAX)
+        with self.assertRaisesRegex(ValueError, "at most 256 entries"):
+            self._definition(excepts=[*many, "203.0.113.1"])
+
 
 class Source:
     """An https server whose answer a test sets."""

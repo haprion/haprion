@@ -360,7 +360,16 @@ def _steered_by_addresses(
     try:
         other = build_node_artifact(candidate_tree(None, lambda: placeholders))
     except (ConfigError, LayoutError):
-        return []
+        #
+        # Whether the addresses steer anything cannot be told, so every file
+        # that differs counts. A false "required" costs one publish; a false
+        # "not required" would hide a drift the nodes still carry.
+        #
+        return sorted(
+            path
+            for path in set(candidate) | set(published)
+            if published.get(path) != candidate.get(path)
+        )
     return sorted(
         path
         for path in set(candidate) | set(other)

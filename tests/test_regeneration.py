@@ -19,6 +19,7 @@ from haprion.cli import readings_helper, regeneration_helper
 from haprion.config import Cluster, ConfigError, load_policy, load_runtime_config
 from haprion.deploy_plan import ReleaseTarget
 from haprion.managed_publish import managed_files
+from haprion.release_layout import LayoutError
 from haprion.version_diff import MAX_FILES
 from tests.contract_schema import assert_contract
 from tests.test_managed_publish import NETWORK, cluster
@@ -399,6 +400,22 @@ class AnUpdateIsRequiredOnlyWhenTheLevelSaysSo(unittest.TestCase):
         self.assertEqual(
             (result["outcome"], result["required"], result["causes"]), ("changed", False, [])
         )
+
+    def test_a_placeholder_build_that_fails_counts_the_changed_files_as_address_steered(
+        self,
+    ) -> None:
+        published = {"keepalived/node-a.conf": b"old\n", "core/a.cfg": b"same\n"}
+        candidate = {"keepalived/node-a.conf": b"new\n", "core/a.cfg": b"same\n", "new.cfg": b"x\n"}
+
+        for failure in (ConfigError("no"), LayoutError("no")):
+
+            def failing(_commit: Any, _lookup: Any, failure: Exception = failure) -> Any:
+                raise failure
+
+            steered = regeneration._steered_by_addresses(
+                failing, published, candidate, (("node-a", "192.0.2.31"),)
+            )
+            self.assertEqual(steered, ["keepalived/node-a.conf", "new.cfg"])
 
     def test_a_version_written_by_a_newer_generator_is_required_after_a_rollback(self) -> None:
         files = published_tree()

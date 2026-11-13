@@ -97,7 +97,22 @@ class TheName(unittest.TestCase):
             )
 
     def test_what_is_not_a_domain_name_is_refused(self) -> None:
-        for text in ("localhost", "192.0.2.80", "a b.example.com", "", "example.com/x"):
+        for text in (
+            "localhost",
+            "192.0.2.80",
+            "a b.example.com",
+            "",
+            "example.com/x",
+            #
+            # The resolver reads these as addresses (inet_aton), a CA does not
+            # issue for them.
+            #
+            "127.1",
+            "10.1",
+            "192.0.2.010",
+            "0x7f.1",
+            "app.example.0x1",
+        ):
             with self.subTest(text=text), self.assertRaises(CheckError):
                 http01_check.parse_name(text)
 
@@ -280,6 +295,31 @@ class TheRedirects(Scenario):
                 self.assertEqual((found.answer, found.status), ("other", 301))
                 self.assertEqual(found.problem, "redirected to an address that is not one")
                 self.assertEqual(self.left(), [])
+
+    def test_a_redirect_to_an_address_is_not_followed_as_the_ca_does_not(self) -> None:
+        for location in (
+            "http://192.0.2.1/x",
+            "http://[2001:db8::1]/x",
+            "http://127.1/",
+            "http://intranet/",
+        ):
+            with self.subTest(location=location):
+                seen: list[str] = []
+
+                def fetch(
+                    url: str, _timeout: float, location: str = location, seen: list[str] = seen
+                ) -> Reply:
+                    seen.append(url)
+                    return Reply(301, b"", location, ADDRESS)
+
+                found = http01_check.check(NAME, self.webroot, fetch=fetch, resolve=resolved)
+                self.assertEqual((found.answer, found.status), ("other", 301))
+                self.assertEqual(
+                    found.problem,
+                    "redirected to an address that is not a public domain name,"
+                    " which the CA does not follow",
+                )
+                self.assertEqual(len(seen), 1)
 
     def test_more_than_ten_redirects_are_said_as_such(self) -> None:
         """The known fault of 2026-11-08: the sentence said "None for the test file"."""

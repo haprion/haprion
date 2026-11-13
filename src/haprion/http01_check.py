@@ -21,10 +21,11 @@ All from the manager, not from the internet: a manager that reaches the
 cluster's VIP on an inside address proves the rule and the webroot, not the
 firewall in front of the cluster. Every answer that fetched says so.
 
-Redirects are followed the way the CA follows them - at most ten, to http or
-https on ports 80 and 443, an https certificate not checked - since a cluster
-that sends port 80 on to https before the ACME rule still passes the CA's
-challenge.
+Redirects are followed the way the CA follows them - at most ten, to a domain
+name over http or https on ports 80 and 443, an https certificate not checked -
+since a cluster that sends port 80 on to https before the ACME rule still
+passes the CA's challenge. A redirect to an IP address, or to a name without a
+public top domain, is not followed: the CA does not issue for those.
 """
 
 from __future__ import annotations
@@ -150,7 +151,7 @@ def parse_name(text: str) -> str:
         not HOSTNAME.fullmatch(name)
         or not CERTIFICATE_ID.fullmatch(name)
         or "." not in name
-        or _is_address(name)
+        or not _is_public_name(name)
     ):
         raise CheckError("bad_input", f"not a domain name: {text!r}")
     return name
@@ -162,6 +163,19 @@ def _is_address(text: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _is_public_name(text: str) -> bool:
+    """A name with a top domain, which is never all digits or `0x...`.
+
+    The resolver reads `127.1` and `0x7f.1` as addresses (`inet_aton`), which
+    `ipaddress` does not, and a CA issues for neither.
+    """
+
+    if "." not in text or _is_address(text):
+        return False
+    top = text.rstrip(".").rsplit(".", 1)[-1]
+    return not (top.isdigit() or top.startswith("0x"))
 
 
 def resolve(name: str) -> list[str]:
@@ -423,6 +437,15 @@ def _walk(
                     "redirected to an address that is not one",
                 )
             if onward.scheme in PORTS and onward.hostname and port_ok:
+                if not _is_public_name(onward.hostname):
+                    return Check(
+                        name,
+                        "other",
+                        address,
+                        reply.status,
+                        "redirected to an address that is not a public domain name,"
+                        " which the CA does not follow",
+                    )
                 url = following
                 continue
         return Check(name, "other", address, reply.status, None)

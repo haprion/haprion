@@ -253,7 +253,8 @@ def plan(changes: Sequence[Change], tag: str, now: datetime, *, head_version: st
     result.due_at = due.isoformat()
     if now < due:
         result.outcome = "wait"
-        result.reason = f"{len(shipped)} change(s) wait until {result.due_at}"
+        waiting = "1 change waits" if len(shipped) == 1 else f"{len(shipped)} changes wait"
+        result.reason = f"{waiting} until {result.due_at}"
     else:
         result.outcome = "release"
         result.reason = (

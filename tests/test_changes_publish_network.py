@@ -14,7 +14,6 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
-from unittest import mock
 
 from haprion import blocklist_store, blocklists, tls_policy
 from haprion.candidate_validation import ValidationResult
@@ -71,6 +70,7 @@ class NetworkPublishFixture(PublishFixture):
             policy_path=policy_path,
             run_root=self.run_root,
             lock_root=self.lock_root,
+            blocklist_definitions=self.blocklist_definitions,
             input_stream=request,
             output_stream=out,
             error_stream=err,
@@ -241,7 +241,7 @@ class NetworkPublicationTests(NetworkPublishFixture):
     def test_a_group_with_the_name_of_a_defined_blocklist_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))
-            definitions = Path(raw) / "blocklists"
+            definitions = self.blocklist_definitions
             definitions.mkdir()
             item = blocklists.definition(
                 name="office", url="https://example.com/list", every_hours=24
@@ -253,8 +253,7 @@ class NetworkPublicationTests(NetworkPublishFixture):
             )
             before = git(self.repo, "rev-parse", "HEAD")
 
-            with mock.patch.object(changes_publish, "DEFINITIONS", definitions):
-                code, document, _err = self.publish_network(policy, self.request())
+            code, document, _err = self.publish_network(policy, self.request())
 
             self.assertEqual(code, 65)
             self.assertEqual(document["error"]["code"], "changes_invalid")

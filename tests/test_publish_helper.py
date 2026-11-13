@@ -104,6 +104,11 @@ class PublishFixture(unittest.TestCase):
         policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
         self.run_root = root / "run"
         self.lock_root = root / "locks"
+        #
+        # Where the publish reads the defined blocklists: under the test's
+        # own root, never the machine's /etc/haprion.
+        #
+        self.blocklist_definitions = root / "blocklists"
         return policy_path
 
     def repository(self, config_root: Path, *, linked_worktree: bool) -> Path:

@@ -266,11 +266,7 @@ def _stored(base_files: Mapping[str, bytes], name: str) -> Proxy | None:
         return None
 
 
-DEFINITIONS = blocklist_store.DEFINITIONS
-"""Where the blocklist definitions are; a test points it elsewhere."""
-
-
-def _refuse_blocklist_names(groups: Mapping[str, Any]) -> None:
+def _refuse_blocklist_names(groups: Mapping[str, Any], definitions: Path) -> None:
     """A group may not share a name with a defined blocklist.
 
     The generator only knows the lists that were fetched, so a list not yet
@@ -279,7 +275,7 @@ def _refuse_blocklist_names(groups: Mapping[str, Any]) -> None:
 
     try:
         defined = {
-            stored.definition.name for stored in blocklist_store.read_all(directory=DEFINITIONS)
+            stored.definition.name for stored in blocklist_store.read_all(directory=definitions)
         }
     except blocklist_store.StoreError as exc:
         raise Refusal(
@@ -295,7 +291,9 @@ def _refuse_blocklist_names(groups: Mapping[str, Any]) -> None:
         )
 
 
-def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster], Change]:
+def _read(
+    parameters: Mapping[str, JsonValue], *, definitions: Path = blocklist_store.DEFINITIONS
+) -> Callable[[PathPolicy, Cluster], Change]:
     objects = _objects(parameters)
     network = _document(parameters, "network", limit=MAX_NETWORK_BYTES)
     settings = _document(parameters, "settings", limit=cluster_settings.MAX_BYTES)
@@ -379,7 +377,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                 # and a diff shows only what changed (K10).
                 #
                 network_document = dump_document(parsed)
-                _refuse_blocklist_names(parsed.networks)
+                _refuse_blocklist_names(parsed.networks, definitions)
             canonical: bytes | None = None
             if settings is not None:
                 try:
@@ -520,10 +518,11 @@ def main(
     group: str = PUBLISH_GROUP,
     change_owner: ChangeOwner = default_change_owner,
     now: Callable[[], datetime] | None = None,
+    blocklist_definitions: Path = blocklist_store.DEFINITIONS,
 ) -> int:
     return managed_helper.run(
         WORDS,
-        _read,
+        lambda parameters: _read(parameters, definitions=blocklist_definitions),
         parameters=PARAMETERS,
         max_request_bytes=MAX_REQUEST_BYTES,
         argv=argv,

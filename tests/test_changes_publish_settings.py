@@ -69,6 +69,7 @@ class SettingsPublishFixture(NetworkPublishFixture):
             policy_path=policy_path,
             run_root=self.run_root,
             lock_root=self.lock_root,
+            blocklist_definitions=self.blocklist_definitions,
             input_stream=request,
             output_stream=out,
             error_stream=err,

@@ -128,7 +128,9 @@ class PublishingTheRegeneration(unittest.TestCase):
         self.assertEqual(terminal.sent, [])
         shown = terminal.out.getvalue()
         self.assertIn(
-            "Publish and deploy to apply the update: 2 files differ; objects: shop (routing)", shown
+            "Publish and deploy to apply the update: 2 files differ (generator level 1 -> 2); "
+            "objects: shop (routing)",
+            shown,
         )
         self.assertIn(f"Fingerprint: {FINGERPRINT}", shown)
 

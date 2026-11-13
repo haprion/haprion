@@ -50,6 +50,7 @@ from urllib.parse import urljoin, urlsplit
 
 from haprion import exit_codes
 from haprion.config import CERTIFICATE_ID, HOSTNAME
+from haprion.digits import is_digits
 
 type Answer = Literal["reached", "other", "silent", "unresolved"]
 ANSWERS: tuple[Answer, ...] = ("reached", "other", "silent", "unresolved")
@@ -180,7 +181,7 @@ def _is_public_name(text: str) -> bool:
     if "." not in text or _is_address(text):
         return False
     top = text.rstrip(".").rsplit(".", 1)[-1]
-    return not (top.isdigit() or top.startswith("0x"))
+    return not (is_digits(top, limit=63) or top.startswith("0x"))
 
 
 def resolve(name: str) -> list[str]:

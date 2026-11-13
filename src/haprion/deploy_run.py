@@ -51,6 +51,7 @@ from haprion.deploy_plan import (
     served_nothing,
     unverified_certificates,
     warnings_for,
+    without_blocklist_support,
 )
 from haprion.envelope import Message, envelope
 from haprion.helper_protocol import Lifeline
@@ -181,6 +182,14 @@ CERTIFICATES_NOT_DEPLOYED = "certificates_not_deployed"
 #
 TRAFFIC_STREAM_NOT_PREPARED = "traffic_stream_not_prepared"
 TRAFFIC_STREAM_NEXT_COMMAND = "sudo haprion-node-prepare"
+
+#
+# The code a configuration deploy blocks with when the release names a blocklist
+# and a node's package is from before the lists. Not `certificates_not_deployed`:
+# `haprion-cert-deploy` cannot fix it, and the interface offers that command
+# under that code.
+#
+BLOCKLISTS_NOT_SUPPORTED = "blocklists_not_supported"
 
 
 @dataclass(frozen=True, slots=True)
@@ -828,13 +837,23 @@ def _certificate_preflight(
         )
         return DeployRun(exit_codes.BLOCKED, report)
 
-    for name, what in unverified_certificates(observation, preflight.target):
-        warning = (
-            f"{name} runs a node package without blocklists; update it, or a configuration "
-            "that names a blocklist is refused there"
-            if what == "blocklists"
-            else f"{name} did not report its {what}; they were not checked"
+    unsupported = without_blocklist_support(observation, preflight.target)
+    if unsupported:
+        named = ", ".join(unsupported)
+        reason = (
+            f"the release names a blocklist, and {named} runs a node package without blocklists; "
+            "update the node package there, then deploy again"
         )
+        writer.write(f"\nERROR: [{BLOCKLISTS_NOT_SUPPORTED}] {reason}\n")
+        report.outcome = Outcome.BLOCKED
+        report.final_summary = status.summary
+        report.error = Message(
+            code=BLOCKLISTS_NOT_SUPPORTED, message=reason, details={"nodes": list(unsupported)}
+        )
+        return DeployRun(exit_codes.BLOCKED, report)
+
+    for name, what in unverified_certificates(observation, preflight.target):
+        warning = f"{name} did not report its {what}; they were not checked"
         writer.write(f"WARNING: {warning}\n")
         report.warnings.append(Message(code="certificates_unverified", message=warning, node=name))
     return None

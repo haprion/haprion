@@ -34,6 +34,7 @@ from haprion.deploy_plan import (
     VipState,
     certificate_gaps,
     unverified_certificates,
+    without_blocklist_support,
 )
 from tests.plan_harness import drive, pair
 
@@ -447,13 +448,20 @@ class TheClustersBlocklistsCount(unittest.TestCase):
         )
         self.assertIs(self.TARGET.is_current(stale), False)
 
-    def test_such_a_node_is_said_to_need_its_package_updated(self) -> None:
+    def test_such_a_node_is_refused_for_a_release_that_names_a_list(self) -> None:
+        observation = ClusterObservation(
+            nodes=(self.observed(None), self.observed(())), vip_state=VipState.SINGLE_OWNER
+        )
+
+        self.assertEqual(without_blocklist_support(observation, self.TARGET), ("node-a",))
+        self.assertEqual(unverified_certificates(observation, self.TARGET), ())
+
+    def test_a_release_that_names_no_list_does_not_ask_whether_a_node_can_carry_one(self) -> None:
         observation = ClusterObservation(
             nodes=(self.observed(None),), vip_state=VipState.SINGLE_OWNER
         )
-        self.assertEqual(
-            unverified_certificates(observation, self.TARGET), (("node-a", "blocklists"),)
-        )
+
+        self.assertEqual(without_blocklist_support(observation, ONE), ())
 
     def test_a_cluster_without_blocklists_does_not_ask(self) -> None:
         self.assertIs(ONE.is_current(self.observed(None)), True)

@@ -471,9 +471,24 @@ def unverified_certificates(
             silent.append((node.name, "certificates"))
         if certificates.authorities and node.authorities is None:
             silent.append((node.name, "CA files"))
-        if certificates.blocklists and node.blocklists is None:
-            silent.append((node.name, "blocklists"))
     return tuple(silent)
+
+
+def without_blocklist_support(
+    observation: ClusterObservation, certificates: CertificateTarget
+) -> tuple[str, ...]:
+    """The readable nodes whose package cannot carry a blocklist the release names.
+
+    A node package from before the lists (1.0.1) reports no `blocklists` at all,
+    and a release that loads one with `-f` is refused there by `haproxy -c`, so
+    the deploy is refused before the first node, as for a missing certificate.
+    Only a target with a list in it asks: `certificates.blocklists` holds the
+    lists the published release names and no others.
+    """
+
+    if not certificates.blocklists:
+        return ()
+    return tuple(node.name for node in observation.usable if node.blocklists is None)
 
 
 @dataclass(frozen=True, slots=True)

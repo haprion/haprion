@@ -167,7 +167,7 @@ Command-specific stable codes:
 | `list_backups` | `backup_metadata_unavailable`, `backup_directory_missing` |
 | `cert_list` | `certificate_metadata_unavailable` |
 | `publish` | `candidate_invalid`, `base_version_changed`, `tls_defaults_stale`, `stick_counters_short`, `traffic_log_unreachable`, `publish_incomplete` |
-| `deploy` | the run: `deploy_blocked` (split brain, unknown VIP owner, no usable status), `status_unavailable`, `certificates_not_deployed`, `traffic_stream_not_prepared`, `certificate_missing`, `deploy_failed`, `caller_released`, `deploy_budget_exhausted` - a warning, not the error, when the run is `partial`; a node: `node_status_unavailable`, `trigger_failed`, `target_not_reached`, `node_lost_after_deploy` (the node answered its deploy and could not be read for 30 seconds by the clock); warnings: `cluster_state`, `cluster_not_converged`, `node_unverified`, `target_not_reached`, `counters_not_shared`, `node_lost_after_deploy`, `vip_not_owned`, `certificates_unverified`, `certificates_unchecked` |
+| `deploy` | the run: `deploy_blocked` (split brain, unknown VIP owner, no usable status), `status_unavailable`, `certificates_not_deployed`, `blocklists_not_supported`, `traffic_stream_not_prepared`, `certificate_missing`, `deploy_failed`, `caller_released`, `deploy_budget_exhausted` - a warning, not the error, when the run is `partial`; a node: `node_status_unavailable`, `trigger_failed`, `target_not_reached`, `node_lost_after_deploy` (the node answered its deploy and could not be read for 30 seconds by the clock); warnings: `cluster_state`, `cluster_not_converged`, `node_unverified`, `target_not_reached`, `counters_not_shared`, `node_lost_after_deploy`, `vip_not_owned`, `certificates_unverified`, `certificates_unchecked` |
 | `revert` | `dirty_worktree`, `expected_target_changed`, `candidate_invalid`, `changes_invalid`, `publish_incomplete` |
 | `cert_deploy` | the same as `deploy`, which it shares its engine with, and `certificate_missing` for a certificate the manager does not hold |
 | `changes_publish` | `dirty_worktree`, `network_missing`, `network_invalid`, `settings_invalid`, `changes_invalid`, `candidate_invalid`, `advanced_ignored`, `tls_defaults_stale`, `stick_counters_short`, `traffic_log_unreachable`, `publish_incomplete` |
@@ -211,7 +211,9 @@ These rules are shared by config deploy and certificate deploy:
   node with its `missing` and `stale` certificate IDs (and, when a CA file is behind,
   `missing_authorities` and `stale_authorities`) and `error.details.next_command` names the
   `haprion-cert-deploy` invocation to run first. Nothing chains the two: the certificate deploy is
-  always asked for by name, and a new `haprion-deploy` follows it. A node that did not report
+  always asked for by name, and a new `haprion-deploy` follows it. A release that loads a blocklist
+  is refused the same way, as `blocklists_not_supported` with `error.details.nodes` naming the nodes,
+  when a readable node runs a package from before the lists; the fix is the node package. A node that did not report
   its certificates or CA files is let through with a `certificates_unverified` warning; a manager
   without a `certificate_root` skips the check with a `certificates_unchecked` warning. A
   referenced certificate the manager itself does not hold is refused as `certificate_missing`, the

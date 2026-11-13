@@ -725,6 +725,31 @@ class CertificatePreflightTests(HelperFixture):
             [["crowdsec"], ["crowdsec"]],
         )
 
+    def test_a_list_the_release_names_blocks_a_node_package_without_lists(self) -> None:
+        policy_path = self.publish_blocklist_use(named=True)
+        for node in self.cluster.nodes:
+            node.blocklists = None
+
+        code, out, _ = self.run_helper(request(json=True), policy_path=policy_path)
+
+        self.assertEqual(code, exit_codes.BLOCKED)
+        self.assertEqual(self.triggered, [])
+        document = assert_contract("haprion-deploy", out)
+        self.assertEqual(document["error"]["code"], "blocklists_not_supported")
+        self.assertEqual(document["error"]["details"]["nodes"], ["node-a", "node-b"])
+        self.assertIn("update the node package", document["error"]["message"])
+
+    def test_a_node_package_without_lists_is_deployed_to_when_the_release_names_none(self) -> None:
+        policy_path = self.publish_blocklist_use(named=False)
+        for node in self.cluster.nodes:
+            node.blocklists = None
+
+        code, out, _ = self.run_helper(request(json=True), policy_path=policy_path)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(self.triggered, ["node-b", "node-a"])
+        self.assertEqual(assert_contract("haprion-deploy", out)["outcome"], "done")
+
     def test_the_human_mode_names_the_command_to_run_next(self) -> None:
         self.carry("example.com")
 

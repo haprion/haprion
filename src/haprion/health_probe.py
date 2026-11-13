@@ -23,6 +23,7 @@ import subprocess
 from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from haprion import node_ssh
@@ -236,6 +237,18 @@ def _shown(value: object) -> str | None:
     return value if value.isprintable() else None
 
 
+def _date(value: object) -> str | None:
+    """The node's expiry when it is a date that exists: the page reads it as one."""
+
+    if not isinstance(value, str) or not NOT_AFTER.fullmatch(value):
+        return None
+    try:
+        datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return None
+    return value
+
+
 def read_certificate(value: object) -> Certificate | None:
     """The node's reading of a certificate, each field within its bounds or None."""
 
@@ -252,9 +265,7 @@ def read_certificate(value: object) -> Certificate | None:
             if (shown := _shown(name)) is not None
         ),
         issuer=_shown(value.get("issuer")),
-        not_after=(
-            not_after if isinstance(not_after, str) and NOT_AFTER.fullmatch(not_after) else None
-        ),
+        not_after=_date(not_after),
         version=version if version in VERSIONS else None,
     )
 

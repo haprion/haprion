@@ -189,6 +189,14 @@ class TheCertificateANodeRead(unittest.TestCase):
         self.assertIsNone(self.certificate(None))
         self.assertIsNone(self.certificate("app.example.com"))
 
+    def test_a_date_that_does_not_exist_is_dropped(self) -> None:
+        for impossible in ("2026-02-30T00:00:00Z", "2027-02-01T25:61:61Z", "2027-13-01T00:00:00Z"):
+            with self.subTest(not_after=impossible):
+                found = self.certificate({"subject": "app.example.com", "not_after": impossible})
+                assert isinstance(found, Certificate)
+                self.assertIsNone(found.not_after)
+                self.assertEqual(found.subject, "app.example.com")
+
     def test_a_field_out_of_bounds_is_dropped_not_the_rest(self) -> None:
         found = self.certificate(
             {

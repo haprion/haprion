@@ -6,8 +6,9 @@ import datetime as dt
 import io
 import json
 from pathlib import Path
+from unittest import mock
 
-from haprion import blocklist_store, blocklists, exit_codes
+from haprion import blocklist_store, blocklists, cert_publish, exit_codes
 from haprion.blocklist_store import Stored
 from haprion.cli import blocklist_refresh as command
 from tests.test_cert_publish import Fixture
@@ -137,6 +138,26 @@ class TheCommand(Fixture):
         self.assertFalse((self.beta / "blocklists").exists())
         self.assertEqual(self.deployed, ["alpha"])
         self.assertIn("beta: skipped, its network description could not be read", out)
+
+    def test_a_cluster_whose_directory_cannot_be_prepared_does_not_stop_the_others(self) -> None:
+        self.policy = self.write_config(
+            {"keeper.example": {"source": {"kind": "acme"}, "clusters": ["alpha", "beta"]}}
+        )
+        self.define()
+        original = cert_publish.cluster_target
+
+        def target(root: Path, cluster_id: str) -> cert_publish.Target:
+            if cluster_id == "beta":
+                raise cert_publish.PublishError("target_missing", "the directory is not there")
+            return original(root, cluster_id)
+
+        with mock.patch.object(cert_publish, "cluster_target", target):
+            code, out, _ = self.refresh()
+
+        self.assertEqual(code, exit_codes.PARTIAL)
+        self.assertEqual((self.alpha / "blocklists" / "crowdsec.lst").read_bytes(), self.body)
+        self.assertEqual(self.deployed, ["alpha"])
+        self.assertIn("beta: skipped, its certificate directory could not be prepared", out)
 
     def test_an_unreadable_pending_file_deploys_every_cluster(self) -> None:
         self.state.mkdir()

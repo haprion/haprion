@@ -194,16 +194,21 @@ def main(
             targets = []
             skipped: dict[str, str] = {}
             for cluster_id in sorted(runtime.clusters):
-                target = cert_publish.cluster_target(policy.certificate_root, cluster_id)
                 #
-                # One cluster's network file that cannot be read is that
-                # cluster's problem: it is left out of this pass, said, and
-                # the others go on (review 2026-11-13, BL14).
+                # One cluster's network file that cannot be read, or whose
+                # directory cannot be prepared, is that cluster's problem: it
+                # is left out of this pass, said, and the others go on (review
+                # 2026-11-13, BL14 and GH06).
                 #
+                try:
+                    target = cert_publish.cluster_target(policy.certificate_root, cluster_id)
+                except cert_publish.PublishError as exc:
+                    skipped[cluster_id] = f"its certificate directory could not be prepared: {exc}"
+                    continue
                 try:
                     groups = runtime.clusters[cluster_id].network().networks
                 except (ConfigError, OSError) as exc:
-                    skipped[cluster_id] = str(exc)
+                    skipped[cluster_id] = f"its network description could not be read: {exc}"
                     continue
                 targets.append(
                     blocklist_refresh.ClusterTarget(
@@ -254,9 +259,7 @@ def main(
                 f"{', '.join(written.unknown_groups)}, which the cluster does not define\n"
             )
     for cluster, reason in sorted(skipped.items()):
-        writer.write(
-            f"{cluster}: skipped, its network description could not be read: {' '.join(reason.split())}\n"
-        )
+        writer.write(f"{cluster}: skipped, {' '.join(reason.split())}\n")
         code = exit_codes.PARTIAL
     for cluster, answer in sorted(answers.items()):
         writer.write(f"deploy {cluster}: {'ok' if answer == 0 else f'exit {answer}'}\n")

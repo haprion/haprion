@@ -533,7 +533,8 @@ class SavingABlocklist(BlocklistRouteTestCase):
             side_effect=CheckError("unavailable", "the helper did not answer"),
         ):
             page = self.post(self.admin(), action="test").text
-        self.assertIn("The helper did not answer.", page)
+        self.assertIn("The test could not be run. Try again in a minute.", page)
+        self.assertNotIn("helper", page.split("<main", 1)[-1])
 
     def test_a_failing_exception_text_does_not_reach_the_json_answer(self) -> None:
         client = self.admin()

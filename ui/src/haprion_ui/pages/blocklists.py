@@ -38,13 +38,15 @@ from haprion_ui.views import posted_form, read_dns_public_key
 APPLY_WAIT = 6.0
 CARD = "/settings#blocklists"
 FORM_AGAIN = "The form needs another look."
-CHECK_FAILED = "The test could not be made."
+CHECK_FAILED = "The test could not be run on this manager."
 CHECK_WORDS = {
-    "unavailable": "The helper did not answer.",
-    "bad_input": "The helper refused the list as it stands.",
+    "unavailable": "The test could not be run. Try again in a minute.",
+    "bad_input": "The list's settings were refused. Check them and try again.",
+    "no_secret": "Type the password or token to test this list.",
 }
-# What the script is told when a test could not be made: fixed words per code, never an
-# exception's own text. Without script, the form is drawn again with the full sentence.
+# What a test that could not be made says, with and without script: fixed words per
+# code, never an exception's own text. A form problem is the form's own sentence, which
+# the page draws; the script is told to submit the form so the page can.
 
 
 def build_router(config: Config) -> APIRouter:
@@ -232,8 +234,9 @@ def build_router(config: Config) -> APIRouter:
             answer = ("critical", blocklist_form.sentence(problem))
             said: dict[str, object] = {"tone": "critical", "answer": FORM_AGAIN, "page": True}
         except CheckError as problem:
-            answer = ("critical", blocklist_form.sentence(problem))
-            said = {"tone": "critical", "answer": CHECK_WORDS.get(problem.code, CHECK_FAILED)}
+            words = CHECK_WORDS.get(problem.code, CHECK_FAILED)
+            answer = ("critical", words)
+            said = {"tone": "critical", "answer": words}
         else:
             answer = (
                 ("healthy", tested.sentence())

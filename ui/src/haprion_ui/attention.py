@@ -471,6 +471,19 @@ def from_dashboard(
                         link=card_link(cluster.cluster),
                     )
                 )
+            if node.engine_message:
+                items.append(
+                    Item(
+                        kind="node_package",
+                        severity="warning",
+                        cluster=cluster.cluster,
+                        subject=node.name,
+                        message=node.engine_message,
+                        since=None,
+                        link=card_link(cluster.cluster),
+                        variant="waf_engine",
+                    )
+                )
             if node.host_name_message:
                 items.append(
                     Item(

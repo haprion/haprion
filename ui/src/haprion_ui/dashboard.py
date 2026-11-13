@@ -70,6 +70,12 @@ class NodeView:
     package_note: str | None = None
     package_message: str | None = None
     #
+    # The same for the node's WAF engine, read against the newest the manager
+    # has: published apart from the releases, so a node can be left behind it.
+    #
+    engine_note: str | None = None
+    engine_message: str | None = None
+    #
     # The host name the node reports is not the name Haprion knows it by
     # (B447, N02). The node's deploy keeps working under the name in its
     # node.conf, so nothing else says it; Needs attention's row does.
@@ -372,6 +378,24 @@ def node_package_words(installation: object, carried: object) -> tuple[str, str]
     )
 
 
+def node_engine_words(engine: object, known: object) -> tuple[str, str] | None:
+    """The Runtime cell's note and Needs attention's sentence for a node's WAF engine.
+
+    Read against `known`, the newest engine version the manager has: installed
+    on it or waiting in the repository. None when the node's is the same or
+    newer, or says nothing.
+    """
+
+    installed = haproxy_versions.engine_behind(engine, known)
+    if installed is None:
+        return None
+    return (
+        "Older WAF engine",
+        f"WAF engine {installed} is installed; the manager's is {known}"
+        f" - {haproxy_versions.UPGRADE_ON_THE_NODE}",
+    )
+
+
 def _error_message(node: Mapping[str, Any]) -> str | None:
     """The reading's own words for what went wrong with a node, if it gave any."""
 
@@ -396,6 +420,7 @@ def _node_view(
     target_hash: str | None = None,
     target_version: object = None,
     carried: object = None,
+    engine: object = None,
 ) -> NodeView:
     node = _mapping(value)
     name = _text(node.get("name"), "Unnamed node")
@@ -466,6 +491,10 @@ def _node_view(
         else None
     )
     package_note, package_message = node_package_words(status.get("installation"), carried) or (
+        None,
+        None,
+    )
+    engine_note, engine_message = node_engine_words(status.get("waf_engine"), engine) or (
         None,
         None,
     )
@@ -553,6 +582,8 @@ def _node_view(
             prepare_pending=prepare_pending,
             package_note=package_note,
             package_message=package_message,
+            engine_note=engine_note,
+            engine_message=engine_message,
             host_name_message=host_name_message,
             package_version=_known_text(_mapping(status.get("installation")).get("version")),
         )
@@ -574,6 +605,8 @@ def _node_view(
         prepare_pending=prepare_pending,
         package_note=package_note,
         package_message=package_message,
+        engine_note=engine_note,
+        engine_message=engine_message,
         host_name_message=host_name_message,
         release_number=_positive(release.get("version")),
         haproxy_version=_known_text(runtime.get("version")),
@@ -712,12 +745,18 @@ def _cluster_view(
     configured: bool,
     now: datetime,
     stale_after: timedelta,
+    engine_waiting: str | None = None,
 ) -> ClusterView:
     result = _mapping(reading.result)
     summary = _mapping(result.get("summary"))
     node_values = result.get("nodes")
     target_hash = _mapping(summary.get("target")).get("hash")
     target_version = _mapping(summary.get("target")).get("version")
+    #
+    # The newest WAF engine the manager has: the one installed on it, which
+    # the status reports, or a newer one waiting in the repository.
+    #
+    engine = haproxy_versions.newest(summary.get("waf_engine_version"), engine_waiting)
     nodes = (
         tuple(
             _node_view(
@@ -725,6 +764,7 @@ def _cluster_view(
                 target_hash if isinstance(target_hash, str) else None,
                 target_version,
                 summary.get("node_package_version"),
+                engine,
             )
             for value in node_values
         )
@@ -751,9 +791,17 @@ def _cluster_view(
         #
         behind = haproxy_versions.notes(running, validator, packages, short=True)
         exact = haproxy_versions.notes(running, validator, packages)
+        #
+        # A node already said to be behind its partner's engine does not say it
+        # twice.
+        #
+        partners = haproxy_versions.packages_behind(packages)
         nodes = tuple(
             replace(
                 node,
+                engine_note=None
+                if any(label == "WAF engine" for label, _ in partners.get(node.name, ()))
+                else node.engine_note,
                 runtime_note=behind.get(node.name),
                 runtime_title=exact.get(node.name)
                 if exact.get(node.name) != behind.get(node.name)
@@ -956,6 +1004,11 @@ def build_dashboard(
     # out by the callers that only need a cluster's serving state.
     #
     network_readings: Iterable[Any] = (),
+    #
+    # The WAF engine version waiting in the repository, for the nodes' engines
+    # to be read against beside the one installed on the manager.
+    #
+    engine_waiting: str | None = None,
 ) -> DashboardView:
     """Build one deterministic view from configuration and cached status rows."""
 
@@ -972,6 +1025,7 @@ def build_dashboard(
                 configured=cluster in configured_set,
                 now=clock,
                 stale_after=stale_after,
+                engine_waiting=engine_waiting,
             ),
             vip_count=vip_counts.get(cluster, 1),
         )
@@ -1058,3 +1112,12 @@ def build_dashboard(
         vip_tone=vip_tone,
         release_tone=release_tone,
     )
+
+
+def waiting_engine(rows: Iterable[Any]) -> str | None:
+    """The WAF engine version a newer package is waiting with in the repository, if one is."""
+
+    for row in rows:
+        if row.name == "haprion-coraza-spoa":
+            return str(row.available)
+    return None

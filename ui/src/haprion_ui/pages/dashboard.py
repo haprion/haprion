@@ -107,11 +107,14 @@ def build_router(config: Config) -> APIRouter:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         clusters, status_rows = read_source(request, config, STATUS_SOURCE)
         _, network_rows = read_source(request, config, NETWORK_SOURCE)
+        with request.app.state.pool.connection() as connection:
+            engine_waiting = dashboard.waiting_engine(db.package_waiting(connection))
         dashboard_view = dashboard.build_dashboard(
             clusters,
             status_rows,
             stale_after=config.poller.stale_after,
             network_readings=network_rows,
+            engine_waiting=engine_waiting,
         )
         moment = datetime.now(UTC)
         traffic_clusters = listed_clusters(

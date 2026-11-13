@@ -92,6 +92,97 @@ class HaproxyVersions(unittest.TestCase):
         self.assertEqual(cluster.label, "Healthy")
 
 
+class WafEngine(unittest.TestCase):
+    """A node's WAF engine, read against the newest the manager has (installed or waiting)."""
+
+    def nodes(
+        self,
+        engines: tuple[object, object],
+        installed: object = "0.9.1-3",
+        waiting: str | None = None,
+        partners: tuple[object, object] | None = None,
+    ) -> Any:
+        status = reading("done-single-owner.json")
+        result = dict(status.result)
+        nodes = [dict(node) for node in result["nodes"]]
+        for index, (node, engine) in enumerate(zip(nodes, engines, strict=True)):
+            body = {key: value for key, value in node["status"].items() if key != "waf_engine"}
+            if engine is not None:
+                body["waf_engine"] = {"version": engine, "active": True}
+            if partners is not None:
+                body["packages"] = {"waf_engine": partners[index]}
+            node["status"] = body
+        result["nodes"] = nodes
+        result["summary"] = {**result["summary"], "waf_engine_version": installed}
+        return build_dashboard(
+            ("alpha",),
+            (replace(status, result=result),),
+            now=NOW,
+            stale_after=timedelta(120),
+            engine_waiting=waiting,
+        ).clusters[0]
+
+    def test_an_older_engine_is_named_with_what_to_run(self) -> None:
+        cluster = self.nodes(("0.9.1-3", "0.9.1-2"))
+        current, older = cluster.nodes
+        self.assertIsNone(current.engine_note)
+        self.assertIsNone(current.engine_message)
+        self.assertEqual(older.engine_note, "Older WAF engine")
+        self.assertEqual(
+            older.engine_message,
+            "WAF engine 0.9.1-2 is installed; the manager's is 0.9.1-3"
+            " - run sudo apt upgrade on the node",
+        )
+        self.assertEqual(cluster.label, "Healthy")
+
+    def test_the_same_or_a_newer_engine_says_nothing(self) -> None:
+        for engines in (("0.9.1-3", "0.9.1-3"), ("0.9.1-4", "0.9.2-1"), ("0.9.1-10", "0.9.1-3")):
+            with self.subTest(engines=engines):
+                for node in self.nodes(engines).nodes:
+                    self.assertIsNone(node.engine_note)
+                    self.assertIsNone(node.engine_message)
+
+    def test_a_node_that_reports_no_engine_says_nothing(self) -> None:
+        for node in self.nodes((None, None)).nodes:
+            self.assertIsNone(node.engine_note)
+            self.assertIsNone(node.engine_message)
+
+    def test_the_manager_naming_no_engine_says_nothing(self) -> None:
+        for node in self.nodes(("0.9.1-2", "0.9.1-1"), installed=None).nodes:
+            self.assertIsNone(node.engine_message)
+
+    def test_a_newer_engine_waiting_in_the_repository_counts(self) -> None:
+        cluster = self.nodes(("0.9.1-3", "0.9.1-3"), waiting="0.9.1-4")
+        for node in cluster.nodes:
+            self.assertEqual(node.engine_note, "Older WAF engine")
+            self.assertIn("the manager's is 0.9.1-4", node.engine_message or "")
+
+    def test_an_engine_between_the_installed_and_the_waiting_one_is_older_than_the_waiting(
+        self,
+    ) -> None:
+        cluster = self.nodes(("0.9.1-3", "0.9.1-4"), installed="0.9.1-3", waiting="0.9.1-4")
+        self.assertEqual([node.engine_note for node in cluster.nodes], ["Older WAF engine", None])
+
+    def test_a_node_already_older_than_its_partner_does_not_say_it_twice(self) -> None:
+        cluster = self.nodes(("0.9.1-3", "0.9.1-2"), partners=("0.9.1-3", "0.9.1-2"))
+        self.assertIsNone(cluster.nodes[1].engine_note)
+        self.assertIn("Older package: WAF engine", cluster.nodes[1].runtime_note or "")
+        self.assertIn("0.9.1-2 is installed", cluster.nodes[1].engine_message or "")
+
+    def test_the_waiting_engine_is_read_from_the_package_rows(self) -> None:
+        from types import SimpleNamespace
+
+        from haprion_ui.dashboard import waiting_engine
+
+        rows = [
+            SimpleNamespace(name="haprion-cli", available="0.99.1"),
+            SimpleNamespace(name="haprion-coraza-spoa", available="0.9.1-4"),
+        ]
+        self.assertEqual(waiting_engine(rows), "0.9.1-4")
+        self.assertIsNone(waiting_engine(rows[:1]))
+        self.assertIsNone(waiting_engine([]))
+
+
 class NodePackage(unittest.TestCase):
     """26-10-29: a node's haprion-node, read against the one the manager's release carries."""
 

@@ -47,6 +47,7 @@ def node(
     *,
     prepare_pending: bool = False,
     package_message: str | None = None,
+    engine_message: str | None = None,
     host_name_message: str | None = None,
 ) -> Any:
     return SimpleNamespace(
@@ -56,6 +57,7 @@ def node(
         detail=detail,
         prepare_pending=prepare_pending,
         package_message=package_message,
+        engine_message=engine_message,
         host_name_message=host_name_message,
     )
 
@@ -396,6 +398,37 @@ class EachKindComesAndGoes(unittest.TestCase):
         )
         self.assertEqual(items[0].link, "/#cluster-alpha")
         self.assertEqual(items[0].page, "Dashboard")
+
+    def test_a_node_on_an_older_waf_engine_is_its_own_row_beside_the_package_row(self) -> None:
+        engine = "WAF engine 0.9.1-2 is installed; the manager's is 0.9.1-3 - run sudo apt upgrade on the node"
+        package = "haprion-node is older than the manager's 0.99.6 (0123abcd)"
+        items = attention.from_dashboard(
+            [
+                cluster(
+                    "alpha",
+                    nodes=(
+                        node("node-a", "healthy", "Online"),
+                        node(
+                            "node-b",
+                            "healthy",
+                            "Online",
+                            package_message=package,
+                            engine_message=engine,
+                        ),
+                    ),
+                )
+            ],
+            drift_label="Behind",
+        )
+        self.assertEqual(
+            [(item.kind, item.subject, item.severity, item.message) for item in items],
+            [
+                ("node_package", "node-b", "warning", package),
+                ("node_package", "node-b", "warning", engine),
+            ],
+        )
+        self.assertEqual(len({item.key for item in items}), 2)
+        self.assertEqual(items[1].link, "/#cluster-alpha")
 
     def test_a_node_waiting_for_its_deploy_is_not_listed(self) -> None:
         items = attention.from_dashboard(

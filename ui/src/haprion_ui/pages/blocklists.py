@@ -26,6 +26,7 @@ from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.editor_flow import editor_state
 from haprion_ui.reading import listed_clusters
+from haprion_ui.refusals import refusal_page
 from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import posted_form, read_dns_public_key
 
@@ -332,6 +333,16 @@ def build_router(config: Config) -> APIRouter:
             return forbidden_page(request, config)
         if _existing(request, name) is None:
             return PlainTextResponse("Not found", status_code=404)
+        with request.app.state.pool.connection() as connection:
+            fetched = blocklist_form.fetched_names(connection)
+        if name not in fetched:
+            return refusal_page(
+                request,
+                config,
+                f"{name} has not been fetched yet. Add it to the proxies once it has been.",
+                back=CARD,
+                status_code=409,
+            )
         results: list[blocklist_form.Added] = []
         for cluster in listed_clusters(request, config):
             state = editor_state(request, config, cluster)

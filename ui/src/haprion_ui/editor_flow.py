@@ -49,6 +49,7 @@ from haprion_ui import (
     advanced_dialog,
     auth,
     blocked,
+    blocklist_form,
     certificates,
     db,
     features,
@@ -173,7 +174,7 @@ def editor_state(request: Request, config: Config, cluster: str) -> EditorState:
     #
     with request.app.state.pool.connection() as connection:
         network_rows, _saved = saved_network_rows(connection, list(network_rows))
-        blocklist_names = [row.name for row in db.blocklists(connection)]
+        blocklist_names = blocklist_form.fetched_names(connection)
     described = next(
         (
             view

@@ -303,6 +303,21 @@ class ReachingTheEditor(EditorTestCase):
             per_cluster = [call.kwargs for call in reader.call_args_list if call.kwargs]
             self.assertEqual(per_cluster, [{"cluster": "alpha"}])
 
+    def test_only_a_blocklist_that_was_fetched_is_offered_under_denied(self) -> None:
+        # The publish knows the lists the timer has written; a list never fetched is not one.
+        from tests.test_blocklist_view import blocklist_row, state_row
+
+        self.blocklists = [blocklist_row(name="fetched"), blocklist_row(name="waiting")]
+        self.blocklist_states = [
+            state_row(name="fetched"),
+            state_row(name="waiting", fetched_at=None, attempted_at=None, entries=0, skipped=0),
+        ]
+        request = mock.Mock()
+        request.app.state.pool = self.pool
+        with mock.patch("haprion_ui.db.cluster_list", return_value=("alpha",)):
+            state = editor_flow.editor_state(request, writing_configuration(), "alpha")
+        self.assertEqual(state.choices.blocklists, ("fetched",))
+
     def test_the_ca_certificates_of_the_cluster_are_offered(self) -> None:
         # The registry is the manager's reading (B304); without it no CA could be chosen.
         request = mock.Mock()

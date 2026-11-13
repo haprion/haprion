@@ -161,6 +161,22 @@ def group_clusters(connection: Any, name: str) -> tuple[str, ...]:
     return tuple(sorted(row.cluster for row in rows if name in network.group_names(row)))
 
 
+def fetched_names(connection: Any) -> list[str]:
+    """The defined lists the refresh timer has fetched: the only ones a publish knows.
+
+    A list's file is written by its first fetch, and the generator takes the
+    names of the lists from those files; a list that is saved and not yet
+    fetched is not one an object can name.
+    """
+
+    defined = {row.name for row in db.blocklists(connection)}
+    return sorted(
+        state.name
+        for state in db.blocklist_states(connection)
+        if state.fetched_at is not None and state.name in defined
+    )
+
+
 def users(connection: Any, name: str) -> dict[str, tuple[str, ...]]:
     """The objects that name the list, per cluster, from the poller's object readings."""
 

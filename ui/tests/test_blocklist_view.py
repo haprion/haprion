@@ -780,6 +780,7 @@ class AddingToEveryObject(unittest.TestCase):
 class AddToAllObjectsRoute(BlocklistRouteTestCase):
     def test_each_object_is_a_saved_change_and_a_draft_is_said(self) -> None:
         self.blocklists = [blocklist_row()]
+        self.blocklist_states = [state_row()]
         views = [
             mock.Mock(name="v1", protocol="http"),
             mock.Mock(name="v2", protocol="dns"),
@@ -808,6 +809,23 @@ class AddToAllObjectsRoute(BlocklistRouteTestCase):
         self.assertIn("Added to 1 proxy, saved for the next publish.", page)
         self.assertIn("ssh has a draft", page)
         self.assertIn('href="/proxies?cluster=alpha"', page)
+
+    def test_a_list_never_fetched_is_not_added(self) -> None:
+        self.blocklists = [blocklist_row()]
+        self.blocklist_states = [state_row(fetched_at=None, attempted_at=None)]
+        client = self.admin()
+        with (
+            mock.patch("haprion_ui.pages.blocklists.listed_clusters", return_value=("alpha",)),
+            mock.patch("haprion_ui.finished_change.save") as saved,
+        ):
+            response = client.post(
+                "/settings/blocklists/community/add-to-proxies",
+                data={auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE])},
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("community has not been fetched yet", response.text)
+        saved.assert_not_called()
 
 
 class NeedsAttention(unittest.TestCase):

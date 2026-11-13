@@ -1,0 +1,344 @@
+#!/usr/bin/env python3
+"""Whether the dependency fixes on main are released now, and as which version (B355, B505, B506).
+
+    tools/release-plan decide --source <tree> [--now <iso>] [--app <login>]
+    tools/release-plan bump --source <tree> --version <x.y.z>
+
+The upstream watch proposes, and the merge workflow merges, the fixes the
+locks and the WAF pins need (B353, B354). `decide` reads main since the last
+`v*` tag and answers what auto-release.yml does next:
+
+    nothing  nothing a package carries has changed since the tag
+    blocked  a commit since the tag is not one the watch or Dependabot made:
+             a person's change waits for a release made by hand, and an
+             automatic one would ship it unreviewed
+    wait     something is waiting, and its time has not come (`due_at`)
+    release  propose the next patch version now
+    tag      the version proposal is merged: tag main's head and release it
+
+A security fix is what the watch knows to be one: the locks' proposal, which
+only ever moves a package an advisory names (B353), and a WAF proposal made
+while govulncheck finds something the pinned engine reaches. The first one
+merged after the tag starts a day; everything merged by then goes in the same
+release (B355). Anything else a package carries - new rules, an engine or Go
+update without a finding - waits for the first of the next month (B506). An
+update of the actions is no change to a package and never releases (B505).
+
+The answer is read from git alone, so what the workflow does can be tested
+here: who made each commit, what it says, which files it touches, and when
+the merge that brought it in landed. `bump` writes a version into the three
+files that hold it; the workflow refreshes the two locks after it.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from collections.abc import Sequence
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+#
+# The subjects the watch's own commits carry (upstream-watch.yml). Read
+# exactly: a person who writes the same words is still not the watch, since
+# the author is checked as well.
+#
+LOCKS_SUBJECT = "Update the locked dependencies with known vulnerabilities"
+WAF_SUBJECT = "Update the WAF packages' upstream pins"
+WAF_SECURITY_SUBJECT = "Update the WAF packages' upstream pins for a known vulnerability"
+VERSION_SUBJECT = re.compile(r"Version (\d{1,4}\.\d{1,4}\.\d{1,4})")
+
+LOCK_FILES = frozenset({"uv.lock", "ui/uv.lock", "certbot/uv.lock"})
+WAF_FILES = frozenset(
+    {"tools/build-coraza-package.py", "tools/build-release-packages", "tools/build-scep-package.py"}
+)
+VERSION_FILES = frozenset(
+    {"pyproject.toml", "ui/pyproject.toml", "src/haprion/__init__.py", "uv.lock", "ui/uv.lock"}
+)
+DEPENDABOT = "dependabot[bot]"
+DEFAULT_APP = "haprion-upstream-watch[bot]"
+
+TAG = re.compile(r"v(\d{1,4})\.(\d{1,4})\.(\d{1,4})")
+SECURITY_WAIT = timedelta(hours=24)
+
+#
+# Where the version is written, and the line that holds it in each.
+#
+VERSION_LINES = (
+    ("pyproject.toml", re.compile(r'^version = "[0-9.]+"$', re.MULTILINE), 'version = "{}"'),
+    ("ui/pyproject.toml", re.compile(r'^version = "[0-9.]+"$', re.MULTILINE), 'version = "{}"'),
+    (
+        "src/haprion/__init__.py",
+        re.compile(r'^__version__ = "[0-9.]+"$', re.MULTILINE),
+        '__version__ = "{}"',
+    ),
+)
+
+
+class PlanError(Exception):
+    """The tree cannot be read as the plan needs it."""
+
+
+@dataclass(frozen=True, slots=True)
+class Change:
+    commit: str
+    subject: str
+    author: str
+    kind: str
+    """`locks`, `waf`, `actions`, `version` or `other`."""
+    security: bool
+    shipped: bool
+    merged_at: str
+    pull_request: int | None
+
+
+@dataclass(slots=True)
+class Plan:
+    outcome: str
+    reason: str
+    last: str
+    next: str | None = None
+    security: bool = False
+    due_at: str | None = None
+    changes: list[Change] = field(default_factory=list)
+
+
+def _git(source: Path, *args: str) -> str:
+    try:
+        return subprocess.run(  # noqa: S603 - fixed executable, the arguments are revisions
+            ["/usr/bin/git", "-C", str(source), *args], check=True, capture_output=True, text=True
+        ).stdout
+    except subprocess.CalledProcessError as exc:
+        raise PlanError(f"git {' '.join(args)}: {exc.stderr.strip()}") from exc
+
+
+def last_tag(source: Path) -> str:
+    """The newest release tag main's head descends from."""
+
+    tag = _git(source, "describe", "--tags", "--abbrev=0", "--match", "v*", "HEAD").strip()
+    if not TAG.fullmatch(tag):
+        raise PlanError(f"the last tag {tag!r} is not vX.Y.Z")
+    return tag
+
+
+def next_patch(tag: str) -> str:
+    match = TAG.fullmatch(tag)
+    if match is None:
+        raise PlanError(f"{tag!r} is not vX.Y.Z")
+    major, minor, patch = (int(part) for part in match.groups())
+    return f"{major}.{minor}.{patch + 1}"
+
+
+def _classify(subject: str, author: str, files: frozenset[str], app: str) -> tuple[str, bool, bool]:
+    """`(kind, security, shipped)` for one commit."""
+
+    if author == app:
+        if subject == LOCKS_SUBJECT and files <= LOCK_FILES:
+            return "locks", True, True
+        if subject in (WAF_SUBJECT, WAF_SECURITY_SUBJECT) and files <= WAF_FILES:
+            return "waf", subject == WAF_SECURITY_SUBJECT, True
+        if VERSION_SUBJECT.fullmatch(subject) and files <= VERSION_FILES:
+            return "version", False, False
+    if author == DEPENDABOT and files and all(path.startswith(".github/") for path in files):
+        return "actions", False, False
+    return "other", False, False
+
+
+def _pull_request(subject: str) -> int | None:
+    match = re.match(r"Merge pull request #(\d+) ", subject)
+    return int(match.group(1)) if match else None
+
+
+def changes_since(source: Path, tag: str, app: str) -> list[Change]:
+    """Every commit since the tag, with the time the merge that brought it to main landed."""
+
+    changes: list[Change] = []
+    first_parent = _git(
+        source,
+        "log",
+        "--first-parent",
+        "--reverse",
+        "--format=%H%x00%cI%x00%P%x00%s",
+        f"{tag}..HEAD",
+    )
+    for line in first_parent.splitlines():
+        head, landed, parents, subject = line.split("\x00", 3)
+        parent_list = parents.split()
+        number = _pull_request(subject) if len(parent_list) > 1 else None
+        brought = (
+            _git(
+                source,
+                "log",
+                "--no-merges",
+                "--reverse",
+                "--format=%H",
+                f"{parent_list[0]}..{head}",
+            ).split()
+            if len(parent_list) > 1
+            else [head]
+        )
+        for commit in brought:
+            author, commit_subject = (
+                _git(source, "log", "-1", "--format=%an%x00%s", commit)
+                .rstrip("\n")
+                .split("\x00", 1)
+            )
+            files = frozenset(
+                _git(source, "diff-tree", "--no-commit-id", "--name-only", "-r", commit).split()
+            )
+            kind, security, shipped = _classify(commit_subject, author, files, app)
+            changes.append(
+                Change(commit, commit_subject, author, kind, security, shipped, landed, number)
+            )
+    return changes
+
+
+def _first_of_next_month(when: datetime) -> datetime:
+    year, month = (when.year + 1, 1) if when.month == 12 else (when.year, when.month + 1)
+    return datetime(year, month, 1, tzinfo=UTC)
+
+
+def plan(changes: Sequence[Change], tag: str, now: datetime, *, head_version: str) -> Plan:
+    """What the workflow does next."""
+
+    result = Plan(outcome="nothing", reason="", last=tag, changes=list(changes))
+    others = [change for change in changes if change.kind == "other"]
+    if others:
+        first = others[0]
+        result.outcome = "blocked"
+        result.reason = (
+            f"{first.commit[:8]} ({first.subject}) is not the watch's or Dependabot's; "
+            "it waits for a release made by hand"
+        )
+        result.security = any(change.security for change in changes)
+        return result
+    shipped = [change for change in changes if change.shipped]
+    security = [change for change in shipped if change.security]
+    result.security = bool(security)
+    versions = [change for change in changes if change.kind == "version"]
+    if versions:
+        #
+        # The proposal this workflow made, merged. It names the next patch,
+        # and the tree on main says the same; anything else is not this
+        # workflow's doing and is left for a person.
+        #
+        named = VERSION_SUBJECT.fullmatch(versions[-1].subject)
+        expected = next_patch(tag)
+        if (
+            len(versions) > 1
+            or named is None
+            or named.group(1) != expected
+            or head_version != expected
+        ):
+            result.outcome = "blocked"
+            result.reason = (
+                f"main says version {head_version} after {tag}; only {expected} is this workflow's"
+            )
+            return result
+        result.outcome = "tag"
+        result.next = expected
+        result.reason = f"version {expected} is merged; tag main's head and release it"
+        return result
+    if not shipped:
+        result.reason = "nothing a package carries has changed since the tag"
+        return result
+    result.next = next_patch(tag)
+    monthly = _first_of_next_month(min(_landed(change) for change in shipped))
+    urgent = min(_landed(change) for change in security) + SECURITY_WAIT if security else None
+    due = monthly if urgent is None else min(monthly, urgent)
+    result.due_at = due.isoformat()
+    if now < due:
+        result.outcome = "wait"
+        result.reason = f"{len(shipped)} change(s) wait until {result.due_at}"
+    else:
+        result.outcome = "release"
+        result.reason = (
+            "a security fix has waited a day"
+            if urgent is not None and due == urgent
+            else "the month's fixes are due"
+        )
+    return result
+
+
+def _landed(change: Change) -> datetime:
+    return datetime.fromisoformat(change.merged_at).astimezone(UTC)
+
+
+def notes(result: Plan) -> str:
+    """The release's note: what came in, in the order it was merged."""
+
+    lines = [
+        f"An automatic patch release (B505): the dependency fixes merged on main since {result.last}.",
+        "No function changed. Update with `sudo apt update && sudo apt upgrade`, the manager first.",
+        "",
+    ]
+    for change in result.changes:
+        if not change.shipped:
+            continue
+        mark = " (security)" if change.security else ""
+        number = f"#{change.pull_request} " if change.pull_request else ""
+        lines.append(f"- {number}{change.subject}{mark}")
+    return "\n".join(lines) + "\n"
+
+
+def head_version(source: Path) -> str:
+    text = (source / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'^version = "([0-9.]+)"$', text, re.MULTILINE)
+    if match is None:
+        raise PlanError("pyproject.toml names no version")
+    return match.group(1)
+
+
+def bump(source: Path, version: str) -> None:
+    if not re.fullmatch(r"\d{1,4}\.\d{1,4}\.\d{1,4}", version):
+        raise PlanError(f"{version!r} is not X.Y.Z")
+    for relative, pattern, line in VERSION_LINES:
+        path = source / relative
+        text = path.read_text(encoding="utf-8")
+        new, count = pattern.subn(line.format(version), text, count=1)
+        if count != 1:
+            raise PlanError(f"{relative} has no version line")
+        path.write_text(new, encoding="utf-8")
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="release-plan", description=__doc__.split("\n", 1)[0])
+    commands = parser.add_subparsers(dest="command", required=True)
+    decide = commands.add_parser("decide")
+    decide.add_argument("--source", type=Path, required=True)
+    decide.add_argument("--now", type=datetime.fromisoformat)
+    decide.add_argument("--app", default=DEFAULT_APP)
+    decide.add_argument("--notes", type=Path, help="write the release note here")
+    version = commands.add_parser("bump")
+    version.add_argument("--source", type=Path, required=True)
+    version.add_argument("--version", required=True)
+    args = parser.parse_args(argv)
+    try:
+        if args.command == "bump":
+            bump(args.source, args.version)
+            return 0
+        now = args.now or datetime.now(UTC)
+        if now.tzinfo is None:
+            raise PlanError("--now needs a time zone")
+        tag = last_tag(args.source)
+        result = plan(
+            changes_since(args.source, tag, args.app),
+            tag,
+            now,
+            head_version=head_version(args.source),
+        )
+    except (PlanError, OSError) as exc:
+        print(f"release-plan: {exc}", file=sys.stderr)
+        return 2
+    if args.notes is not None:
+        args.notes.write_text(notes(result), encoding="utf-8")
+    print(json.dumps(asdict(result), indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

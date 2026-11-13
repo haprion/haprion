@@ -5,9 +5,6 @@
     "database_head": "0120",
     "rollback_safe_from": "0115",
     "database_revisions": [
-      "0117",
-      "0118",
-      "0119",
       "0120"
     ],
     "engine_api": 44,

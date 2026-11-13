@@ -1812,12 +1812,14 @@ class TheDeclaredHeadIsTheOneOnDisk(unittest.TestCase):
 
     #
     # What a migration's upgrade brings that code can name: a table, a view, a
-    # function, a column, or a new name for one of them.
+    # function, a column, or a new name for one of them - schema-qualified or
+    # not: 0118 and 0119 write `create table public.blocklist`, and the name
+    # read was `public` (26-11-13).
     #
     CODE = Path(__file__).resolve().parents[1] / "src" / "haprion_ui"
     CREATES = re.compile(
         r"\b(?:create table(?: if not exists)?|create (?:or replace )?(?:function|view)"
-        r"|add column(?: if not exists)?|rename (?:column \w+ )?to)\s+(\w+)",
+        r"|add column(?: if not exists)?|rename (?:column \w+ )?to)\s+(?:public\.)?(\w+)",
         re.IGNORECASE,
     )
 

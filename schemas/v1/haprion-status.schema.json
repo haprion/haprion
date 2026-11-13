@@ -763,6 +763,11 @@
           "description": "The version of the haprion-node package the management host's release carries, the one its nodes should run; null when the release carries none or its record cannot be read. Absent from an engine older than the field (26-10-29).",
           "type": ["string", "null"],
           "maxLength": 64
+        },
+        "waf_engine_version": {
+          "description": "The version of the haprion-coraza-spoa package installed on the management host, the engine its nodes' engines are read against; null when it is not installed or dpkg's status cannot be read. Absent from an engine older than the field.",
+          "type": ["string", "null"],
+          "maxLength": 64
         }
       },
       "additionalProperties": true

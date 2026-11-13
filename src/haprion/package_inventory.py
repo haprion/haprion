@@ -85,6 +85,15 @@ def installed(status: Path = DPKG_STATUS) -> dict[str, str]:
     return found
 
 
+def installed_version(name: str, status: Path = DPKG_STATUS) -> str | None:
+    """The version of one project package dpkg has installed; None when it has not, or dpkg's file cannot be read."""
+
+    try:
+        return installed(status).get(name)
+    except OSError:
+        return None
+
+
 def _lists(directory: Path) -> list[Path]:
     """apt's package indexes: plain, or gzip where apt keeps them compressed."""
 

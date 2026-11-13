@@ -34,7 +34,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import exit_codes, node_package
+from haprion import exit_codes, node_package, package_inventory, waf_engine_package
 from haprion.candidate_validation import validator_version
 from haprion.config import (
     DEFAULT_POLICY_PATH,
@@ -78,6 +78,7 @@ def main(
     node_reader: ReadNode | None = None,
     version_reader: Callable[[], str | None] | None = None,
     package_reader: Callable[[], str | None] | None = None,
+    engine_reader: Callable[[], str | None] | None = None,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = output_stream or sys.stdout
@@ -177,9 +178,19 @@ def main(
     report.result["summary"]["node_package_version"] = (
         package_reader or node_package.carried_version
     )()
+    #
+    # And the WAF engine this host has installed, which the nodes' engines are
+    # read against: the engine is published apart from the releases, so a node
+    # can be left behind it.
+    #
+    report.result["summary"]["waf_engine_version"] = (engine_reader or _installed_engine)()
     return write_document(
         writer, report.as_envelope(request.cluster, request_id=request.request_id), report.exit_code
     )
+
+
+def _installed_engine() -> str | None:
+    return package_inventory.installed_version(waf_engine_package.PACKAGE)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,8 @@ from haprion.haproxy_versions import (
     CONFIGURE_ON_THE_NODE,
     against_carried,
     compare,
+    engine_behind,
+    newest,
     node_package_standing,
     notes,
     package_notes,
@@ -232,6 +234,31 @@ class HowANodePackageStands(unittest.TestCase):
         for same in unsaid:
             with self.subTest(installation=same):
                 self.assertIsNone(node_package_standing(same, self.CARRIED))
+
+
+class TheWafEngine(unittest.TestCase):
+    """A node's engine against the newest the manager has (installed or waiting)."""
+
+    def test_an_older_engine_is_named_by_its_version(self) -> None:
+        self.assertEqual(engine_behind({"version": "0.9.1-2"}, "0.9.1-3"), "0.9.1-2")
+        self.assertEqual(engine_behind({"version": "0.9.0-9"}, "0.9.1-1"), "0.9.0-9")
+
+    def test_the_same_or_a_newer_engine_says_nothing(self) -> None:
+        self.assertIsNone(engine_behind({"version": "0.9.1-3"}, "0.9.1-3"))
+        self.assertIsNone(engine_behind({"version": "0.9.1-10"}, "0.9.1-3"))
+        self.assertIsNone(engine_behind({"version": "0.9.2-1"}, "0.9.1-3"))
+
+    def test_a_node_that_reports_no_engine_or_a_manager_that_names_none_says_nothing(self) -> None:
+        for engine in (None, {}, {"version": None}, {"version": ""}, "0.9.1-2", {"active": True}):
+            with self.subTest(engine=engine):
+                self.assertIsNone(engine_behind(engine, "0.9.1-3"))
+        for known in (None, "", 3):
+            with self.subTest(known=known):
+                self.assertIsNone(engine_behind({"version": "0.9.1-2"}, known))
+
+    def test_the_newest_is_dpkgs_order(self) -> None:
+        self.assertEqual(newest("0.9.1-3", "0.9.1-10", None), "0.9.1-10")
+        self.assertEqual(newest(None, ""), None)
 
 
 if __name__ == "__main__":

@@ -327,6 +327,11 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
         found = {finding.code for finding in node_findings(node, summary)}
         engine = _engine_line(status.get("waf_engine"), WAF_ENGINE_STOPPED in found)
         if engine is not None:
+            known = summary.get("waf_engine_version")
+            if haproxy_versions.engine_behind(status.get("waf_engine"), known) is not None:
+                engine += (
+                    f"  OLDER than this host's {known} - {haproxy_versions.UPGRADE_ON_THE_NODE}"
+                )
             writer.write(f"  WAF engine:   {engine}\n")
         listener = _engine_line(status.get("dns_listener"), DNS_LISTENER_STOPPED in found)
         if listener is not None:

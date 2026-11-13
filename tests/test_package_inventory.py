@@ -135,5 +135,20 @@ class ReadAgainOnlyWhenChanged(Fixture):
         self.assertEqual(reader.read(), [])
 
 
+class OneInstalledVersion(unittest.TestCase):
+    def test_an_installed_package_has_its_version_and_anything_else_none(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            status = Path(directory) / "status"
+            status.write_text(STATUS)
+            self.assertEqual(
+                package_inventory.installed_version("haprion-ui", status),
+                "0.99.0+git20261101120000.0123456789ab~ubuntu26.04",
+            )
+            self.assertIsNone(package_inventory.installed_version("haprion-certbot", status))
+            self.assertIsNone(
+                package_inventory.installed_version("haprion-ui", status.parent / "none")
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

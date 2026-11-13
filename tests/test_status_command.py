@@ -250,6 +250,7 @@ class HelperFixture(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         version_reader = overrides.pop("version_reader", lambda: "3.2.9-1")
         package_reader = overrides.pop("package_reader", lambda: None)
+        engine_reader = overrides.pop("engine_reader", lambda: None)
         code = status_helper.main(
             [],
             policy_path=policy_path or self.runtime(**overrides),
@@ -260,6 +261,7 @@ class HelperFixture(unittest.TestCase):
             require_root=False,
             version_reader=version_reader,
             package_reader=package_reader,
+            engine_reader=engine_reader,
             node_reader=node_reader
             or self.reader(
                 **{
@@ -1063,6 +1065,41 @@ class CallerTests(HelperFixture):
         self.assertIn("Node package: 0.99.6 (0123abcd)\n", out)
         self.assertIn(
             "Node package: 0.99.5 (49d2aeb2)  OLDER than this host's 0.99.6 (0123abcd)"
+            " - run sudo apt upgrade on the node\n",
+            out,
+        )
+
+    def test_the_waf_engine_this_host_has_is_in_the_summary(self) -> None:
+        code, out, _ = self.run_helper(request(), engine_reader=lambda: "0.9.1-3")
+        self.assertEqual(code, 0)
+        summary = assert_contract("haprion-status", out)["result"]["summary"]
+        self.assertEqual(summary["waf_engine_version"], "0.9.1-3")
+
+    def test_a_node_engine_older_than_this_hosts_says_what_to_run(self) -> None:
+        def engine(version: str | None) -> dict[str, object]:
+            return {"version": version, "active": True}
+
+        payload = self.envelope(
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status(
+                        "node-a", owner=True, release_hash=TARGET_HASH, waf_engine=engine("0.9.1-3")
+                    ),
+                    "node-b": node_status(
+                        "node-b",
+                        owner=False,
+                        release_hash=TARGET_HASH,
+                        waf_engine=engine("0.9.1-2"),
+                    ),
+                }
+            ),
+            engine_reader=lambda: "0.9.1-3",
+        )
+        assert_contract("haprion-status", payload)
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
+        self.assertIn("WAF engine:   ACTIVE (0.9.1-3)\n", out)
+        self.assertIn(
+            "WAF engine:   ACTIVE (0.9.1-2)  OLDER than this host's 0.9.1-3"
             " - run sudo apt upgrade on the node\n",
             out,
         )

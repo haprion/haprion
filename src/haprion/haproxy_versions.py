@@ -42,6 +42,8 @@ __all__ = [
     "NodePackageStanding",
     "against_carried",
     "compare",
+    "engine_behind",
+    "newest",
     "node_package_standing",
     "notes",
     "package_notes",
@@ -281,3 +283,28 @@ def node_package_standing(installation: object, carried: object) -> NodePackageS
         return None
     installed, order = standing
     return NodePackageStanding("newer" if order > 0 else "older", installed)
+
+
+def newest(*versions: object) -> str | None:
+    """The newest of the package versions given, as dpkg orders them; None when none is a version."""
+
+    found = [version for version in versions if isinstance(version, str) and version]
+    return max(found, key=_Version) if found else None
+
+
+def engine_behind(engine: object, known: object) -> str | None:
+    """The version of a node's WAF engine when it is older than `known`, else None.
+
+    `engine` is the node status's `waf_engine`, `known` the newest engine
+    version the manager has: installed on it, or waiting in the repository.
+    Nothing is said for an engine that is the same or newer, for one the node
+    does not report (an older status script, or no engine installed), or when
+    the manager names no version.
+    """
+
+    if not isinstance(known, str) or not known or not isinstance(engine, Mapping):
+        return None
+    installed = engine.get("version")
+    if not isinstance(installed, str) or not installed or compare(installed, known) >= 0:
+        return None
+    return installed

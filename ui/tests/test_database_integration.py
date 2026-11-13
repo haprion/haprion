@@ -4726,6 +4726,87 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
             (3, 3, b"c" * 64),
         )
 
+    def test_a_list_without_authorization_keeps_its_secret_revision_through_every_save(
+        self,
+    ) -> None:
+        """A save that seals nothing is not a new source: an Except change must not fetch at once."""
+
+        from haprion import blocklist_refresh, blocklist_store, blocklists
+
+        def clear() -> None:
+            with self.connection.cursor() as cursor:
+                cursor.execute("delete from blocklist")
+            self.connection.commit()
+
+        self.addCleanup(clear)
+        fields: dict[str, Any] = {
+            "name": "firehol",
+            "description": "",
+            "url": "https://lists.example.com/firehol.txt",
+            "auth": "none",
+            "username": "",
+            "every_hours": 24,
+            "excepts": (),
+            "key_id": None,
+            "ciphertext": None,
+            "keep_secret": False,
+            "actor": "admin",
+        }
+
+        def stored(worker: psycopg.Connection) -> blocklist_store.Stored:
+            row = db.sealed_blocklist(worker, "firehol")
+            if row is None:
+                self.fail("the list was not saved")
+            return blocklist_store.Stored(
+                blocklists.definition(
+                    name=row.name,
+                    url=row.url,
+                    every_hours=row.every_hours,
+                    authorization=row.auth,
+                    username=row.username,
+                    excepts=row.excepts,
+                ),
+                "",
+                row.revision,
+                row.secret_revision,
+            )
+
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as web:
+            db.save_blocklist(web, previous=None, **fields)
+            web.commit()
+            db.save_blocklist(web, previous=1, **{**fields, "excepts": ("192.0.2.10/32",)})
+            web.commit()
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as worker:
+            after = stored(worker)
+        self.assertEqual((after.revision, after.secret_revision), (2, 1))
+
+        fetched = blocklist_store.ListState(
+            attempted_at="2026-11-13T06:00:00+00:00",
+            fetched_at="2026-11-13T06:00:00+00:00",
+            source=blocklist_store.source_key(after.definition, 1),
+        )
+        self.assertFalse(
+            blocklist_refresh.due(after, fetched, datetime(2026, 11, 13, 7, 0, tzinfo=UTC))
+        )
+
+        # A new source is still a new key: the URL, and the authorization with a sealed box.
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as web:
+            db.save_blocklist(
+                web,
+                previous=2,
+                **{
+                    **fields,
+                    "auth": "bearer",
+                    "key_id": "0123456789abcdef",
+                    "ciphertext": b"b" * 64,
+                },
+            )
+            web.commit()
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as worker:
+            sealed = stored(worker)
+        self.assertEqual((sealed.revision, sealed.secret_revision), (3, 3))
+        self.assertNotEqual(sealed.source, after.source)
+
     def test_the_poller_writes_the_blocklists_state_whole_and_the_web_reads_it(self) -> None:
         """B500, 0119: a list the timer no longer keeps state for goes."""
 

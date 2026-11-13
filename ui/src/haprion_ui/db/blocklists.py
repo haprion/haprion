@@ -105,7 +105,9 @@ def save_blocklist(
     are - a save that changed neither the source (the URL, the authorization
     and the username) nor the secret - and is refused when the source changed,
     which the form says before it gets here. A save that seals writes
-    `secret_revision` with the revision it makes.
+    `secret_revision` with the revision it makes; a save with no box to seal (a
+    list that needs no authorization) leaves it, since the secret's revision is
+    part of the source's key and nothing about the source changed.
     """
 
     values = {
@@ -141,6 +143,23 @@ def save_blocklist(
                 "       updated_at = statement_timestamp(), updated_by = %(actor)s "
                 " where name = %(name)s and revision = %(previous)s and auth = %(auth)s "
                 "   and url = %(url)s and username = %(username)s "
+                "returning name, description, url, auth, username, every_hours, excepts, key_id, revision, created_at, updated_at, updated_by",
+                values,
+            )
+        elif ciphertext is None:
+            #
+            # Nothing is sealed (a list that needs no authorization, or a switch to
+            # one): `secret_revision` is left out of the statement. The web cannot
+            # read it back, so it cannot be kept by a `case`.
+            #
+            cursor.execute(
+                "update blocklist "
+                "   set description = %(description)s, url = %(url)s, auth = %(auth)s, "
+                "       username = %(username)s, every_hours = %(every_hours)s, "
+                "       excepts = %(excepts)s, key_id = %(key_id)s, ciphertext = %(box)s, "
+                "       revision = revision + 1, "
+                "       updated_at = statement_timestamp(), updated_by = %(actor)s "
+                " where name = %(name)s and revision = %(previous)s "
                 "returning name, description, url, auth, username, every_hours, excepts, key_id, revision, created_at, updated_at, updated_by",
                 values,
             )

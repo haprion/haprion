@@ -25,7 +25,11 @@ MemorySwapMax=0
 # one stalled pass holds every list and every deploy for good.
 TimeoutStartSec=20min
 
-NoNewPrivileges=yes
+# haprion-cert-deploy hands its request to the root helper through sudo, also
+# when root runs it, and sudo changes its user and writes an audit record: it
+# needs privileges to be raised, the capabilities below and netlink, as the
+# worker's unit gives it. What may be run is still the sudoers file.
+NoNewPrivileges=no
 ProtectSystem=strict
 ReadWritePaths=/var/lib/haprion/blocklists /run @POLICY_PATHS@
 ProtectHome=read-only
@@ -45,7 +49,8 @@ MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@obsolete
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-# Root writes files owned by each cluster's certificate account, in directories
-# that account owns.
-CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_FSETID CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# sudo's: CAP_SETUID, CAP_SETGID, CAP_SETPCAP, CAP_AUDIT_WRITE. The rest: root
+# writes files owned by each cluster's certificate account, in directories that
+# account owns.
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_AUDIT_WRITE CAP_CHOWN CAP_FOWNER CAP_FSETID CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH

@@ -83,10 +83,8 @@ class TheRefreshPassIsBoundedAndSandboxed(unittest.TestCase):
 
     def test_it_is_sandboxed_to_what_a_pass_writes(self) -> None:
         for key, value in {
-            "NoNewPrivileges": "yes",
             "ProtectSystem": "strict",
             "ProtectHome": "read-only",
-            "RestrictAddressFamilies": "AF_UNIX AF_INET AF_INET6",
             "ProtectKernelTunables": "yes",
             "RestrictNamespaces": "yes",
         }.items():
@@ -95,6 +93,34 @@ class TheRefreshPassIsBoundedAndSandboxed(unittest.TestCase):
         writable = directives(self.text, "ReadWritePaths")[0].split()
         self.assertIn("/var/lib/haprion/blocklists", writable)
         self.assertIn("@POLICY_PATHS@", writable)
+
+
+#
+# The units whose program runs sudo: the worker and the poller for their
+# helpers, and the refresh pass through haprion-cert-deploy, which hands its
+# request to the root helper with sudo even when root runs it. The install test
+# found the refresh unit sandboxed without them (26-11-13): every deploy of a
+# changed list ended "sudo: PERM_SUDOERS: setresuid ... Operation not permitted".
+#
+REACHES_SUDO = (
+    "haprion-worker.service.example",
+    "haprion-poller.service.example",
+    "haprion-blocklist-refresh.service.example",
+)
+
+
+class AUnitThatRunsSudoCanUseIt(unittest.TestCase):
+    """sudo changes its user and writes an audit record; a sandbox has to let it."""
+
+    def test_sudo_has_what_it_needs(self) -> None:
+        for name in REACHES_SUDO:
+            text = (EXAMPLES / name).read_text()
+            with self.subTest(unit=name):
+                self.assertEqual(directives(text, "NoNewPrivileges"), ["no"])
+                bounded = " ".join(directives(text, "CapabilityBoundingSet")).split()
+                for capability in ("CAP_SETUID", "CAP_SETGID", "CAP_AUDIT_WRITE"):
+                    self.assertIn(capability, bounded)
+                self.assertIn("AF_NETLINK", " ".join(directives(text, "RestrictAddressFamilies")))
 
 
 if __name__ == "__main__":

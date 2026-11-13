@@ -144,7 +144,7 @@ never hold a transaction open across a CLI command.
   account. The certificate tree is readable to `_haprion-cert-pull`, which the nodes fetch as.
 - A blocklist's definition, with its password or token, is root's alone: one file in
   `/etc/haprion/blocklists`, mode 0600 in a 0700 directory, written by its helper from a sealed box the
-  web cannot open. The lists the timer keeps in `/var/lib/haprion/blocklists` are root's; the timer and
+  web cannot open and the helper opens only for the URL, authorization and username it was sealed for. The lists the timer keeps in `/var/lib/haprion/blocklists` are root's; the timer and
   the blocklist check helper read them.
 - The traffic log mirror is written by the collector and readable, never writable, by the web.
 - The answers the socket helpers keep for recovery are in `/var/lib/haprion/answers`, root's and

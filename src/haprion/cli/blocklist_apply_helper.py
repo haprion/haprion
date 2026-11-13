@@ -26,7 +26,7 @@ from haprion.blocklist_store import Stored, StoreError
 from haprion.cli import cert_job
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy
 from haprion.dns_profile_keys import KeyFileError, read_private_key
-from haprion.envelope import envelope
+from haprion.envelope import Message, envelope
 from haprion.helper_protocol import HelperProtocolError, config_error_code, write_document
 
 OPERATION = blocklist_store.OPERATION
@@ -191,7 +191,8 @@ def main(
     except StoreError as exc:
         return refuse("dependency_unavailable", str(exc), exit_codes.CONFIG)
 
-    result: dict[str, object] = {"name": name, "revision": revision, "refresh_started": starter()}
+    started = starter()
+    result: dict[str, object] = {"name": name, "revision": revision, "refresh_started": started}
     if item is None:
         result["removed"] = removed
     return write_document(
@@ -202,6 +203,14 @@ def main(
             cluster=None,
             request_id=request.request_id,
             result=result,
+            warnings=()
+            if started
+            else (
+                Message(
+                    "refresh_not_started",
+                    "The refresh did not start now; the timer's next pass applies the change",
+                ),
+            ),
         ),
         0,
     )

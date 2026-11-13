@@ -8,7 +8,6 @@ Description=Run Haprion blocklist refresh every 15 minutes
 OnBootSec=5min
 OnUnitActiveSec=15min
 RandomizedDelaySec=60
-Persistent=true
 
 [Install]
 WantedBy=timers.target

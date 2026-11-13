@@ -115,6 +115,16 @@ class Applying(ApplyFixture):
         self.assertEqual(stored.definition.excepts, ("192.0.2.10/32", "partner-sites"))
         self.assertEqual(self.started, 1)
 
+    def test_a_refresh_that_did_not_start_is_a_warning(self) -> None:
+        self.starter = lambda: False  # type: ignore[method-assign]
+
+        code, document, errors = self.invoke(self.request())
+
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(document["outcome"], "done")
+        self.assertFalse(document["result"]["refresh_started"])
+        self.assertEqual([w["code"] for w in document["warnings"]], ["refresh_not_started"])
+
     def test_a_list_without_authorization_needs_no_box(self) -> None:
         code, _, errors = self.invoke(
             self.request(authorization="none", key_id=None, ciphertext=None)

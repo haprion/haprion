@@ -760,6 +760,25 @@ class ANodeChangeThatWasNotPublished(unittest.TestCase):
         )
         self.assertEqual(jobs.publication_note(created), "a timer could not be stopped.")
 
+    def test_a_blocklist_apply_that_did_not_start_a_refresh_says_so_when_done(self) -> None:
+        job = replace(
+            queued(operation="blocklist_apply", cluster=None, payload={"name": "community"}),
+            state="done",
+            outcome="done",
+            result={
+                "operation": "blocklist_apply",
+                "outcome": "done",
+                "warnings": [
+                    {"code": "refresh_not_started", "message": "The refresh did not start"}
+                ],
+            },
+        )
+
+        (row,) = jobs.build_job_overview([job], sentences=True, writes=True).jobs
+
+        self.assertEqual(row.warning_codes, "refresh_not_started")
+        self.assertEqual(row.warning_message, "The refresh did not start")
+
     def test_a_published_list_needs_no_note(self) -> None:
         job = replace(
             queued(operation="cluster_node", cluster="alpha"),

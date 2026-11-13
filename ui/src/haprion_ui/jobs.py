@@ -832,7 +832,7 @@ def ran(job: Job) -> bool:
 # (`profile_row_changed`, `blocklist_row_changed`).
 #
 WORKER_WARNINGS = frozenset({"answer_kept", "profile_row_changed", "blocklist_row_changed"})
-WARNED_WHEN_DONE = frozenset({"deploy", "cert_deploy", "backup_run", "revert"})
+WARNED_WHEN_DONE = frozenset({"deploy", "cert_deploy", "backup_run", "revert", "blocklist_apply"})
 
 
 def warnings_of(job: Job) -> tuple[tuple[str, str], ...]:
@@ -1225,7 +1225,8 @@ def _view(
     #
     # Every warning of a partial run; of a completed one only a deploy's, whose
     # warnings are each about the cluster (deploy_run), a backup's, whose one
-    # is that the old archives could not be pruned, and a revert's, which is not
+    # is that the old archives could not be pruned, a blocklist's, which is that
+    # the refresh did not start, and a revert's, which is not
     # refused for the core's checks and so says them here (B443). Other helpers' warnings
     # on success are not measured, and a note under every green row would bury
     # the ones that mean something, as the diagnostics comment below says. What

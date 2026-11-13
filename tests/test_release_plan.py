@@ -129,14 +129,9 @@ class Repository:
         return path
 
     def decide(self, now: str, *, pulls: bool = True) -> Any:
-        tag = PLAN.last_tag(self.root)
         read = PLAN.read_pulls(self.pulls_file()) if pulls else None
-        return PLAN.plan(
-            PLAN.changes_since(self.root, tag, APP, read),
-            tag,
-            datetime.fromisoformat(now),
-            head_version=PLAN.head_version(self.root),
-            outside=PLAN.outside_the_watch(self.root, tag),
+        return PLAN.decide(
+            self.root, PLAN.last_tag(self.root), APP, read, datetime.fromisoformat(now)
         )
 
 
@@ -425,6 +420,56 @@ class ReleasePlanTest(unittest.TestCase):
         self.assertEqual(result.next, "1.1.1")
         self.assertTrue(result.security)
 
+    def test_what_lands_after_the_version_merge_is_not_in_the_release(self) -> None:
+        self.locks(4, "2026-11-15T09:00:00+00:00")
+        self.bump_merged("1.1.1")
+        merged = self.repository.git("rev-parse", "HEAD").strip()
+        self.waf(5, "2026-11-16T10:41:00+00:00")
+
+        result = self.repository.decide("2026-11-16T10:53:00+00:00")
+
+        self.assertEqual(result.outcome, "tag")
+        self.assertEqual(result.tag_commit, merged)
+        self.assertNotEqual(result.tag_commit, self.repository.git("rev-parse", "HEAD").strip())
+        self.assertEqual(result.pull_head, self.repository.git("rev-parse", f"{merged}^2").strip())
+        self.assertNotIn(5, [change.pull_request for change in result.changes])
+
+    def test_a_person_s_commit_after_the_version_merge_waits_for_the_next_run(self) -> None:
+        self.locks(4, "2026-11-15T09:00:00+00:00")
+        self.bump_merged("1.1.1")
+        self.repository.write("src/haprion/generate.py", "x = 1\n")
+        self.repository.commit("operator", "Generate something new", "2026-11-16T11:00:00+00:00")
+
+        self.assertEqual(self.repository.decide("2026-11-16T11:05:00+00:00").outcome, "tag")
+
+    def test_a_version_merge_that_is_not_the_tested_head_is_not_tagged(self) -> None:
+        # The proposal was made on an older main; the merge brought a newer
+        # WAF pin along, which the installation test never saw.
+        repository = self.repository
+        self.locks(4, "2026-11-15T09:00:00+00:00")
+        repository.git("checkout", "--quiet", "-b", "release-watch")
+        PLAN.bump(repository.root, "1.1.1")
+        repository.commit(APP, "Version 1.1.1", "2026-11-16T10:00:00+00:00")
+        repository.git("checkout", "--quiet", "main")
+        self.waf(5, "2026-11-16T10:10:00+00:00")
+        repository.git(
+            "merge",
+            "--quiet",
+            "--no-ff",
+            "--message",
+            "Merge pull request #14 from example/release-watch",
+            "release-watch",
+            author=APP,
+            when="2026-11-16T10:30:00+00:00",
+        )
+        repository.register(14, APP)
+
+        result = repository.decide("2026-11-16T11:00:00+00:00")
+
+        self.assertEqual(result.outcome, "blocked")
+        self.assertIsNone(result.tag_commit)
+        self.assertIn("other than its pull request's head", result.reason)
+
     def test_a_version_other_than_the_next_patch_is_left_for_a_person(self) -> None:
         self.locks(4, "2026-11-15T09:00:00+00:00")
         self.bump_merged("1.2.0")
@@ -441,7 +486,6 @@ class ReleasePlanTest(unittest.TestCase):
         self.assertIn('version = "1.1.1"', (root / "pyproject.toml").read_text())
         self.assertIn('version = "1.1.1"', (root / "ui/pyproject.toml").read_text())
         self.assertIn('__version__ = "1.1.1"', (root / "src/haprion/__init__.py").read_text())
-        self.assertEqual(PLAN.head_version(root), "1.1.1")
 
     def test_bump_refuses_what_is_not_a_version(self) -> None:
         with self.assertRaises(PLAN.PlanError):
@@ -541,6 +585,20 @@ class TheWorkflowsSayWhatThePlanReads(unittest.TestCase):
         for name in ("Source, quality, and security gates", "Installation test"):
             self.assertIn(f"    name: {name}\n", ci)
             self.assertIn(f"            {name}\n", release)
+
+    def test_the_tag_stands_on_the_merge_whose_head_was_checked(self) -> None:
+        release = (self.workflows / "auto-release.yml").read_text(encoding="utf-8")
+
+        self.assertIn("tag_commit: ${{ steps.plan.outputs.tag_commit }}", release)
+        self.assertIn('"${TAG_COMMIT}:refs/tags/v${VERSION}"', release)
+        self.assertEqual(release.count("ref: ${{ needs.plan.outputs.tag_commit }}"), 2)
+        self.assertNotIn("outputs.head", release)
+        # the checks are the proposal's own, each by name and the latest run of it
+        self.assertIn("commits/${PULL_HEAD}/check-runs", release)
+        self.assertIn('-f check_name="${name}" -f filter=latest', release)
+        # a proposal behind main is closed, not merged
+        self.assertIn("compare/main...${head}", release)
+        self.assertIn(".behind_by", release)
 
 
 if __name__ == "__main__":

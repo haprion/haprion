@@ -14,7 +14,9 @@ locks and the WAF pins need (B353, B354). `decide` reads main since the last
              automatic one would ship it unreviewed
     wait     something is waiting, and its time has not come (`due_at`)
     release  propose the next patch version now
-    tag      the version proposal is merged: tag main's head and release it
+    tag      the version proposal is merged: tag its merge (`tag_commit`) and
+             release it. What landed on main after the merge is not in the
+             tree that was tested and goes in the next release
 
 A security fix is what the watch knows to be one: the locks' proposal, which
 only ever moves a package an advisory names (B353), and a WAF proposal made
@@ -124,6 +126,8 @@ class Change:
     pull_request: int | None
     why: str = ""
     """For `other`: what is wrong with it."""
+    merge_commit: str = ""
+    """The commit on main's first-parent line that brought it in."""
 
 
 @dataclass(slots=True)
@@ -134,6 +138,10 @@ class Plan:
     next: str | None = None
     security: bool = False
     due_at: str | None = None
+    tag_commit: str | None = None
+    """`tag`: the version proposal's merge, the commit the tag goes on."""
+    pull_head: str | None = None
+    """`tag`: the version proposal's head, the commit the checks ran on."""
     changes: list[Change] = field(default_factory=list)
 
 
@@ -229,7 +237,7 @@ def changes_since(
             why = _unverified(head, subject, pulls, app)
         if why:
             changes.append(
-                Change(head, subject, committer, "other", False, False, landed, number, why)
+                Change(head, subject, committer, "other", False, False, landed, number, why, head)
             )
             continue
         for commit in _git(
@@ -251,6 +259,7 @@ def changes_since(
                         landed,
                         number,
                         "a merge on the pull request's branch",
+                        head,
                     )
                 )
                 continue
@@ -259,7 +268,9 @@ def changes_since(
             )
             kind, security, shipped = _classify(commit_subject, author, files, app)
             changes.append(
-                Change(sha, commit_subject, author, kind, security, shipped, landed, number)
+                Change(
+                    sha, commit_subject, author, kind, security, shipped, landed, number, "", head
+                )
             )
     return changes
 
@@ -315,8 +326,8 @@ def plan(
     if versions:
         #
         # The proposal this workflow made, merged. It names the next patch,
-        # and the tree on main says the same; anything else is not this
-        # workflow's doing and is left for a person.
+        # and the tree it was merged into says the same; anything else is not
+        # this workflow's doing and is left for a person.
         #
         named = VERSION_SUBJECT.fullmatch(versions[-1].subject)
         expected = next_patch(tag)
@@ -333,7 +344,8 @@ def plan(
             return result
         result.outcome = "tag"
         result.next = expected
-        result.reason = f"version {expected} is merged; tag main's head and release it"
+        result.tag_commit = versions[0].merge_commit
+        result.reason = f"version {expected} is merged; tag its merge and release it"
         return result
     if not shipped:
         result.reason = "nothing a package carries has changed since the tag"
@@ -361,6 +373,61 @@ def _landed(change: Change) -> datetime:
     return datetime.fromisoformat(change.merged_at).astimezone(UTC)
 
 
+def tree_problem(source: Path, merge: str) -> tuple[str, str]:
+    """`(problem, pull_head)` for the merge of the version proposal.
+
+    The installation test ran on the proposal's head. The tag stands on the
+    merge, so its tree must be that head's: GitHub makes it so when the head
+    holds main, and a merge that brought anything else along is not what was
+    tested.
+    """
+
+    parents = _git(source, "rev-list", "--parents", "-n", "1", merge).split()[1:]
+    if len(parents) != 2:
+        return f"{merge[:8]} is not a merge of a pull request", ""
+    tree = _git(source, "rev-parse", f"{merge}^{{tree}}").strip()
+    tested = _git(source, "rev-parse", f"{parents[1]}^{{tree}}").strip()
+    if tree != tested:
+        return (
+            f"the merge {merge[:8]} holds a tree other than its pull request's head "
+            f"{parents[1][:8]}, which is the one the checks ran on",
+            parents[1],
+        )
+    return "", parents[1]
+
+
+def decide(
+    source: Path, tag: str, app: str, pulls: Mapping[int, Pull] | None, now: datetime
+) -> Plan:
+    """The plan for what main holds since the tag.
+
+    A merged version proposal is the end of this release: what landed on main
+    after it is not in the tree that was tested, and goes in the next release
+    (the next run reads it from the new tag).
+    """
+
+    changes = changes_since(source, tag, app, pulls)
+    version = next((change for change in changes if change.kind == "version"), None)
+    merge = version.merge_commit if version else ""
+    if version:
+        order = list(dict.fromkeys(change.merge_commit for change in changes))
+        changes = [c for c in changes if order.index(c.merge_commit) <= order.index(merge)]
+    result = plan(
+        changes,
+        tag,
+        now,
+        head_version=head_version(source, merge or "HEAD"),
+        outside=outside_the_watch(source, tag, merge or "HEAD"),
+    )
+    if result.outcome == "tag":
+        problem, result.pull_head = tree_problem(source, merge)
+        if problem:
+            result.outcome = "blocked"
+            result.reason = problem
+            result.next = result.tag_commit = result.pull_head = None
+    return result
+
+
 def notes(result: Plan) -> str:
     """The release's note: what came in, in the order it was merged."""
 
@@ -378,8 +445,8 @@ def notes(result: Plan) -> str:
     return "\n".join(lines) + "\n"
 
 
-def head_version(source: Path) -> str:
-    text = (source / "pyproject.toml").read_text(encoding="utf-8")
+def head_version(source: Path, revision: str = "HEAD") -> str:
+    text = _git(source, "show", f"{revision}:pyproject.toml")
     match = re.search(r'^version = "([0-9.]+)"$', text, re.MULTILINE)
     if match is None:
         raise PlanError("pyproject.toml names no version")
@@ -401,14 +468,14 @@ def bump(source: Path, version: str) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="release-plan", description=__doc__.split("\n", 1)[0])
     commands = parser.add_subparsers(dest="command", required=True)
-    decide = commands.add_parser("decide")
-    decide.add_argument("--source", type=Path, required=True)
-    decide.add_argument(
+    deciding = commands.add_parser("decide")
+    deciding.add_argument("--source", type=Path, required=True)
+    deciding.add_argument(
         "--pulls", type=Path, help="the pull requests merged since the tag, as JSON"
     )
-    decide.add_argument("--now", type=datetime.fromisoformat)
-    decide.add_argument("--app", default=DEFAULT_APP)
-    decide.add_argument("--notes", type=Path, help="write the release note here")
+    deciding.add_argument("--now", type=datetime.fromisoformat)
+    deciding.add_argument("--app", default=DEFAULT_APP)
+    deciding.add_argument("--notes", type=Path, help="write the release note here")
     version = commands.add_parser("bump")
     version.add_argument("--source", type=Path, required=True)
     version.add_argument("--version", required=True)
@@ -422,13 +489,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise PlanError("--now needs a time zone")
         tag = last_tag(args.source)
         pulls = read_pulls(args.pulls) if args.pulls else None
-        result = plan(
-            changes_since(args.source, tag, args.app, pulls),
-            tag,
-            now,
-            head_version=head_version(args.source),
-            outside=outside_the_watch(args.source, tag),
-        )
+        result = decide(args.source, tag, args.app, pulls, now)
     except (PlanError, OSError) as exc:
         print(f"release-plan: {exc}", file=sys.stderr)
         return 2

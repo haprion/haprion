@@ -6,10 +6,12 @@ name: automatic release
 #   release  the version proposal: the branch `release-watch` with the next
 #            patch version, in a pull request the gates and the installation
 #            test run on, merged by `merge` once they passed
-#   tag      that proposal is merged and main's gates passed on its head: two
-#            builds on two runners, compared; the tag, and the release with
-#            the first build's files. The tag starts apt-repo.yml, which builds
-#            twice more, compares with the release's files, signs and publishes
+#   tag      that proposal is merged, and its checks passed on its head: two
+#            builds of the merge on two runners, compared; the tag on that
+#            merge, and the release with the first build's files. The tag
+#            starts apt-repo.yml, which builds twice more, compares with the
+#            release's files, signs and publishes. What landed on main after
+#            the merge is the next release's
 #   blocked  a person's change is on main since the tag; nothing is released,
 #            and while a security fix waits behind it an issue says so
 #   wait, nothing
@@ -36,7 +38,6 @@ concurrency:
 env:
   BRANCH: release-watch
   BLOCKED_TITLE: "A security fix waits for a release made by hand"
-  GATES: "Source, quality, and security gates"
 
 jobs:
   plan:
@@ -46,13 +47,13 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      checks: read # whether main's gates passed on the head to be tagged
+      checks: read # whether the proposal's checks passed on its head
       pull-requests: read # who opened each merged pull request, and the commit it was merged as
     outputs:
       outcome: ${{ steps.plan.outputs.outcome }}
       next: ${{ steps.plan.outputs.next }}
       security: ${{ steps.plan.outputs.security }}
-      head: ${{ steps.plan.outputs.head }}
+      tag_commit: ${{ steps.plan.outputs.tag_commit }}
       ready: ${{ steps.gates.outputs.ready }}
 
     steps:
@@ -90,31 +91,37 @@ jobs:
             echo "outcome=$(jq -r .outcome "${RUNNER_TEMP}/plan.json")"
             echo "next=$(jq -r '.next // empty' "${RUNNER_TEMP}/plan.json")"
             echo "security=$(jq -r .security "${RUNNER_TEMP}/plan.json")"
-            echo "head=$(git rev-parse HEAD)"
+            echo "tag_commit=$(jq -r '.tag_commit // empty' "${RUNNER_TEMP}/plan.json")"
+            echo "pull_head=$(jq -r '.pull_head // empty' "${RUNNER_TEMP}/plan.json")"
           } >> "${GITHUB_OUTPUT}"
           jq -r '"\(.outcome): \(.reason)"' "${RUNNER_TEMP}/plan.json" >> "${GITHUB_STEP_SUMMARY}"
 
-      # The merged proposal's gates ran on its branch; main's own run on the
-      # merge is what the tag stands on. Until it has passed, the next hour
-      # asks again.
-      - name: Main's gates on the head
+      # The checks ran on the proposal's head, and the merge's tree is that
+      # head's (the plan holds it to that). Each is asked for by name, and the
+      # latest run of it counts: a run that was cancelled or run again is not
+      # the answer. Until both passed, the next run asks again.
+      - name: The proposal's checks on its head
         id: gates
         if: steps.plan.outputs.outcome == 'tag'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          HEAD_SHA: ${{ steps.plan.outputs.head }}
+          PULL_HEAD: ${{ steps.plan.outputs.pull_head }}
+          REQUIRED: |
+            Source, quality, and security gates
+            Installation test
         run: |
           set -euo pipefail
-          conclusion=$(gh api "repos/${REPOSITORY}/commits/${HEAD_SHA}/check-runs" \
-            --jq "[.check_runs[] | select(.name == env.GATES)][0].conclusion // empty")
-          echo "main's gates on ${HEAD_SHA}: ${conclusion:-not finished}"
-          if [[ "${conclusion}" == success ]]; then
-            echo "ready=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "ready=false" >> "${GITHUB_OUTPUT}"
-          fi
+          ready=true
+          while IFS= read -r name; do
+            [[ -z "${name}" ]] && continue
+            conclusion=$(gh api --method GET "repos/${REPOSITORY}/commits/${PULL_HEAD}/check-runs" \
+              -f check_name="${name}" -f filter=latest --jq '.check_runs[0].conclusion // empty')
+            echo "${name} on ${PULL_HEAD}: ${conclusion:-not finished}"
+            [[ "${conclusion}" == success ]] || ready=false
+          done <<<"${REQUIRED}"
+          echo "ready=${ready}" >> "${GITHUB_OUTPUT}"
 
       - name: Keep the note
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -284,6 +291,16 @@ jobs:
             echo "#${number} is on hold"
             exit 0
           fi
+          # The tag stands on the merge, and the installation test ran on the
+          # head: they are the same tree only when the head holds main. One
+          # that lies behind is closed and its branch deleted, so that
+          # `propose` makes it again on today's main.
+          behind=$(gh api "repos/${REPOSITORY}/compare/main...${head}" --jq .behind_by)
+          if [[ "${behind}" != 0 ]]; then
+            gh pr close "${number}" --repo "${REPOSITORY}" --delete-branch \
+              --comment "main moved on: this proposal lies ${behind} commits behind it, so what was tested is not what a merge would tag. It is proposed again on the current main."
+            exit 0
+          fi
           checks=$(gh pr checks "${number}" --repo "${REPOSITORY}" --json name,bucket || true)
           if jq -e 'any(.[]; .bucket != "pass" and .bucket != "skipping")' <<<"${checks}" >/dev/null; then
             echo "#${number}: not every check has passed"
@@ -313,7 +330,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.plan.outputs.head }}
+          ref: ${{ needs.plan.outputs.tag_commit }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -370,10 +387,10 @@ jobs:
           private-key: ${{ secrets.UPSTREAM_WATCH_PRIVATE_KEY }}
           permission-contents: write # the tag and the release
 
-      - name: Check out the head
+      - name: Check out the merge
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.plan.outputs.head }}
+          ref: ${{ needs.plan.outputs.tag_commit }}
           persist-credentials: false
 
       # The tag first and pushed with git, as a release made by hand does: the
@@ -384,12 +401,12 @@ jobs:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           REPOSITORY: ${{ github.repository }}
           VERSION: ${{ needs.plan.outputs.next }}
-          HEAD_SHA: ${{ needs.plan.outputs.head }}
+          TAG_COMMIT: ${{ needs.plan.outputs.tag_commit }}
           BUILDS: ${{ runner.temp }}/builds
         run: |
           set -euo pipefail
           auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
           git -c http.extraheader="${auth}" push --quiet \
-            "https://github.com/${REPOSITORY}.git" "${HEAD_SHA}:refs/tags/v${VERSION}"
+            "https://github.com/${REPOSITORY}.git" "${TAG_COMMIT}:refs/tags/v${VERSION}"
           gh release create "v${VERSION}" --repo "${REPOSITORY}" --verify-tag --title "v${VERSION}" --latest \
             --notes-file "${BUILDS}/release-note/notes.md" "${BUILDS}"/release-a/*

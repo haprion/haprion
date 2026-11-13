@@ -689,8 +689,12 @@ def probe(target: dict[str, Any], timeout_ms: int, source: str | None) -> dict[s
         # all of them alike (measured 26-11-08). The handshake stops there,
         # so there is no certificate to report: none is guessed at.
         #
+        # Worded apart from the other TLS failures, so a reader can tell the
+        # check that stopped at verification from a handshake that never got
+        # that far (an older node says `TLS failed:` for both).
+        #
         said = (error.verify_message or "").rstrip(".") or error.reason or str(error)
-        result["error"] = f"TLS failed: {said}"
+        result["error"] = f"TLS verification failed: {said}"
     except ssl.SSLError as error:
         result["error"] = f"TLS failed: {error.reason or error}"
     except TimeoutError:

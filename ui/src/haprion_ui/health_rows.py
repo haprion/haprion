@@ -23,6 +23,12 @@ from haprion_ui.health import BackendHealth, check_phrase
 from haprion_ui.probe import NO_HOST_SENT, ProbeReport, Reached
 
 UNREAD = "The certificate was not read: the check stops where verification fails."
+#
+# What a node says when verification stopped the handshake. A node of 1.0.1
+# said `TLS failed:` for every TLS failure, and this reason for that one.
+#
+VERIFICATION_FAILED = "TLS verification failed:"
+OLDER_NODE_VERIFICATION = "TLS failed: CERTIFICATE_VERIFY_FAILED"
 UNVERIFIED = "not verified: the pool does not check the server's certificate"
 
 
@@ -85,7 +91,8 @@ def tls_line(entry: Reached, now: datetime | None = None) -> TlsLine | None:
         # refused never got that far, and a node older than the field read
         # nothing it could have said.
         #
-        failed = bool(entry.error and entry.error.startswith("TLS failed:"))
+        error = entry.error or ""
+        failed = error.startswith(VERIFICATION_FAILED) or error == OLDER_NODE_VERIFICATION
         return TlsLine(unread=UNREAD) if entry.verified and failed else None
     until, expired = _until(certificate.not_after, now or datetime.now(UTC))
     if entry.verified and entry.authority:

@@ -774,6 +774,7 @@ class HowOldATlsBackendMayBe(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertIn("TLS failed", str(result["error"]))
+        self.assertNotIn("verification", str(result["error"]))
 
 
 @unittest.skipUnless(shutil.which("openssl"), "openssl is not installed here")
@@ -978,7 +979,7 @@ class APoolsOwnCaIsTheOneTrusted(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(
             answer["results"][0]["error"],
-            "TLS failed: IP address mismatch, certificate is not valid for '127.0.0.1'",
+            "TLS verification failed: IP address mismatch, certificate is not valid for '127.0.0.1'",
         )
         self.assertNotIn("certificate", answer["results"][0])
 
@@ -989,7 +990,8 @@ class APoolsOwnCaIsTheOneTrusted(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertEqual(
-            answer["results"][0]["error"], "TLS failed: unable to get local issuer certificate"
+            answer["results"][0]["error"],
+            "TLS verification failed: unable to get local issuer certificate",
         )
 
     def test_a_verified_server_says_the_certificate_it_presented(self) -> None:
@@ -1100,7 +1102,9 @@ class AnExpiredCertificate(unittest.TestCase):
         )
 
         self.assertEqual(code, 0)
-        self.assertEqual(answer["results"][0]["error"], "TLS failed: certificate has expired")
+        self.assertEqual(
+            answer["results"][0]["error"], "TLS verification failed: certificate has expired"
+        )
         self.assertNotIn("certificate", answer["results"][0])
 
     def test_an_unverified_pool_is_reached_and_says_when_it_expired(self) -> None:

@@ -353,11 +353,37 @@ class TheCertificateUnderATestedServer(unittest.TestCase):
 
     def test_a_verification_that_stopped_the_handshake_says_nothing_was_read(self) -> None:
         line = self.line(
-            {"ok": False, "status": None, "error": "TLS failed: certificate has expired"},
+            {
+                "ok": False,
+                "status": None,
+                "error": "TLS verification failed: certificate has expired",
+            },
             backend_tls="system",
             servers="shop-backend.example.com:8080",
         )
         self.assertEqual(line, TlsLine(unread=UNREAD))
+
+    def test_a_node_of_1_0_1_says_the_same_for_the_one_reason_it_could_name(self) -> None:
+        line = self.line(
+            {"ok": False, "status": None, "error": "TLS failed: CERTIFICATE_VERIFY_FAILED"},
+            backend_tls="system",
+            servers="shop-backend.example.com:8080",
+        )
+        self.assertEqual(line, TlsLine(unread=UNREAD))
+
+    def test_a_handshake_that_failed_before_verification_does_not_blame_it(self) -> None:
+        for error in (
+            "TLS failed: WRONG_VERSION_NUMBER",
+            "TLS failed: SSLV3_ALERT_HANDSHAKE_FAILURE",
+        ):
+            with self.subTest(error=error):
+                self.assertIsNone(
+                    self.line(
+                        {"ok": False, "status": None, "error": error},
+                        backend_tls="system",
+                        servers="shop-backend.example.com:8080",
+                    )
+                )
 
     def test_no_line_without_tls_or_without_a_reading(self) -> None:
         self.assertIsNone(self.line({"ok": True, "status": 200, "error": None}, health_type="http"))

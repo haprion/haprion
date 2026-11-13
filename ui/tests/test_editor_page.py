@@ -972,12 +972,12 @@ class TheHealthCardOnThePage(EditorTestCase):
                 self.tls(
                     ok=False,
                     status=None,
-                    error="TLS failed: certificate has expired",
+                    error="TLS verification failed: certificate has expired",
                     verified=True,
                 )
             ]
         )
-        self.assertIn("TLS failed: certificate has expired", body)
+        self.assertIn("TLS verification failed: certificate has expired", body)
         self.assertIn(
             '<span class="tls-unread">The certificate was not read: the check stops where '
             "verification fails.</span>",

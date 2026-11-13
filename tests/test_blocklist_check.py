@@ -382,19 +382,20 @@ class TheHelperAndTheCommand(Fixture):
         self.assertIn("198.51.100.20 is on community (198.51.100.0/24), fetched ", out)
         self.assertTrue(out.endswith("It is not excepted.\n"))
 
-    def test_a_failed_fetch_is_partial_in_words_and_done_in_json(self) -> None:
+    def test_a_failed_fetch_exits_the_same_with_and_without_json(self) -> None:
         def refused(item: blocklists.Definition, secret: str) -> bytes:
             raise blocklists.BlocklistError("http_status", "lists.example.com answered 401")
 
         self.fetch = refused  # type: ignore[method-assign]
-        code, out, _err = self.run_check("--list", "community")
+        words_code, out, _err = self.run_check("--list", "community")
 
-        self.assertEqual(code, exit_codes.PARTIAL)
         self.assertEqual(out, "Not fetched: lists.example.com answered 401.\n")
 
         code, out, _err = self.run_check("--list", "community", "--json")
 
-        self.assertEqual(code, exit_codes.OK, "the document says it: the question was answered")
+        self.assertEqual(code, words_code, "the same exit with and without --json")
+        self.assertEqual(code, exit_codes.OK, "`answer` is the signal")
+        self.assertEqual(json.loads(out)["outcome"], "done")
         self.assertEqual(json.loads(out)["result"]["answer"], "failed")
 
     def test_the_command_names_a_list_that_is_not_saved(self) -> None:

@@ -9,7 +9,8 @@ the timer keeps, the last good fetch of each, without fetching: which lists
 hold it, when each was fetched, and in which clusters an exception keeps it
 off the nodes. `--list` fetches a saved list once with its saved password or
 token and says what it holds, keeping nothing: the timer's next pass is what
-changes the nodes; a list that could not be fetched exits 69 (partial).
+changes the nodes; a list that could not be fetched is still an answer: exit 0, and
+`answer` says `failed`, in words and in the document alike.
 Root, because the saved secrets and the kept lists are root's. `--json`
 answers with the helper's document, which says it in `answer`.
 """
@@ -125,6 +126,12 @@ def main(
             )
         err.write(f"ERROR: {message}\n")
         return exit_code
+    #
+    # A test that could not fetch answered the question it was asked, so the
+    # document is `done` and says `failed` in its answer, and the exit is 0
+    # with and without `--json`: `answer` is the one signal, and a script that
+    # switches format keeps it.
+    #
     if arguments.json:
         return write_document(
             out,
@@ -138,12 +145,7 @@ def main(
             exit_codes.OK,
         )
     out.write(_sentence(result) + "\n")
-    #
-    # A test that could not fetch answered the question it was asked, so the
-    # document is `done` and says `failed` in its answer; in words, where only
-    # the exit is left for a script, it is a partial answer.
-    #
-    return exit_codes.PARTIAL if result.get("answer") == "failed" else exit_codes.OK
+    return exit_codes.OK
 
 
 def _sentence(result: dict[str, object]) -> str:

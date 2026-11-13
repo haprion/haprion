@@ -374,10 +374,19 @@ def check(
         try:
             placed = _Placed(webroot, token, content)
         except OSError as error:
+            said = f"the test file could not be written in the webroot {webroot}: {error.strerror or error}"
+            if error.errno == errno.EROFS:
+                #
+                # The check's sandbox opens the webroot the policy names when
+                # platform step 07 writes its unit; one added since is shut.
+                #
+                said += (
+                    ". If the webroot was added after the installation, run"
+                    " 07-platform-services again so the check's sandbox opens it"
+                )
             raise CheckError(
                 "dependency_unavailable",
-                f"the test file could not be written in the webroot {webroot}: "
-                f"{error.strerror or error}",
+                said,
                 exit_code=exit_codes.CONFIG,
             ) from error
         try:

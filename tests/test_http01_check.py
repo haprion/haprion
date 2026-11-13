@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import functools
 import http.client
 import http.server
@@ -404,6 +405,15 @@ class TheWebroot(Scenario):
             http01_check.check(NAME, self.webroot, fetch=fetch, resolve=resolved)
         self.assertIn("could not be written", str(caught.exception))
         self.assertEqual(fetch.urls, [])
+
+    def test_a_webroot_the_sandbox_does_not_open_names_the_step_that_does(self) -> None:
+        with (
+            mock.patch("os.mkdir", side_effect=OSError(errno.EROFS, "Read-only file system")),
+            self.assertRaises(CheckError) as caught,
+        ):
+            http01_check.check(NAME, self.webroot, fetch=Webroot(self.webroot), resolve=resolved)
+        self.assertIn("Read-only file system", str(caught.exception))
+        self.assertIn("07-platform-services", str(caught.exception))
 
 
 @contextmanager

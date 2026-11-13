@@ -384,5 +384,19 @@ class TheJobPageOpensTheLinkedJob(LoginTestCase):
         self.assertNotIn('id="job-7"', nonsense)
 
 
+class TheBoundKeepsTheNewestJobs(unittest.TestCase):
+    def test_the_query_takes_the_newest_within_the_bound_and_gives_them_oldest_first(self) -> None:
+        cursor = mock.MagicMock()
+        cursor.fetchall.return_value = ["newest", "middle", "oldest"]
+        connection = mock.MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        now = datetime(2026, 11, 8, 12, 0, tzinfo=UTC)
+
+        found = db.deploy_jobs(connection, clusters=["alpha"], since=now, until=now)
+
+        self.assertIn("order by started_at desc, id desc", cursor.execute.call_args.args[0])
+        self.assertEqual(found, ["oldest", "middle", "newest"])
+
+
 if __name__ == "__main__":
     unittest.main()

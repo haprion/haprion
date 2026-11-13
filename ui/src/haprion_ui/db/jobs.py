@@ -312,7 +312,7 @@ def deploy_jobs(
             "   and (operation = 'deploy' "
             "        or (operation in ('changes_publish', 'cluster_node') "
             "            and payload->>'deploy' = 'true')) "
-            " order by started_at, id "
+            " order by started_at desc, id desc "
             " limit %(limit)s",
             {
                 "clusters": sorted(clusters),
@@ -321,7 +321,11 @@ def deploy_jobs(
                 "limit": DEPLOY_JOBS_BOUND,
             },
         )
-        return cursor.fetchall()
+        #
+        # The newest within the bound, so a window that holds more drops the
+        # oldest bands; given back oldest first, as the bands are read.
+        #
+        return cursor.fetchall()[::-1]
 
 
 def kept_job_ids(connection: Connection[Any], ids: Collection[int]) -> frozenset[int]:

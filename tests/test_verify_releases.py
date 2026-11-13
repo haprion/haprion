@@ -6,6 +6,7 @@ import importlib.machinery
 import importlib.util
 import io
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -46,11 +47,17 @@ payload = (pathlib.Path(args.source) / "PAYLOAD").read_bytes()
 
 #
 # `gh release download <tag> ... --dir <dir>`: the files the fake release of
-# that tag holds, from RELEASES/<tag>/.
+# that tag holds, from RELEASES/<tag>/. `gh api .../releases`: the tags of the
+# releases the app made, which the real one selects with its --jq, from the
+# file APP_RELEASES.
 #
 GH = """#!/usr/bin/env python3
 import os, pathlib, shutil, sys
 args = sys.argv[1:]
+if args[0] == "api":
+    assert "--paginate" in args and any("author.login" in a for a in args), args
+    sys.stdout.write(pathlib.Path(os.environ["APP_RELEASES"]).read_text())
+    sys.exit(0)
 tag = args[2]
 target = pathlib.Path(args[args.index("--dir") + 1])
 for path in (pathlib.Path(os.environ["RELEASES"]) / tag).iterdir():
@@ -94,23 +101,35 @@ class VerifyReleasesTest(unittest.TestCase):
             git(self.source, "commit", "--quiet", "--message", f"Version {tag[1:]}")
             git(self.source, "tag", tag)
             self.release(tag, payload)
+        # What the maintainer's clone fetches from; tags made there are not local yet.
+        self.origin = self.root / "origin.git"
+        subprocess.run(
+            ["/usr/bin/git", "clone", "--quiet", "--bare", str(self.source), str(self.origin)],
+            check=True,
+            capture_output=True,
+        )
+        git(self.source, "remote", "add", "origin", str(self.origin))
+        self.app_releases = self.root / "app-releases"
+        self.app_releases.write_text("v1.1.1\nv1.1.2\n", encoding="utf-8")
 
     def release(self, tag: str, payload: bytes) -> None:
         directory = self.releases / tag
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "haprion-cli_1.1.1.deb13_all.deb").write_bytes(payload)
 
-    def run_tool(self) -> tuple[int, str]:
+    def run_tool(self, since: str = "v1.1.0") -> tuple[int, str]:
         output = io.StringIO()
         os.environ["RELEASES"] = str(self.releases)
+        os.environ["APP_RELEASES"] = str(self.app_releases)
         self.addCleanup(os.environ.pop, "RELEASES", None)
+        self.addCleanup(os.environ.pop, "APP_RELEASES", None)
         with redirect_stdout(output):
             status = VERIFY.main(
                 [
                     "--source",
                     str(self.source),
                     "--since",
-                    "v1.1.0",
+                    since,
                     "--work",
                     str(self.root / "work"),
                     "--uv",
@@ -150,24 +169,44 @@ class VerifyReleasesTest(unittest.TestCase):
 
         self.assertEqual(VERIFY.tags_after(self.source, "v1.1.1"), ["v1.1.2", "v1.1.10"])
 
+    def test_a_tag_the_app_made_no_release_for_is_not_taken(self) -> None:
+        # A tag made by hand after --since, with a release of its own by the maintainer.
+        self.app_releases.write_text("v1.1.2\n", encoding="utf-8")
+
+        status, output = self.run_tool()
+
+        self.assertEqual(status, 0, output)
+        self.assertEqual(output.splitlines(), ["v1.1.2: IDENTICAL"])
+
+    def test_tags_only_origin_has_are_fetched_first(self) -> None:
+        (self.source / "PAYLOAD").write_bytes(b"three")
+        git(self.source, "add", "--all")
+        git(self.source, "commit", "--quiet", "--message", "Version 1.1.3")
+        git(self.source, "push", "--quiet", "origin", "HEAD:refs/tags/v1.1.3")
+        self.release("v1.1.3", b"three")
+        self.app_releases.write_text("v1.1.1\nv1.1.2\nv1.1.3\n", encoding="utf-8")
+
+        status, output = self.run_tool()
+
+        self.assertEqual(status, 0, output)
+        self.assertEqual(output.splitlines()[-1], "v1.1.3: IDENTICAL")
+
+    def test_a_work_tree_left_behind_is_pruned_before_the_next_run(self) -> None:
+        self.run_tool()
+        left = self.root / "work" / "v1.1.1" / "tree"
+        shutil.rmtree(left.parent)
+        git(self.source, "worktree", "add", "--detach", str(left), "v1.1.1")
+        shutil.rmtree(left)
+
+        status, output = self.run_tool()
+
+        self.assertEqual(status, 0, output)
+
     def test_no_release_since_is_said(self) -> None:
-        output = io.StringIO()
-        with redirect_stdout(output):
-            status = VERIFY.main(
-                [
-                    "--source",
-                    str(self.source),
-                    "--since",
-                    "v1.1.2",
-                    "--work",
-                    str(self.root / "work"),
-                    "--uv",
-                    "/usr/bin/true",
-                ]
-            )
+        status, output = self.run_tool("v1.1.2")
 
         self.assertEqual(status, 0)
-        self.assertIn("no release after v1.1.2", output.getvalue())
+        self.assertIn("no release after v1.1.2", output)
 
     def test_the_work_tree_is_removed_after_the_build(self) -> None:
         self.run_tool()

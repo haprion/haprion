@@ -94,6 +94,13 @@ def ssh_logins(lines: Iterable[str], accounts: Mapping[str, str]) -> dict[str, d
             continue
         if not isinstance(entry, dict):
             continue
+        #
+        # `SYSLOG_IDENTIFIER` is the sender's to set, so any local account can
+        # write a line that reads as a login. `_UID` and `_COMM` are the
+        # journal's own: sshd's lines are root's, from sshd's own programs.
+        #
+        if entry.get("_UID") != "0" or entry.get("_COMM") not in SSHD_IDENTIFIERS:
+            continue
         message = entry.get("MESSAGE")
         stamp = entry.get("__REALTIME_TIMESTAMP")
         if not isinstance(message, str) or not isinstance(stamp, str) or not is_digits(stamp):
@@ -158,6 +165,7 @@ def journal_lines(since: datetime, *, journalctl: str = JOURNALCTL) -> list[str]
     for identifier in SSHD_IDENTIFIERS:
         argv.append(f"--identifier={identifier}")
     argv.append("--grep=^Accepted publickey for ")
+    argv.append("_UID=0")
     try:
         completed = subprocess.run(  # noqa: S603 - fixed program, no shell, fixed arguments
             argv,

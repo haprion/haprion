@@ -52,15 +52,22 @@ ACCOUNTS = {
 }
 
 
-def journal(message: str, at: datetime) -> str:
+def journal(message: str, at: datetime, *, uid: str = "0", command: str = "sshd-session") -> str:
     return json.dumps(
-        {"MESSAGE": message, "__REALTIME_TIMESTAMP": str(int(at.timestamp() * 1_000_000))}
+        {
+            "MESSAGE": message,
+            "__REALTIME_TIMESTAMP": str(int(at.timestamp() * 1_000_000)),
+            "_UID": uid,
+            "_COMM": command,
+        }
     )
 
 
-def accepted(account: str, at: datetime) -> str:
+def accepted(account: str, at: datetime, **fields: str) -> str:
     return journal(
-        f"Accepted publickey for {account} from 192.0.2.10 port 52892 ssh2: ED25519 SHA256:abc", at
+        f"Accepted publickey for {account} from 192.0.2.10 port 52892 ssh2: ED25519 SHA256:abc",
+        at,
+        **fields,
     )
 
 
@@ -107,6 +114,32 @@ class TheSshWitness(unittest.TestCase):
         )
 
         self.assertEqual(found, {})
+
+    def test_a_line_that_another_account_or_program_wrote_is_not(self) -> None:
+        """`logger -t sshd-session` sets the identifier, but not the journal's own fields."""
+
+        found = receiver_fetches.ssh_logins(
+            [
+                accepted("crx-lb-02-example-net", NOW, uid="1000"),
+                accepted("crx-lb-03-example-net", NOW, command="logger"),
+                json.dumps(
+                    {
+                        "MESSAGE": "Accepted publickey for crx-lb-03-example-net from x port 1",
+                        "__REALTIME_TIMESTAMP": str(int(NOW.timestamp() * 1_000_000)),
+                    }
+                ),
+            ],
+            ACCOUNTS,
+        )
+
+        self.assertEqual(found, {})
+
+    def test_sshd_itself_is_trusted_as_well_as_its_session_program(self) -> None:
+        found = receiver_fetches.ssh_logins(
+            [accepted("crx-lb-02-example-net", NOW, command="sshd")], ACCOUNTS
+        )
+
+        self.assertEqual(found, {"lb-02.example.net": NOW})
 
 
 class TheHttpsWitness(unittest.TestCase):

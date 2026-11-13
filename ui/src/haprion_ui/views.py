@@ -782,6 +782,7 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
         clusters, status_rows, stale_after=stale_after, network_readings=network_rows
     )
     certificate_clusters, certificate_rows = read_source(request, config, CERTIFICATE_SOURCE)
+    certificate_rows = tuple(certificate_rows)
     certificate_view = certificates.build_certificate_overview(
         certificate_clusters,
         certificate_rows,
@@ -815,9 +816,10 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
         )
         items += attention.from_packages(db.package_waiting(connection))
         items += attention.from_api_tokens(db.api_tokens(connection), now=now)
-        items += attention.from_blocklists(
-            db.blocklist_states(connection), (row.name for row in db.blocklists(connection))
-        )
+        blocklist_rows = db.blocklists(connection)
+        blocklist_states = db.blocklist_states(connection)
+        items += attention.from_blocklists(blocklist_states, (row.name for row in blocklist_rows))
+        items += attention.from_blocklist_timer(blocklist_rows, blocklist_states, now=now)
         items += attention.from_regeneration(regeneration_rows)
         if config.traffic_logs.enabled:
             items += attention.from_waf(
@@ -830,6 +832,7 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
             now=now,
         )
     unread = frozenset(view.cluster for view in board.clusters if view.stale)
+    items += attention.from_blocklist_nodes(certificate_rows, status_rows, now=now, unread=unread)
     items += attention.from_log_forwarding(status_rows, now=now, unread=unread)
     items += attention.from_traffic_stream(status_rows, unread=unread)
     items += attention.from_dashboard(

@@ -8,6 +8,7 @@ would be untestable with a fixed file.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -204,6 +205,28 @@ class ResultTests(unittest.TestCase):
         self.assertEqual(
             [entry["referenced_by_cluster"] for entry in result["certificates"]],
             [True, True, False],
+        )
+
+    def test_the_clusters_blocklist_files_are_listed_with_their_hash_and_time(self) -> None:
+        # What the web compares with what each node reports (review 2026-11-13, BL06).
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "alpha.pem").write_text(_pem("alpha.test"), encoding="ascii")
+            self.assertEqual(self._result(directory, ("alpha",))["blocklists"], [])
+            lists = Path(directory) / "blocklists"
+            lists.mkdir()
+            (lists / "crowdsec.lst").write_bytes(b"192.0.2.0/24\n")
+            os.utime(lists / "crowdsec.lst", (1_700_000_000, 1_700_000_000))
+            result = self._result(directory, ("alpha",))
+
+        self.assertEqual(
+            result["blocklists"],
+            [
+                {
+                    "id": "crowdsec",
+                    "fingerprint_sha256": hashlib.sha256(b"192.0.2.0/24\n").hexdigest(),
+                    "written_at": "2023-11-14T22:13:20Z",
+                }
+            ],
         )
 
     def test_the_registry_says_where_a_certificate_comes_from_and_goes(self) -> None:

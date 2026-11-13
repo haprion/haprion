@@ -241,6 +241,20 @@
           "type": "array",
           "items": { "$ref": "#/$defs/deployable_certificate" }
         },
+        "blocklists": {
+          "description": "Additive: the blocklist files the refresh timer wrote for this cluster, each by the SHA-256 of its bytes and when it was written, for comparing with what each node reports. Absent from an older producer.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "fingerprint_sha256", "written_at"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" },
+              "fingerprint_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "written_at": { "type": "string", "format": "date-time" }
+            },
+            "additionalProperties": false
+          }
+        },
         "registry": false
       },
       "additionalProperties": true

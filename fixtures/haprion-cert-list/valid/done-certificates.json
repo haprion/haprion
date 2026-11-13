@@ -21,6 +21,13 @@
         "deployable": true,
         "validation_error": null
       }
+    ],
+    "blocklists": [
+      {
+        "id": "crowdsec",
+        "fingerprint_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "written_at": "2026-11-13T09:00:00Z"
+      }
     ]
   },
   "warnings": [],

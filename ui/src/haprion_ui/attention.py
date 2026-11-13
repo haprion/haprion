@@ -32,7 +32,7 @@ from haprion.node_package import short_version
 from haprion_ui import api_tokens, labels, moments
 from haprion_ui import jobs as jobs_module
 from haprion_ui.cluster_identity import card_link as cluster_card_link
-from haprion_ui.db import ApiToken, BlocklistState, ClaimPause, Job, PackageWaiting
+from haprion_ui.db import ApiToken, Blocklist, BlocklistState, ClaimPause, Job, PackageWaiting
 
 type Severity = Literal["critical", "warning"]
 SEVERITIES: tuple[Severity, ...] = ("critical", "warning")
@@ -1185,6 +1185,142 @@ def from_blocklists(states: Sequence[BlocklistState], defined: Iterable[str]) ->
                 else "never",
             )
         )
+    return items
+
+
+#
+# How long after a list's time a pass may be late before it is said (a pass is
+# due every 15 minutes), and how long a written file may take to reach the
+# nodes: two passes. The reading of a cluster's lists and of its nodes are
+# compared when they were taken within five minutes of each other.
+#
+BLOCKLIST_LATE = timedelta(hours=1)
+BLOCKLIST_REACHES = timedelta(minutes=30)
+BLOCKLIST_READINGS_APART = timedelta(minutes=5)
+
+
+def from_blocklist_timer(
+    listed: Sequence[Blocklist], states: Sequence[BlocklistState], *, now: datetime
+) -> list[Item]:
+    """Lists the refresh timer has not tried for much longer than they ask (review 2026-11-13, BL06).
+
+    A stopped timer, a pass that hangs and a pass that stops before it writes
+    its state all look the same from here: nothing changes, and the lists age
+    while their rows look fine. A list is tried at its interval, or hourly
+    while it fails; `BLOCKLIST_LATE` is the slack. A list never tried counts
+    from its last save, which starts a pass. The state is the poller's last
+    reading, so a poller that has not read lately says nothing here.
+    """
+
+    seen = {state.name: state for state in states}
+    items: list[Item] = []
+    for row in sorted(listed, key=lambda item: item.name):
+        state = seen.get(row.name)
+        if state is not None and now - state.seen_at > BLOCKLIST_LATE:
+            continue
+        if state is None or state.attempted_at is None:
+            last, wait = row.updated_at, timedelta(0)
+        else:
+            failed = state.failed_at is not None and state.failed_at == state.attempted_at
+            hours = min(row.every_hours, 1) if failed else row.every_hours
+            last, wait = state.attempted_at, timedelta(hours=hours)
+        if now - last <= wait + BLOCKLIST_LATE:
+            continue
+        items.append(
+            Item(
+                kind="blocklist",
+                severity="warning",
+                cluster=None,
+                subject=row.name,
+                message=(
+                    f"the manager has not refreshed this blocklist since {moments.moment(last)}; "
+                    "its refresh timer may have stopped"
+                    if state is not None and state.attempted_at is not None
+                    else "the manager has not fetched this blocklist yet; "
+                    "its refresh timer may have stopped"
+                ),
+                since=last,
+                link="/settings#blocklists",
+                variant="late",
+            )
+        )
+    return items
+
+
+def from_blocklist_nodes(
+    certificate_rows: Iterable[Any],
+    status_rows: Iterable[Any],
+    *,
+    now: datetime,
+    unread: Collection[str] = (),
+) -> list[Item]:
+    """Nodes that do not carry a cluster's current blocklist, whatever stopped it (review 2026-11-13, BL06).
+
+    The manager's file is the hash the cluster's certificate listing carries
+    (`blocklists`); the node's is the one it reports for the same list, as it
+    does for its certificates. A file written less than `BLOCKLIST_REACHES`
+    before the node was read is not late yet. A node whose package does not
+    report lists is the deploy's to say, and a cluster whose reading is old
+    (`unread`) says nothing, as for the log forwarding.
+    """
+
+    statuses = {row.cluster: row for row in status_rows}
+    items: list[Item] = []
+    for listing in certificate_rows:
+        status = statuses.get(listing.cluster)
+        files = listing.result.get("blocklists") if isinstance(listing.result, Mapping) else None
+        if (
+            status is None
+            or listing.cluster in unread
+            or not isinstance(files, list)
+            or abs(status.observed_at - listing.observed_at) > BLOCKLIST_READINGS_APART
+        ):
+            continue
+        result = status.result if isinstance(status.result, Mapping) else {}
+        for entry in result.get("nodes") or ():
+            node_status = entry.get("status") if isinstance(entry, Mapping) else None
+            if not entry.get("status_ok") or not isinstance(node_status, Mapping):
+                continue
+            carried = node_status.get("blocklists")
+            if not isinstance(carried, list):
+                continue
+            held = {
+                str(item.get("id")): item.get("fingerprint_sha256")
+                for item in carried
+                if isinstance(item, Mapping)
+            }
+            behind: dict[str, datetime] = {}
+            for file in files:
+                if not isinstance(file, Mapping):
+                    continue
+                try:
+                    written = datetime.fromisoformat(str(file["written_at"]))
+                except (KeyError, ValueError):
+                    continue
+                if (
+                    held.get(str(file.get("id"))) != file.get("fingerprint_sha256")
+                    and status.observed_at - written >= BLOCKLIST_REACHES
+                ):
+                    behind[str(file.get("id"))] = written
+            if not behind:
+                continue
+            names = ", ".join(sorted(behind))
+            since = min(behind.values())
+            items.append(
+                Item(
+                    kind="blocklist",
+                    severity="warning",
+                    cluster=listing.cluster,
+                    subject=str(entry.get("name", "")),
+                    message=(
+                        f"{entry.get('name', '')} does not have the current blocklist {names}; "
+                        f"the manager wrote it {moments.moment(since)} and it has not reached the node"
+                    ),
+                    since=since,
+                    link="/settings#blocklists",
+                    variant=names,
+                )
+            )
     return items
 
 

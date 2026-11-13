@@ -812,5 +812,105 @@ class NeedsAttention(unittest.TestCase):
         self.assertEqual(attention.from_blocklists([recovered], ["community"]), [])
 
 
+WRITTEN = NOW - timedelta(hours=2)
+FILE = "a" * 64
+OLD = "b" * 64
+
+
+def _readings(
+    carried: Any, *, cluster: str = "alpha", seen: datetime = NOW, written: datetime = WRITTEN
+) -> tuple[list[db.ClusterCertificates], list[db.ClusterStatus]]:
+    """What the poller holds for one cluster: its published lists and what one node reports."""
+
+    listed = [
+        {
+            "id": "community",
+            "fingerprint_sha256": FILE,
+            "written_at": written.isoformat().replace("+00:00", "Z"),
+        }
+    ]
+    node: dict[str, Any] = {"name": "node-a", "status_ok": True, "status": {}}
+    if carried is not None:
+        node["status"]["blocklists"] = carried
+    return (
+        [
+            db.ClusterCertificates(
+                cluster, seen, "done", {"certificates": [], "blocklists": listed}, [], None, None
+            )
+        ],
+        [db.ClusterStatus(cluster, seen, "done", {"nodes": [node]}, [], None, None)],
+    )
+
+
+class NeedsAttentionAboutWhatTheNodesCarry(unittest.TestCase):
+    """The nodes' own hash of each list against the manager's file (review 2026-11-13, BL06)."""
+
+    def items(self, carried: Any, **kwargs: Any) -> list[attention.Item]:
+        certificates, statuses = _readings(carried, **kwargs)
+        return attention.from_blocklist_nodes(certificates, statuses, now=NOW)
+
+    def test_a_node_with_an_older_list_is_named_with_the_list(self) -> None:
+        (item,) = self.items([{"id": "community", "fingerprint_sha256": OLD}])
+
+        self.assertEqual((item.kind, item.cluster, item.subject), ("blocklist", "alpha", "node-a"))
+        self.assertEqual(item.link, "/settings#blocklists")
+        self.assertIn("node-a does not have the current blocklist community", item.message)
+
+    def test_a_node_without_the_list_is_named_too(self) -> None:
+        self.assertEqual(len(self.items([])), 1)
+
+    def test_a_node_with_the_file_says_nothing(self) -> None:
+        self.assertEqual(self.items([{"id": "community", "fingerprint_sha256": FILE}]), [])
+
+    def test_a_file_written_within_a_pass_is_not_late_yet(self) -> None:
+        self.assertEqual(self.items([], written=NOW - timedelta(minutes=10)), [])
+
+    def test_a_node_package_without_lists_is_the_deploys_to_say(self) -> None:
+        self.assertEqual(self.items(None), [])
+
+    def test_two_readings_far_apart_are_not_compared(self) -> None:
+        certificates, statuses = _readings([])
+        late = [replace(row, observed_at=NOW + timedelta(hours=1)) for row in statuses]
+        self.assertEqual(attention.from_blocklist_nodes(certificates, late, now=NOW), [])
+
+    def test_a_cluster_whose_reading_is_old_says_nothing(self) -> None:
+        certificates, statuses = _readings([])
+        self.assertEqual(
+            attention.from_blocklist_nodes(certificates, statuses, now=NOW, unread={"alpha"}), []
+        )
+
+
+class NeedsAttentionWhenTheTimerStands(unittest.TestCase):
+    def items(
+        self, state: Any, *, read: timedelta = timedelta(0), **kwargs: Any
+    ) -> list[attention.Item]:
+        """`kwargs` is how long after the list's last try it is now; `read` how long ago the poller read."""
+
+        now = NOW + timedelta(**kwargs)
+        rows = [] if state is None else [replace(state, seen_at=now - read)]
+        return attention.from_blocklist_timer([blocklist_row()], rows, now=now)
+
+    def test_a_list_not_tried_for_much_longer_than_its_interval_says_so(self) -> None:
+        (item,) = self.items(state_row(), hours=26)
+
+        self.assertEqual((item.kind, item.subject), ("blocklist", "community"))
+        self.assertIn("has not refreshed", item.message)
+
+    def test_a_list_within_its_interval_and_a_grace_says_nothing(self) -> None:
+        self.assertEqual(self.items(state_row(), hours=24, minutes=30), [])
+
+    def test_a_failing_list_is_judged_by_the_hourly_retry(self) -> None:
+        failed = state_row(failed_at=NOW, error="no")
+        self.assertEqual(len(self.items(failed, hours=3)), 1)
+        self.assertEqual(self.items(failed, minutes=90), [])
+
+    def test_a_list_never_tried_is_judged_from_when_it_was_saved(self) -> None:
+        self.assertEqual(len(self.items(None, hours=2)), 1)
+        self.assertEqual(self.items(None, minutes=20), [])
+
+    def test_a_poller_that_has_not_read_the_state_lately_says_nothing_here(self) -> None:
+        self.assertEqual(self.items(state_row(), read=timedelta(hours=3), hours=30), [])
+
+
 if __name__ == "__main__":
     unittest.main()

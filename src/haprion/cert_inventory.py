@@ -41,6 +41,7 @@ from typing import Any
 from haprion.cert_registry import receiver_in_use
 from haprion.cert_request_state import pending_csrs, request_is_interface
 from haprion.certificates import (
+    BLOCKLIST_DIRECTORY,
     CERTIFICATE_OPENING,
     MAX_CERTIFICATE_BYTES,
     CertificateError,
@@ -49,6 +50,7 @@ from haprion.certificates import (
     certificate_path,
     leaf_block,
     leaf_fingerprint,
+    read_blocklists,
 )
 from haprion.config import (
     AUTHORITY,
@@ -965,9 +967,36 @@ def cert_list_result(
                 registered=entries.get(name),
             )
             for name in order
-        ]
+        ],
+        "blocklists": _blocklist_files(root),
     }
     return result
+
+
+def _blocklist_files(root: Path) -> list[dict[str, Any]]:
+    """The blocklist files the refresh timer wrote for the cluster, by hash and when (B500).
+
+    The interface compares them with what each node reports it carries. A
+    directory that cannot be read lists none: the certificates are the answer
+    this reading is for.
+    """
+
+    try:
+        refs = read_blocklists(root)
+        return [
+            {
+                "id": ref.id,
+                "fingerprint_sha256": ref.fingerprint,
+                "written_at": _timestamp(
+                    datetime.fromtimestamp(
+                        (root / BLOCKLIST_DIRECTORY / f"{ref.id}.lst").stat().st_mtime, UTC
+                    )
+                ),
+            }
+            for ref in refs
+        ]
+    except (CertificateError, OSError):
+        return []
 
 
 def manager_result(

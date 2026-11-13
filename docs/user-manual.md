@@ -1727,6 +1727,12 @@ again after an hour. An empty answer is a failure too: an empty list would refus
 fetch from a new URL fails, the list from the old URL stays in effect and the row says it is from the
 previous source, until a fetch from the new one succeeds.
 
+**When a list does not reach the nodes,** *Needs attention* names the node that does not have the current
+list. It does the same when the manager has not tried a list for much longer than its interval, which
+means the refresh timer has stopped. A source that answers slowly is given up after 30 seconds in all,
+and a cluster whose network description cannot be read is left out of the pass and named by *Test* and
+*Check address*.
+
 **Is this address on a list?** *Check address* on *Settings → Blocklists* looks it up in the lists kept
 now, without fetching. The answer names the list, the entry that holds the address, when the list was
 fetched, and the clusters whose *Except* keeps it off.

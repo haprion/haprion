@@ -303,6 +303,35 @@ Before setting it up, run the CI workflow by hand (`workflow_dispatch`): the rul
 tests and the installation test run then too, and both should pass on the runner before a merge
 waits for them.
 
+## Automatic releases
+
+The watch's merges reach the repository's packages only through a release. Without one, a fixed
+dependency stayed in `main` until someone released by hand. `.github/workflows/auto-release.yml` runs every
+hour and asks `tools/release-plan decide` what `main` holds since the last `v*` tag:
+
+1. **Only the watch's and Dependabot's commits.** Each commit since the tag must be the app's lock or
+   pin update, touching only those files, or Dependabot's, touching only `.github/`. Anything else is a
+   person's change, which an automatic release would ship unreviewed: nothing is released, and while a
+   security fix waits behind it an issue says so
+2. **When.** A security fix is what the watch knows to be one: the locks' proposal, which only moves a
+   package an advisory names, and a WAF proposal made while govulncheck finds something the pinned
+   engine reaches (its commit subject says *for a known vulnerability*). The first one merged starts a
+   day, and everything merged by then goes in the same release. Other changes a package carries wait for
+   the first of the next month. An update of the actions releases nothing
+3. **A version proposal.** The next patch version, on the branch `release-watch`, in a pull request. The
+   gates run on it, and the installation test builds every package from it and installs them new and as
+   an update from the latest release. The workflow merges it once every check passed, unless it is
+   labelled `hold`
+4. **The tag and the release.** Once `main`'s own gates passed on the merge, two runners build the
+   release and the builds are compared byte for byte. The tag is pushed, and the release made with the
+   first build's files and a note listing the merged fixes. The tag starts `apt-repo.yml`, which builds
+   twice more, compares with the release's files, signs and publishes
+
+Every build of an automatic release runs on GitHub. A release made by hand therefore starts by building
+every automatic release since the last one again on the maintainer's machine and comparing it with the
+release's files (`tools/verify-releases`); a difference stops the release. The version is always a patch
+version; a new minor version is always made by hand.
+
 ## GitHub repository settings
 
 Before the first push, create the repository secret `HAPRION_DENYLIST`. When the repository

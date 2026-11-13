@@ -164,6 +164,16 @@ Publish a cluster again only once its nodes are updated and prepared: `sudo apt 
 socket is not sent to a node still on the old package. The deploy stops before it touches any node and names them
 (`traffic_stream_not_prepared`).
 
+**What is released when.** A version with new functions (1.2, 1.3) is made by hand. A patch version (1.1.1,
+1.1.2) is made automatically and carries only updated dependencies and WAF engine, never a new function:
+
+- a fix for a known vulnerability in a dependency or the WAF engine is released within a day
+- other dependency and WAF updates are released together on the first of the month, when there are any
+
+Nothing is installed by itself; an update is `sudo apt upgrade` when you choose. The WAF engine and its rules
+are in the repository as soon as an update of them is merged, before the release that names it. With the
+[update check](user-manual.md#features-and-advanced-configuration) on, the header says when a newer release exists.
+
 A new HAProxy is the exception. The manager checks each configuration with its own HAProxy before a node gets it,
 so the manager must not be the newer of the two. When `apt list --upgradable` on the manager shows `haproxy`, update
 the nodes first and the manager last ([Keeping HAProxy current](user-manual.md#keeping-haproxy-current)).

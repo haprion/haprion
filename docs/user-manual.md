@@ -307,6 +307,7 @@ One word per thing, the same on every page:
 | Older package | a node whose packages are older than another node's | the dashboard's *Runtime* cell |
 | Older node package | a node whose `haprion-node` is older than the one the manager's release carries | the dashboard's *Runtime* cell, *Needs attention* |
 | Newer node package | a node whose `haprion-node` is newer than the one the manager's release carries | the dashboard's *Runtime* cell, *Needs attention* |
+| Older WAF engine | a node whose `haprion-coraza-spoa` is older than the newest the manager has, installed on it or waiting in the repository | the dashboard's *Runtime* cell, *Needs attention* |
 | Node package not configured | a node whose `haprion-node` install script failed, or whose unpacking stopped; `sudo dpkg --configure -a` on the node finishes it, or `sudo apt install --reinstall haprion-node` | the dashboard's *Runtime* cell, *Needs attention* |
 | Reconfigured · deploy to activate | a published change to a proxy the nodes do not serve yet | *Proxies*, *Network* |
 | Waiting for deploy | how far a proxy's newest version has come | the proxy's page |
@@ -8024,6 +8025,10 @@ sudo apt update && sudo apt upgrade                      # on that cluster's oth
 The dashboard shows which nodes an upgrade has not reached. Such a node says *Older node package* in its
 *Runtime* cell, and pointing at it gives both versions. *Needs attention* lists it until it runs the
 package the manager's release carries. `haprion-status` says the same on the node's `Node package:` line.
+
+The WAF engine is published apart from the releases, so a node can be left behind it on its own. Such a
+node says *Older WAF engine*, and *Needs attention* lists it until `sudo apt upgrade` has run on it.
+`haprion-status` adds `OLDER than this host's` to the node's `WAF engine:` line.
 
 On a node that is already joined, the package replaces the node scripts and records their digests
 again; it changes nothing else. It does not run `04-node-prepare`, the step that sets up what the

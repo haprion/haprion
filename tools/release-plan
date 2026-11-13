@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Whether the dependency fixes on main are released now, and as which version (B355, B505, B506).
 
-    tools/release-plan decide --source <tree> [--now <iso>] [--app <login>]
+    tools/release-plan decide --source <tree> --pulls <json> [--now <iso>] [--app <login>]
     tools/release-plan bump --source <tree> --version <x.y.z>
 
 The upstream watch proposes, and the merge workflow merges, the fixes the
@@ -24,10 +24,18 @@ release (B355). Anything else a package carries - new rules, an engine or Go
 update without a finding - waits for the first of the next month (B506). An
 update of the actions is no change to a package and never releases (B505).
 
-The answer is read from git alone, so what the workflow does can be tested
-here: who made each commit, what it says, which files it touches, and when
-the merge that brought it in landed. `bump` writes a version into the three
-files that hold it; the workflow refreshes the two locks after it.
+The answer is read from git and from what GitHub says about the pull requests
+(`--pulls`: for each one the workflow found in the log, its number, who
+opened it and the commit it was merged as). A commit's author name is only a
+name: what lets a change in is that every commit on main's first-parent line
+since the tag is the merge of a pull request the app or Dependabot opened,
+that GitHub merged as exactly that commit (B507). Without the file no merge
+can be verified, and anything since the tag is `blocked`. Whatever a merge
+commit carries itself (a conflict resolved on the branch, or content added to
+the merge on main) is no commit of the watch's, and the tree since the tag is
+held to the files the watch, Dependabot and the version proposal change.
+`bump` writes a version into the three files that hold it; the workflow
+refreshes the two locks after it.
 """
 
 from __future__ import annotations
@@ -37,7 +45,7 @@ import json
 import re
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -84,6 +92,26 @@ class PlanError(Exception):
 
 
 @dataclass(frozen=True, slots=True)
+class Pull:
+    """What GitHub says about a merged pull request."""
+
+    number: int
+    author: str
+    merge_commit_sha: str
+
+
+def read_pulls(path: Path) -> dict[int, Pull]:
+    """The pull requests file: a list of `{number, author, merge_commit_sha}`."""
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        pulls = [Pull(int(p["number"]), str(p["author"]), str(p["merge_commit_sha"])) for p in data]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise PlanError(f"{path} is not a list of pull requests: {exc!r}") from exc
+    return {pull.number: pull for pull in pulls}
+
+
+@dataclass(frozen=True, slots=True)
 class Change:
     commit: str
     subject: str
@@ -94,6 +122,8 @@ class Change:
     shipped: bool
     merged_at: str
     pull_request: int | None
+    why: str = ""
+    """For `other`: what is wrong with it."""
 
 
 @dataclass(slots=True)
@@ -153,8 +183,32 @@ def _pull_request(subject: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def changes_since(source: Path, tag: str, app: str) -> list[Change]:
-    """Every commit since the tag, with the time the merge that brought it to main landed."""
+def _unverified(head: str, subject: str, pulls: Mapping[int, Pull] | None, app: str) -> str:
+    """Why a merge on main's first-parent line is not a verified pull request merge; empty if it is."""
+
+    number = _pull_request(subject)
+    if number is None:
+        return "a merge that is not a pull request's"
+    if pulls is None:
+        return "no pull request data to verify it against"
+    pull = pulls.get(number)
+    if pull is None:
+        return f"pull request #{number} is not among those read"
+    if pull.author not in (app, DEPENDABOT):
+        return f"pull request #{number} was opened by {pull.author}"
+    if pull.merge_commit_sha != head:
+        return f"pull request #{number} was merged as {pull.merge_commit_sha[:8]}"
+    return ""
+
+
+def changes_since(
+    source: Path, tag: str, app: str, pulls: Mapping[int, Pull] | None = None
+) -> list[Change]:
+    """Every commit since the tag, with the time the merge that brought it to main landed.
+
+    Main's first-parent line must be pull request merges and nothing else; the
+    commits a merge brought in must be plain commits, no merges among them.
+    """
 
     changes: list[Change] = []
     first_parent = _git(
@@ -162,39 +216,62 @@ def changes_since(source: Path, tag: str, app: str) -> list[Change]:
         "log",
         "--first-parent",
         "--reverse",
-        "--format=%H%x00%cI%x00%P%x00%s",
+        "--format=%H%x00%cI%x00%P%x00%an%x00%s",
         f"{tag}..HEAD",
     )
     for line in first_parent.splitlines():
-        head, landed, parents, subject = line.split("\x00", 3)
+        head, landed, parents, committer, subject = line.split("\x00", 4)
         parent_list = parents.split()
         number = _pull_request(subject) if len(parent_list) > 1 else None
-        brought = (
-            _git(
-                source,
-                "log",
-                "--no-merges",
-                "--reverse",
-                "--format=%H",
-                f"{parent_list[0]}..{head}",
-            ).split()
-            if len(parent_list) > 1
-            else [head]
-        )
-        for commit in brought:
-            author, commit_subject = (
-                _git(source, "log", "-1", "--format=%an%x00%s", commit)
-                .rstrip("\n")
-                .split("\x00", 1)
+        if len(parent_list) != 2:
+            why = "a commit on main that no pull request merged"
+        else:
+            why = _unverified(head, subject, pulls, app)
+        if why:
+            changes.append(
+                Change(head, subject, committer, "other", False, False, landed, number, why)
             )
+            continue
+        for commit in _git(
+            source, "log", "--reverse", "--format=%H%x00%P", f"{parent_list[0]}..{parent_list[1]}"
+        ).splitlines():
+            sha, commit_parents = commit.split("\x00")
+            author, commit_subject = (
+                _git(source, "log", "-1", "--format=%an%x00%s", sha).rstrip("\n").split("\x00", 1)
+            )
+            if len(commit_parents.split()) > 1:
+                changes.append(
+                    Change(
+                        sha,
+                        commit_subject,
+                        author,
+                        "other",
+                        False,
+                        False,
+                        landed,
+                        number,
+                        "a merge on the pull request's branch",
+                    )
+                )
+                continue
             files = frozenset(
-                _git(source, "diff-tree", "--no-commit-id", "--name-only", "-r", commit).split()
+                _git(source, "diff-tree", "--no-commit-id", "--name-only", "-r", sha).split()
             )
             kind, security, shipped = _classify(commit_subject, author, files, app)
             changes.append(
-                Change(commit, commit_subject, author, kind, security, shipped, landed, number)
+                Change(sha, commit_subject, author, kind, security, shipped, landed, number)
             )
     return changes
+
+
+def outside_the_watch(source: Path, tag: str, revision: str = "HEAD") -> str:
+    """The first file that changed since the tag and is not one the watch, Dependabot or the version changes."""
+
+    allowed = LOCK_FILES | WAF_FILES | VERSION_FILES
+    for path in _git(source, "diff", "--name-only", tag, revision).split():
+        if path not in allowed and not path.startswith(".github/"):
+            return path
+    return ""
 
 
 def _first_of_next_month(when: datetime) -> datetime:
@@ -202,7 +279,14 @@ def _first_of_next_month(when: datetime) -> datetime:
     return datetime(year, month, 1, tzinfo=UTC)
 
 
-def plan(changes: Sequence[Change], tag: str, now: datetime, *, head_version: str) -> Plan:
+def plan(
+    changes: Sequence[Change],
+    tag: str,
+    now: datetime,
+    *,
+    head_version: str,
+    outside: str = "",
+) -> Plan:
     """What the workflow does next."""
 
     result = Plan(outcome="nothing", reason="", last=tag, changes=list(changes))
@@ -211,7 +295,15 @@ def plan(changes: Sequence[Change], tag: str, now: datetime, *, head_version: st
         first = others[0]
         result.outcome = "blocked"
         result.reason = (
-            f"{first.commit[:8]} ({first.subject}) is not the watch's or Dependabot's; "
+            f"{first.commit[:8]} ({first.subject}) is not the watch's or Dependabot's "
+            f"({first.why}); it waits for a release made by hand"
+        )
+        result.security = any(change.security for change in changes)
+        return result
+    if outside:
+        result.outcome = "blocked"
+        result.reason = (
+            f"{outside} changed since {tag} and is no file the watch or Dependabot changes; "
             "it waits for a release made by hand"
         )
         result.security = any(change.security for change in changes)
@@ -311,6 +403,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     decide = commands.add_parser("decide")
     decide.add_argument("--source", type=Path, required=True)
+    decide.add_argument(
+        "--pulls", type=Path, help="the pull requests merged since the tag, as JSON"
+    )
     decide.add_argument("--now", type=datetime.fromisoformat)
     decide.add_argument("--app", default=DEFAULT_APP)
     decide.add_argument("--notes", type=Path, help="write the release note here")
@@ -326,11 +421,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if now.tzinfo is None:
             raise PlanError("--now needs a time zone")
         tag = last_tag(args.source)
+        pulls = read_pulls(args.pulls) if args.pulls else None
         result = plan(
-            changes_since(args.source, tag, args.app),
+            changes_since(args.source, tag, args.app, pulls),
             tag,
             now,
             head_version=head_version(args.source),
+            outside=outside_the_watch(args.source, tag),
         )
     except (PlanError, OSError) as exc:
         print(f"release-plan: {exc}", file=sys.stderr)

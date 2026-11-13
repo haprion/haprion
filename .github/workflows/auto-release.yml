@@ -47,6 +47,7 @@ jobs:
     permissions:
       contents: read
       checks: read # whether main's gates passed on the head to be tagged
+      pull-requests: read # who opened each merged pull request, and the commit it was merged as
     outputs:
       outcome: ${{ steps.plan.outputs.outcome }}
       next: ${{ steps.plan.outputs.next }}
@@ -61,13 +62,30 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # A commit's author name is only a name. What GitHub says of each pull
+      # request merged since the tag - who opened it, which commit it was
+      # merged as - is what lets a merge be counted as the watch's (B507). One
+      # the API does not know is left out, and the plan blocks on it.
       - name: Decide
         id: plan
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          python3 tools/release-plan decide --source . --notes "${RUNNER_TEMP}/notes.md" \
-            | tee "${RUNNER_TEMP}/plan.json"
+          tag=$(git describe --tags --abbrev=0 --match 'v*' HEAD)
+          pulls="${RUNNER_TEMP}/pulls.jsonl"
+          : > "${pulls}"
+          for number in $(git log --first-parent --format=%s "${tag}^..HEAD" \
+              | sed -n 's/^Merge pull request #\([0-9][0-9]*\) .*/\1/p'); do
+            gh api "repos/${REPOSITORY}/pulls/${number}" \
+              --jq '{number: .number, author: .user.login, merge_commit_sha: .merge_commit_sha}' \
+              >> "${pulls}" || echo "pull request #${number} is not known to GitHub"
+          done
+          jq -s . "${pulls}" > "${RUNNER_TEMP}/pulls.json"
+          python3 tools/release-plan decide --source . --pulls "${RUNNER_TEMP}/pulls.json" \
+            --notes "${RUNNER_TEMP}/notes.md" | tee "${RUNNER_TEMP}/plan.json"
           {
             echo "outcome=$(jq -r .outcome "${RUNNER_TEMP}/plan.json")"
             echo "next=$(jq -r '.next // empty' "${RUNNER_TEMP}/plan.json")"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -35,6 +36,7 @@ class Repository:
 
     def __init__(self, root: Path) -> None:
         self.root = root
+        self.pulls: dict[int, dict[str, Any]] = {}
         self.git("init", "--quiet", "--initial-branch=main")
         for relative, text in (
             ("pyproject.toml", '[project]\nname = "haprion"\nversion = "1.1.0"\n'),
@@ -48,11 +50,11 @@ class Repository:
             (".github/workflows/ci.yml", "name: CI\n"),
         ):
             self.write(relative, text)
-        self.commit("ssavant2", "Version 1.1.0", "2026-11-14T10:00:00+00:00")
+        self.commit("operator", "Version 1.1.0", "2026-11-14T10:00:00+00:00")
         self.git("tag", "v1.1.0")
 
     def git(
-        self, *args: str, author: str = "ssavant2", when: str = "2026-11-14T10:00:00+00:00"
+        self, *args: str, author: str = "operator", when: str = "2026-11-14T10:00:00+00:00"
     ) -> str:
         environment = dict(
             os.environ,
@@ -110,14 +112,31 @@ class Repository:
             author=APP,
             when=landed,
         )
+        self.register(number, author)
 
-    def decide(self, now: str) -> Any:
+    def register(self, number: int, opened_by: str) -> None:
+        """What GitHub says of pull request `number`: merged as main's head."""
+
+        self.pulls[number] = {
+            "number": number,
+            "author": opened_by,
+            "merge_commit_sha": self.git("rev-parse", "HEAD").strip(),
+        }
+
+    def pulls_file(self) -> Path:
+        path = self.root.parent / f"{self.root.name}-pulls.json"
+        path.write_text(json.dumps(list(self.pulls.values())), encoding="utf-8")
+        return path
+
+    def decide(self, now: str, *, pulls: bool = True) -> Any:
         tag = PLAN.last_tag(self.root)
+        read = PLAN.read_pulls(self.pulls_file()) if pulls else None
         return PLAN.plan(
-            PLAN.changes_since(self.root, tag, APP),
+            PLAN.changes_since(self.root, tag, APP, read),
             tag,
             datetime.fromisoformat(now),
             head_version=PLAN.head_version(self.root),
+            outside=PLAN.outside_the_watch(self.root, tag),
         )
 
 
@@ -221,7 +240,7 @@ class ReleasePlanTest(unittest.TestCase):
     def test_a_person_s_commit_blocks_the_release(self) -> None:
         self.locks(11, "2026-11-15T09:00:00+00:00")
         self.repository.write("src/haprion/generate.py", "x = 1\n")
-        self.repository.commit("ssavant2", "Generate something new", "2026-11-15T10:00:00+00:00")
+        self.repository.commit("operator", "Generate something new", "2026-11-15T10:00:00+00:00")
 
         result = self.repository.decide("2026-11-20T00:00:00+00:00")
 
@@ -246,7 +265,7 @@ class ReleasePlanTest(unittest.TestCase):
     def test_the_watch_s_subject_from_a_person_is_not_the_watch(self) -> None:
         self.repository.merge(
             13,
-            "ssavant2",
+            "operator",
             PLAN.LOCKS_SUBJECT,
             {"uv.lock": "lock 13\n"},
             made="2026-11-15T09:00:00+00:00",
@@ -254,6 +273,130 @@ class ReleasePlanTest(unittest.TestCase):
         )
 
         self.assertEqual(self.repository.decide("2026-11-20T00:00:00+00:00").outcome, "blocked")
+
+    def test_no_pull_request_data_verifies_no_merge(self) -> None:
+        self.locks(15, "2026-11-15T09:00:00+00:00")
+
+        result = self.repository.decide("2026-11-20T00:00:00+00:00", pulls=False)
+
+        self.assertEqual(result.outcome, "blocked")
+        self.assertIn("no pull request data", result.reason)
+
+    def test_a_pull_request_opened_by_a_person_is_not_the_watch(self) -> None:
+        self.locks(16, "2026-11-15T09:00:00+00:00")
+        self.repository.pulls[16]["author"] = "operator"
+
+        result = self.repository.decide("2026-11-20T00:00:00+00:00")
+
+        self.assertEqual(result.outcome, "blocked")
+        self.assertIn("opened by operator", result.reason)
+
+    def test_a_merge_commit_github_did_not_make_is_not_verified(self) -> None:
+        self.locks(17, "2026-11-15T09:00:00+00:00")
+        self.repository.pulls[17]["merge_commit_sha"] = "0" * 40
+
+        result = self.repository.decide("2026-11-20T00:00:00+00:00")
+
+        self.assertEqual(result.outcome, "blocked")
+        self.assertIn("merged as 00000000", result.reason)
+
+    def test_a_pull_request_that_was_not_read_is_not_verified(self) -> None:
+        self.locks(18, "2026-11-15T09:00:00+00:00")
+        del self.repository.pulls[18]
+
+        self.assertEqual(self.repository.decide("2026-11-20T00:00:00+00:00").outcome, "blocked")
+
+    def test_a_direct_commit_with_the_app_s_name_is_not_the_watch(self) -> None:
+        self.repository.write("uv.lock", "lock 19\n")
+        self.repository.commit(APP, PLAN.LOCKS_SUBJECT, "2026-11-15T09:00:00+00:00")
+
+        result = self.repository.decide("2026-11-20T00:00:00+00:00")
+
+        self.assertEqual(result.outcome, "blocked")
+        self.assertIn("no pull request merged", result.reason)
+
+    def test_a_merge_on_the_branch_is_blocked_with_what_it_carries(self) -> None:
+        # A person merges main into the watch's branch and edits a file in the merge commit.
+        repository = self.repository
+        repository.git("checkout", "--quiet", "-b", "upstream-watch")
+        repository.write("tools/build-coraza-package.py", "PIN = 20\n")
+        repository.commit(APP, PLAN.WAF_SUBJECT, "2026-11-15T10:00:00+00:00")
+        repository.git("checkout", "--quiet", "main")
+        repository.write("certbot/uv.lock", "lock 1\n")
+        repository.commit(APP, "Something on main", "2026-11-15T10:30:00+00:00")
+        repository.git("checkout", "--quiet", "upstream-watch")
+        repository.git("merge", "--quiet", "--no-ff", "--no-commit", "main")
+        repository.write("src/haprion/generate.py", "x = 'person'\n")
+        repository.git("add", "--all")
+        repository.git("commit", "--quiet", "--message", "Merge branch 'main'")
+        repository.git("checkout", "--quiet", "main")
+        repository.git(
+            "merge",
+            "--quiet",
+            "--no-ff",
+            "--message",
+            "Merge pull request #20 from example/upstream-watch",
+            "upstream-watch",
+            author=APP,
+            when="2026-11-15T11:00:00+00:00",
+        )
+        repository.register(20, APP)
+
+        result = repository.decide("2026-12-02T00:00:00+00:00")
+
+        self.assertEqual(result.outcome, "blocked")
+        self.assertTrue(any("on the pull request's branch" in c.why for c in result.changes))
+
+    def test_content_in_a_merge_on_main_is_blocked_even_when_github_says_so(self) -> None:
+        repository = self.repository
+        repository.git("checkout", "--quiet", "-b", "dependency-watch")
+        repository.write("uv.lock", "lock 21\n")
+        repository.commit(APP, PLAN.LOCKS_SUBJECT, "2026-11-15T10:00:00+00:00")
+        repository.git("checkout", "--quiet", "main")
+        repository.git("merge", "--quiet", "--no-ff", "--no-commit", "dependency-watch")
+        repository.write("src/haprion/generate.py", "x = 'person'\n")
+        repository.git("add", "--all")
+        repository.git(
+            "commit",
+            "--quiet",
+            "--message",
+            "Merge pull request #21 from example/dependency-watch",
+            author=APP,
+            when="2026-11-15T11:00:00+00:00",
+        )
+        repository.register(21, APP)
+
+        result = repository.decide("2026-11-16T12:00:00+00:00")
+
+        self.assertEqual(result.outcome, "blocked")
+        self.assertIn("src/haprion/generate.py", result.reason)
+
+    def test_the_decide_command_reads_the_pull_requests_file(self) -> None:
+        self.locks(22, "2026-11-15T09:00:00+00:00")
+
+        def run(*extra: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [
+                    sys.executable,
+                    str(BASE / "tools" / "release-plan"),
+                    "decide",
+                    "--source",
+                    str(self.repository.root),
+                    "--now",
+                    "2026-11-16T09:00:00+00:00",
+                    "--app",
+                    APP,
+                    *extra,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertIn(
+            '"outcome": "release"', run("--pulls", str(self.repository.pulls_file())).stdout
+        )
+        self.assertIn('"outcome": "blocked"', run().stdout)
 
     def bump_merged(self, version: str) -> None:
         self.repository.git("checkout", "--quiet", "-b", "release-watch")
@@ -270,6 +413,7 @@ class ReleasePlanTest(unittest.TestCase):
             author=APP,
             when="2026-11-16T10:30:00+00:00",
         )
+        self.repository.register(14, APP)
 
     def test_the_merged_version_is_tagged(self) -> None:
         self.locks(4, "2026-11-15T09:00:00+00:00")
@@ -335,6 +479,8 @@ class ReleasePlanTest(unittest.TestCase):
                 "2026-11-16T09:00:00+00:00",
                 "--app",
                 APP,
+                "--pulls",
+                str(self.repository.pulls_file()),
                 "--notes",
                 str(out),
             ],

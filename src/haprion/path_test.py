@@ -45,6 +45,8 @@ PATH_ACTIONS = frozenset(
         "set-uri",
         "replace-uri",
         "set-query",
+        "normalize-uri",
+        "auth",
         "redirect",
         "return",
         "deny",

@@ -117,6 +117,17 @@ class WhatTheObjectCanChange(unittest.TestCase):
         self.assertEqual(answer("shop", rewriting, "/").notes, (ADVANCED_NOTE,))
         self.assertEqual(answer("shop", quiet, "/").notes, ())
 
+    def test_an_action_that_answers_or_changes_the_path_is_noted_one_by_one(self) -> None:
+        for action in (
+            "auth realm x",
+            "normalize-uri path-merge-slashes",
+            "normalize-uri percent-decode-unreserved",
+        ):
+            with self.subTest(action=action):
+                document = SHOP + f"advanced: |\n  http-request {action}\n"
+
+                self.assertEqual(answer("shop", document, "/abc").notes, (ADVANCED_NOTE,))
+
 
 class AQuestionThatCannotBeAsked(unittest.TestCase):
     def test_a_path_a_client_would_not_send_is_refused_with_why(self) -> None:

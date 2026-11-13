@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""Build the automatic releases since a release made by hand again, here, and compare (B506).
+
+    tools/verify-releases --source <repository> --since <vX.Y.Z> --work <dir>
+                          --uv <uv> [--cache <dir>] [--repository <owner/name>]
+
+An automatic release is built only on GitHub's runners (auto-release.yml):
+two builds there are compared before the release is made, and apt-repo.yml
+compares two more with the release's files. All four ran on one provider.
+A release made by hand starts with this: every `v*` tag after `--since` - the
+last release made by hand, so every one after it is automatic - is checked
+out, built with its own tools/build-release-packages as the release was, and
+its packages compared by digest with the files the GitHub release carries. Any difference stops
+the release made by hand; nothing here writes outside `--work`.
+
+GitHub names a release's files with `.` where a package has `~`, so names are
+compared after the same change apt-repo.yml makes.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import re
+import shutil
+import subprocess
+import sys
+from collections.abc import Sequence
+from pathlib import Path
+
+TAG = re.compile(r"v(\d{1,4})\.(\d{1,4})\.(\d{1,4})")
+GIT = "/usr/bin/git"
+
+
+class Failed(Exception):
+    pass
+
+
+def _run(arguments: Sequence[str], *, cwd: Path | None = None) -> str:
+    done = subprocess.run(  # noqa: S603 - fixed executables, the arguments are tags and paths
+        list(arguments), cwd=cwd, capture_output=True, text=True, check=False
+    )
+    if done.returncode != 0:
+        raise Failed(f"{' '.join(arguments)}: {done.stderr.strip() or done.stdout.strip()}")
+    return done.stdout
+
+
+def _version(tag: str) -> tuple[int, int, int]:
+    match = TAG.fullmatch(tag)
+    if match is None:
+        raise Failed(f"{tag!r} is not vX.Y.Z")
+    major, minor, patch = (int(part) for part in match.groups())
+    return major, minor, patch
+
+
+def tags_after(source: Path, since: str) -> list[str]:
+    """The release tags newer than `since`, oldest first, as origin has them."""
+
+    floor = _version(since)
+    names = _run([GIT, "-C", str(source), "tag", "--list", "v*"]).split()
+    newer = [name for name in names if TAG.fullmatch(name) and _version(name) > floor]
+    return sorted(newer, key=_version)
+
+
+def digests(directory: Path) -> dict[str, str]:
+    return {
+        path.name.replace("~", "."): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(directory.glob("*.deb"))
+    }
+
+
+def differences(built: dict[str, str], released: dict[str, str]) -> list[str]:
+    lines = []
+    for name in sorted(set(built) | set(released)):
+        if name not in released:
+            lines.append(f"{name}: built here, not in the release")
+        elif name not in built:
+            lines.append(f"{name}: in the release, not built here")
+        elif built[name] != released[name]:
+            lines.append(f"{name}: {built[name][:16]} here, {released[name][:16]} released")
+    return lines
+
+
+def verify(tag: str, args: argparse.Namespace) -> list[str]:
+    tree = args.work / tag / "tree"
+    built = args.work / tag / "built"
+    released = args.work / tag / "released"
+    shutil.rmtree(args.work / tag, ignore_errors=True)
+    released.mkdir(parents=True)
+    _run([GIT, "-C", str(args.source), "worktree", "add", "--detach", str(tree), tag])
+    try:
+        _run(
+            [
+                sys.executable,
+                str(tree / "tools" / "build-release-packages"),
+                "--source",
+                str(tree),
+                "--output-dir",
+                str(built),
+                "--uv",
+                str(args.uv),
+                *(["--cache", str(args.cache)] if args.cache else []),
+            ]
+        )
+    finally:
+        _run([GIT, "-C", str(args.source), "worktree", "remove", "--force", str(tree)])
+    _run(
+        [
+            args.gh,
+            "release",
+            "download",
+            tag,
+            "--repo",
+            args.repository,
+            "--pattern",
+            "*.deb",
+            "--dir",
+            str(released),
+        ]
+    )
+    return differences(digests(built), digests(released))
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="verify-releases", description=__doc__.split("\n", 1)[0])
+    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--since", required=True, help="the last release made by hand")
+    parser.add_argument("--work", type=Path, required=True)
+    parser.add_argument("--uv", type=Path, required=True)
+    parser.add_argument("--cache", type=Path)
+    parser.add_argument("--repository", default="haprion/haprion")
+    parser.add_argument("--gh", default="gh")
+    args = parser.parse_args(argv)
+    try:
+        tags = tags_after(args.source, args.since)
+        if not tags:
+            print(f"verify-releases: no release after {args.since}")
+            return 0
+        failed = False
+        for tag in tags:
+            found = verify(tag, args)
+            if found:
+                failed = True
+                print(f"{tag}: DIFFERENT")
+                for line in found:
+                    print(f"  {line}")
+            else:
+                print(f"{tag}: IDENTICAL")
+    except (Failed, OSError) as exc:
+        print(f"verify-releases: {exc}", file=sys.stderr)
+        return 2
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

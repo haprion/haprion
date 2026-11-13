@@ -72,7 +72,7 @@ jobs:
     name: Compare the builds
     needs: build
     runs-on: ubuntu-26.04
-    timeout-minutes: 15
+    timeout-minutes: 45
 
     steps:
       - name: Fetch both builds
@@ -101,6 +101,16 @@ jobs:
         working-directory: ${{ runner.temp }}/builds
         run: |
           set -euo pipefail
+          # The tag is pushed before the release is made, by hand and by
+          # auto-release.yml alike; the builds usually take longer than the
+          # upload, and this waits up to half an hour for the rest.
+          expected=$(grep -c '\.deb$' packages-a/SHA256SUMS)
+          for _ in $(seq 60); do
+            have=$(gh release view "${TAG}" --repo "${REPOSITORY}" --json assets \
+              --jq '[.assets[] | select(.name | endswith(".deb"))] | length' 2>/dev/null || echo 0)
+            [[ "${have}" -ge "${expected}" ]] && break
+            sleep 30
+          done
           mkdir release
           gh release download "${TAG}" --repo "${REPOSITORY}" --pattern '*.deb' --dir release
           (cd release && sha256sum -- *.deb | sort -k2) > release.sums

@@ -1,0 +1,377 @@
+name: automatic release
+
+# The dependency fixes merged on main, released as a patch version (B355, B505,
+# B506). Every hour, tools/release-plan reads main since the last tag:
+#
+#   release  the version proposal: the branch `release-watch` with the next
+#            patch version, in a pull request the gates and the installation
+#            test run on, merged by `merge` once they passed
+#   tag      that proposal is merged and main's gates passed on its head: two
+#            builds on two runners, compared; the tag, and the release with
+#            the first build's files. The tag starts apt-repo.yml, which builds
+#            twice more, compares with the release's files, signs and publishes
+#   blocked  a person's change is on main since the tag; nothing is released,
+#            and while a security fix waits behind it an issue says so
+#   wait, nothing
+#
+# A release made by hand starts by building the automatic ones since the last
+# one again and comparing (B506); tools/release-plan's documentation says
+# what counts as a security fix.
+#
+# Everything that writes is done as the upstream watch's GitHub App: a pull
+# request the workflow's own token opens runs no checks, and a tag it pushes
+# starts no workflow.
+on:
+  schedule:
+    - cron: "53 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+env:
+  BRANCH: release-watch
+  BLOCKED_TITLE: "A security fix waits for a release made by hand"
+  GATES: "Source, quality, and security gates"
+
+jobs:
+  plan:
+    name: What main holds since the last release
+    if: github.repository == 'haprion/haprion'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: read # whether main's gates passed on the head to be tagged
+    outputs:
+      outcome: ${{ steps.plan.outputs.outcome }}
+      next: ${{ steps.plan.outputs.next }}
+      security: ${{ steps.plan.outputs.security }}
+      head: ${{ steps.plan.outputs.head }}
+      ready: ${{ steps.gates.outputs.ready }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Decide
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/release-plan decide --source . --notes "${RUNNER_TEMP}/notes.md" \
+            | tee "${RUNNER_TEMP}/plan.json"
+          {
+            echo "outcome=$(jq -r .outcome "${RUNNER_TEMP}/plan.json")"
+            echo "next=$(jq -r '.next // empty' "${RUNNER_TEMP}/plan.json")"
+            echo "security=$(jq -r .security "${RUNNER_TEMP}/plan.json")"
+            echo "head=$(git rev-parse HEAD)"
+          } >> "${GITHUB_OUTPUT}"
+          jq -r '"\(.outcome): \(.reason)"' "${RUNNER_TEMP}/plan.json" >> "${GITHUB_STEP_SUMMARY}"
+
+      # The merged proposal's gates ran on its branch; main's own run on the
+      # merge is what the tag stands on. Until it has passed, the next hour
+      # asks again.
+      - name: Main's gates on the head
+        id: gates
+        if: steps.plan.outputs.outcome == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ steps.plan.outputs.head }}
+        run: |
+          set -euo pipefail
+          conclusion=$(gh api "repos/${REPOSITORY}/commits/${HEAD_SHA}/check-runs" \
+            --jq "[.check_runs[] | select(.name == env.GATES)][0].conclusion // empty")
+          echo "main's gates on ${HEAD_SHA}: ${conclusion:-not finished}"
+          if [[ "${conclusion}" == success ]]; then
+            echo "ready=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "ready=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Keep the note
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-note
+          path: ${{ runner.temp }}/notes.md
+          retention-days: 7
+          if-no-files-found: error
+
+  report:
+    name: Say when a security fix waits for a person
+    needs: plan
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    # The app's key is this environment's secret. Not a deployment: every run
+    # would otherwise be one, on the repository's front page.
+    environment:
+      name: upstream-watch
+      deployment: false
+
+    steps:
+      - name: Act as the app
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.UPSTREAM_WATCH_CLIENT_ID }}
+          private-key: ${{ secrets.UPSTREAM_WATCH_PRIVATE_KEY }}
+          permission-issues: write # the report
+
+      - name: Open, keep or close the report
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          NOTIFY: ${{ vars.UPSTREAM_WATCH_NOTIFY }}
+          OUTCOME: ${{ needs.plan.outputs.outcome }}
+          SECURITY: ${{ needs.plan.outputs.security }}
+        run: |
+          set -euo pipefail
+          open=$(gh issue list --repo "${REPOSITORY}" --state open --search "in:title \"${BLOCKED_TITLE}\"" \
+            --json number,title --jq "map(select(.title == env.BLOCKED_TITLE))[0].number // empty")
+          if [[ "${OUTCOME}" == blocked && "${SECURITY}" == true ]]; then
+            body="${RUNNER_TEMP}/body.md"
+            { echo "A security fix is merged on main, and a change since the last release was not made by"
+              echo "the upstream watch or Dependabot. An automatic release would ship it unreviewed, so"
+              echo "none is made: the fix goes out with the next release made by hand."
+            } > "${body}"
+            if [[ -z "${open}" ]]; then
+              gh issue create --repo "${REPOSITORY}" --title "${BLOCKED_TITLE}" --body-file "${body}" \
+                ${NOTIFY:+--assignee "${NOTIFY}"}
+            fi
+          elif [[ -n "${open}" ]]; then
+            gh issue close "${open}" --repo "${REPOSITORY}" --comment "Nothing waits behind a change made by hand."
+          fi
+
+  propose:
+    name: Propose the next patch version
+    needs: plan
+    if: needs.plan.outputs.outcome == 'release'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    environment:
+      name: upstream-watch
+      deployment: false
+
+    steps:
+      - name: Act as the app
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.UPSTREAM_WATCH_CLIENT_ID }}
+          private-key: ${{ secrets.UPSTREAM_WATCH_PRIVATE_KEY }}
+          permission-contents: write # the proposal's branch
+          permission-pull-requests: write # its pull request
+
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.5"
+          enable-cache: false
+
+      - name: Fetch the note
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-note
+          path: ${{ runner.temp }}/note
+
+      # One proposal at a time: an open one is the merge job's to finish, or
+      # a person's, when it carries `hold`.
+      - name: Write the version and open the pull request
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          REPOSITORY: ${{ github.repository }}
+          VERSION: ${{ needs.plan.outputs.next }}
+          NOTIFY: ${{ vars.UPSTREAM_WATCH_NOTIFY }}
+        run: |
+          set -euo pipefail
+          open=$(gh pr list --repo "${REPOSITORY}" --head "${BRANCH}" --state open --json number --jq '.[0].number // empty')
+          if [[ -n "${open}" ]]; then
+            echo "#${open} is open"
+            exit 0
+          fi
+          python3 tools/release-plan bump --source . --version "${VERSION}"
+          uv lock --project .
+          uv lock --project ui
+          git diff --stat
+          user_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
+          git -c user.name="${APP_SLUG}[bot]" \
+              -c user.email="${user_id}+${APP_SLUG}[bot]@users.noreply.github.com" \
+              commit --quiet --all --message "Version ${VERSION}"
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+          git -c http.extraheader="${auth}" push --quiet --force \
+            "https://github.com/${REPOSITORY}.git" "HEAD:refs/heads/${BRANCH}"
+          gh pr create --repo "${REPOSITORY}" --head "${BRANCH}" --base main \
+            --title "Version ${VERSION}" --body-file "${RUNNER_TEMP}/note/notes.md" \
+            ${NOTIFY:+--assignee "${NOTIFY}"}
+
+  merge:
+    name: Merge the version proposal when every check passed
+    needs: plan
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    environment:
+      name: upstream-watch
+      deployment: false
+
+    steps:
+      - name: Act as the app
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.UPSTREAM_WATCH_CLIENT_ID }}
+          private-key: ${{ secrets.UPSTREAM_WATCH_PRIVATE_KEY }}
+          permission-contents: write # the merge writes main
+          permission-pull-requests: write # and closes the pull request
+          permission-checks: read # whether every check passed
+
+      # As the locks' proposal (upstream-merge.yml): every check run and
+      # passed on the head being merged, the named ones among them.
+      - name: Merge when every check passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          REQUIRED: |
+            Source, quality, and security gates
+            Installation test
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list --repo "${REPOSITORY}" --head "${BRANCH}" --state open \
+            --json number,headRefOid,labels --jq '.[0] // empty')
+          if [[ -z "${pr}" ]]; then
+            echo "no proposal is open"
+            exit 0
+          fi
+          number=$(jq -r .number <<<"${pr}")
+          head=$(jq -r .headRefOid <<<"${pr}")
+          labels=$(jq -r '[.labels[].name] | join(" ")' <<<"${pr}")
+          if [[ " ${labels} " == *" hold "* ]]; then
+            echo "#${number} is on hold"
+            exit 0
+          fi
+          checks=$(gh pr checks "${number}" --repo "${REPOSITORY}" --json name,bucket || true)
+          if jq -e 'any(.[]; .bucket != "pass" and .bucket != "skipping")' <<<"${checks}" >/dev/null; then
+            echo "#${number}: not every check has passed"
+            jq -r '.[] | "  \(.bucket)  \(.name)"' <<<"${checks}"
+            exit 0
+          fi
+          while IFS= read -r name; do
+            [[ -z "${name}" ]] && continue
+            if ! jq -e --arg name "${name}" 'any(.[]; .name == $name and .bucket == "pass")' <<<"${checks}" >/dev/null; then
+              echo "#${number}: '${name}' has not passed"
+              exit 0
+            fi
+          done <<<"${REQUIRED}"
+          gh pr merge "${number}" --repo "${REPOSITORY}" --merge --match-head-commit "${head}" --delete-branch
+
+  build:
+    name: Build the release (${{ matrix.copy }})
+    needs: plan
+    if: needs.plan.outputs.outcome == 'tag' && needs.plan.outputs.ready == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    strategy:
+      matrix:
+        copy: [a, b]
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.head }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.5"
+          enable-cache: false
+
+      - name: Build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/build-release-packages --source . --output-dir "${RUNNER_TEMP}/out" \
+            --uv "$(command -v uv)" --cache "${RUNNER_TEMP}/cache"
+          cat "${RUNNER_TEMP}/out/SHA256SUMS"
+
+      - name: Keep the packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ matrix.copy }}
+          path: ${{ runner.temp }}/out/
+          retention-days: 7
+          if-no-files-found: error
+
+  release:
+    name: Tag and release
+    needs: [plan, build]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    environment:
+      name: upstream-watch
+      deployment: false
+
+    steps:
+      - name: Fetch both builds and the note
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: ${{ runner.temp }}/builds
+
+      - name: The same bytes twice
+        shell: bash
+        working-directory: ${{ runner.temp }}/builds
+        run: |
+          set -euo pipefail
+          diff release-a/SHA256SUMS release-b/SHA256SUMS
+          cat release-a/SHA256SUMS
+
+      - name: Act as the app
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.UPSTREAM_WATCH_CLIENT_ID }}
+          private-key: ${{ secrets.UPSTREAM_WATCH_PRIVATE_KEY }}
+          permission-contents: write # the tag and the release
+
+      - name: Check out the head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.head }}
+          persist-credentials: false
+
+      # The tag first and pushed with git, as a release made by hand does: the
+      # push starts apt-repo.yml, whose comparison waits for the release's files.
+      - name: Tag and release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          VERSION: ${{ needs.plan.outputs.next }}
+          HEAD_SHA: ${{ needs.plan.outputs.head }}
+          BUILDS: ${{ runner.temp }}/builds
+        run: |
+          set -euo pipefail
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+          git -c http.extraheader="${auth}" push --quiet \
+            "https://github.com/${REPOSITORY}.git" "${HEAD_SHA}:refs/tags/v${VERSION}"
+          gh release create "v${VERSION}" --repo "${REPOSITORY}" --verify-tag --title "v${VERSION}" --latest \
+            --notes-file "${BUILDS}/release-note/notes.md" "${BUILDS}"/release-a/*

@@ -366,5 +366,36 @@ class ReleasePlanTest(unittest.TestCase):
         self.assertEqual(completed.returncode, 2)
 
 
+class TheWorkflowsSayWhatThePlanReads(unittest.TestCase):
+    """The subjects and the branch are held in step by hand; these fail when one moves."""
+
+    workflows = BASE / ".github" / "workflows"
+
+    def test_the_watch_s_subjects_are_the_plan_s(self) -> None:
+        watch = (self.workflows / "upstream-watch.yml").read_text(encoding="utf-8")
+
+        self.assertIn(f'--message "{PLAN.LOCKS_SUBJECT}"', watch)
+        self.assertIn(f'subject="{PLAN.WAF_SUBJECT}"', watch)
+        suffix = PLAN.WAF_SECURITY_SUBJECT.removeprefix(PLAN.WAF_SUBJECT)
+        self.assertIn(f'subject="${{subject}}{suffix}"', watch)
+
+    def test_the_version_proposal_is_install_tested_as_a_whole_release(self) -> None:
+        release = (self.workflows / "auto-release.yml").read_text(encoding="utf-8")
+        ci = (self.workflows / "ci.yml").read_text(encoding="utf-8")
+
+        self.assertIn("BRANCH: release-watch", release)
+        self.assertIn("github.head_ref == 'release-watch'", ci)
+        self.assertIn('if [[ "${HEAD_REF}" == release-watch ]]', ci)
+        self.assertIn('--message "Version ${VERSION}"', release)
+
+    def test_the_checks_the_merge_waits_for_are_ci_s_jobs(self) -> None:
+        release = (self.workflows / "auto-release.yml").read_text(encoding="utf-8")
+        ci = (self.workflows / "ci.yml").read_text(encoding="utf-8")
+
+        for name in ("Source, quality, and security gates", "Installation test"):
+            self.assertIn(f"    name: {name}\n", ci)
+            self.assertIn(f"            {name}\n", release)
+
+
 if __name__ == "__main__":
     unittest.main()

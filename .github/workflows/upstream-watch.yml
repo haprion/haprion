@@ -193,6 +193,7 @@ jobs:
           NOTIFY: ${{ vars.UPSTREAM_WATCH_NOTIFY }}
           APP_SLUG: ${{ steps.app.outputs.app-slug }}
           REPOSITORY: ${{ github.repository }}
+          VULNERABLE: ${{ needs.vulnerabilities.outputs.vulnerable }}
         run: |
           set -euo pipefail
           proposal="${RUNNER_TEMP}/proposal.json"
@@ -203,10 +204,17 @@ jobs:
             fi
             exit 0
           fi
+          # The subject says whether govulncheck found something the pinned
+          # engine reaches: tools/release-plan reads it to release the fix
+          # within a day rather than with the month's (B506).
+          subject="Update the WAF packages' upstream pins"
+          if [[ "${VULNERABLE}" == true ]]; then
+            subject="${subject} for a known vulnerability"
+          fi
           user_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
           git -c user.name="${APP_SLUG}[bot]" \
               -c user.email="${user_id}+${APP_SLUG}[bot]@users.noreply.github.com" \
-              commit --quiet --all --message "Update the WAF packages' upstream pins"
+              commit --quiet --all --message "${subject}"
           auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
           remote="https://github.com/${REPOSITORY}.git"
           if git -c http.extraheader="${auth}" fetch --quiet "${remote}" "${BRANCH}" 2>/dev/null \

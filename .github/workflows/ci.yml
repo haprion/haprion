@@ -246,9 +246,10 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch'
       || (github.event_name == 'pull_request'
-          && (github.head_ref == 'upstream-watch' || github.head_ref == 'dependency-watch'))
+          && (github.head_ref == 'upstream-watch' || github.head_ref == 'dependency-watch'
+              || github.head_ref == 'release-watch'))
     runs-on: ubuntu-26.04
-    timeout-minutes: 60
+    timeout-minutes: 150
 
     steps:
       - name: Check out source
@@ -262,12 +263,22 @@ jobs:
           version: "0.12.5"
           enable-cache: false
 
-      - name: Build the engine and the rules
+      # The version proposal (auto-release.yml) is a whole release: every
+      # package is built from it, installed new and updated from the latest
+      # release (B506). The watch's proposals change the engine and the rules,
+      # and are tried with the release's other packages.
+      - name: Build the engine and the rules, or the whole release
         shell: bash
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
+          only=(--only waf)
+          if [[ "${HEAD_REF}" == release-watch ]]; then
+            only=()
+          fi
           python3 tools/build-release-packages --source . --output-dir "${RUNNER_TEMP}/waf" \
-            --uv "$(command -v uv)" --cache "${RUNNER_TEMP}/cache" --only waf
+            --uv "$(command -v uv)" --cache "${RUNNER_TEMP}/cache" "${only[@]}"
 
       # GitHub names a release's files with `.` where the package has `~`; each
       # is named again from its own control fields, as the build named it.
@@ -276,6 +287,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
           packages="${RUNNER_TEMP}/packages"
@@ -286,7 +298,12 @@ jobs:
             name=$(dpkg-deb --show --showformat '${Package}_${Version}_${Architecture}.deb' "${deb}")
             cp "${deb}" "${packages}/${name}"
           done
-          rm -f "${packages}"/haprion-coraza-spoa_*.deb "${packages}"/haprion-crs_*.deb
+          if [[ "${HEAD_REF}" == release-watch ]]; then
+            mv "${packages}" "${RUNNER_TEMP}/previous"
+            mkdir "${packages}"
+          else
+            rm -f "${packages}"/haprion-coraza-spoa_*.deb "${packages}"/haprion-crs_*.deb
+          fi
           cp "${RUNNER_TEMP}"/waf/*.deb "${packages}/"
           ls -l "${packages}"
 
@@ -302,9 +319,15 @@ jobs:
 
       - name: Install on empty machines
         shell: bash
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
-          python3 tools/install-test --packages "${RUNNER_TEMP}/packages" --no-upgrade --distribution all \
+          upgrade=(--no-upgrade)
+          if [[ "${HEAD_REF}" == release-watch ]]; then
+            upgrade=(--upgrade-from "${RUNNER_TEMP}/previous")
+          fi
+          python3 tools/install-test --packages "${RUNNER_TEMP}/packages" "${upgrade[@]}" --distribution all \
             --logs "${RUNNER_TEMP}/install-test-logs"
 
       - name: Keep what the machines said

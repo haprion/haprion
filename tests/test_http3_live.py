@@ -189,6 +189,7 @@ class AVipServesHttp3BesideTcp(_Rig):
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         connection = HTTPSConnection("127.0.0.1", self.site, timeout=5, context=context)
         try:
             for host in ("open.example.com", "nobody.example.com"):
@@ -219,6 +220,7 @@ class AStrictSniVipRefusesAClientThatNamesNothingItHolds(_Rig):
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         connection = HTTPSConnection("127.0.0.1", self.site, timeout=5, context=context)
         connection.sock = context.wrap_socket(
             socket.create_connection(("127.0.0.1", self.site), timeout=5),

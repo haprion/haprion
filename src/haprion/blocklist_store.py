@@ -85,7 +85,9 @@ class ListState:
     entries: int = 0
     skipped: int = 0
     source: str = ""
-    """`source_key` of what the last attempt fetched from; the kept list came from it."""
+    """`source_key` of what the last attempt fetched from."""
+    kept_source: str = ""
+    """`source_key` of what the kept list was fetched from; another than `source` after a source change that failed."""
 
 
 def source_key(definition: blocklists.Definition, secret_revision: int) -> str:

@@ -1724,8 +1724,8 @@ match, whoever a stranger decides.
 **When a fetch fails,** the last good list stays in effect, and the row under *Last fetched* says
 *Failed* with the list kept. The reason is on the row and under *Needs attention*. A failed list is tried
 again after an hour. An empty answer is a failure too: an empty list would refuse nobody. When the first
-fetch from a new URL fails, the list from the old URL is not kept: the clusters stop being offered it,
-and the nodes keep the file they have until a fetch from the new URL succeeds.
+fetch from a new URL fails, the list from the old URL stays in effect and the row says it is from the
+previous source, until a fetch from the new one succeeds.
 
 **Is this address on a list?** *Check address* on *Settings → Blocklists* looks it up in the lists kept
 now, without fetching. The answer names the list, the entry that holds the address, when the list was

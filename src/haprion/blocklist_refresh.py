@@ -15,7 +15,13 @@ pass without a fetch (B496: *Except* acts at once), and a list that did not
 change moves nothing on the nodes.
 
 A failed list is tried again an hour later, or at its own interval when that
-is shorter; a source that is down is not asked every pass.
+is shorter; a source that is down is not asked every pass. A list whose source
+changed - the URL, the kind of authorization, the username or the password or
+token - is fetched at once, in the pass the save starts, whatever its interval
+says; a changed exception, interval or description is not a new source. When
+that first fetch fails the last good list stays and is sent on - dropping it
+would refuse every publish naming the list - and the state says in its error
+that the list kept is from the previous source, for as long as it is.
 """
 
 from __future__ import annotations
@@ -79,10 +85,11 @@ def _when(value: str | None) -> dt.datetime | None:
     return None if value is None else dt.datetime.fromisoformat(value)
 
 
-def due(item: blocklists.Definition, state: ListState | None, now: dt.datetime) -> bool:
-    """Whether the list is to be fetched now."""
+def due(stored: Stored, state: ListState | None, now: dt.datetime) -> bool:
+    """Whether the list is to be fetched now: never tried, a new source, or its time has come."""
 
-    if state is None or state.attempted_at is None:
+    item = stored.definition
+    if state is None or state.attempted_at is None or state.source != stored.source:
         return True
     attempted = _when(state.attempted_at)
     if attempted is None or attempted.tzinfo is None:
@@ -108,7 +115,12 @@ def fetch_one(
     try:
         parsed = blocklists.parse(fetch(stored.definition, stored.secret))
     except (blocklists.BlocklistError, ValueError) as exc:
-        return replace(previous, attempted_at=stamp, failed_at=stamp, error=str(exc))
+        reason = str(exc)
+        if previous.fetched_at is not None and previous.kept_source != stored.source:
+            reason = f"{reason[:400].rstrip('.')} (the list kept is from the previous source)"
+        return replace(
+            previous, attempted_at=stamp, failed_at=stamp, error=reason, source=stored.source
+        )
     blocklist_store.keep(stored.definition.name, parsed.networks, directory=state_directory)
     return ListState(
         fetched_at=stamp,
@@ -117,6 +129,8 @@ def fetch_one(
         error="",
         entries=len(parsed.networks),
         skipped=parsed.skipped,
+        source=stored.source,
+        kept_source=stored.source,
     )
 
 
@@ -193,7 +207,7 @@ def run(
     states = dict(blocklist_store.read_state(directory=state_directory))
     for item in stored:
         name = item.definition.name
-        wanted = name in only if only else (force or due(item.definition, states.get(name), now))
+        wanted = name in only if only else (force or due(item, states.get(name), now))
         if wanted:
             states[name] = fetch_one(
                 item, states.get(name), now, fetch=fetch, state_directory=state_directory
@@ -201,20 +215,29 @@ def run(
     defined = {item.definition.name for item in stored}
     states = {name: state for name, state in states.items() if name in defined}
     blocklist_store.write_state(states, directory=state_directory)
+    for path in state_directory.glob(f"*{blocklist_store.LIST_SUFFIX}"):
+        if path.stem not in defined and blocklists.NAME.fullmatch(path.stem):
+            path.unlink()
     written: list[Written] = []
+    served: set[str] = set()
     for item in stored:
         networks = blocklist_store.kept(item.definition.name, directory=state_directory)
         if networks is None:
             continue
+        served.add(item.definition.name)
         for target in targets:
             written.append(write_cluster(target, item, networks))
     for target in targets:
-        _remove_undefined(target, defined)
+        _remove_unserved(target, served)
     return Pass(states=states, written=tuple(written))
 
 
-def _remove_undefined(target: ClusterTarget, defined: set[str]) -> None:
-    """A list no longer defined leaves the cluster's directory, and with it the generator's groups.
+def _remove_unserved(target: ClusterTarget, served: set[str]) -> None:
+    """A list no longer defined, or with no good list to send, leaves the cluster's directory.
+
+    With it go the generator's groups. A list with no good list is one made
+    again under a removed name and not fetched yet: it must not be offered
+    from the old one.
 
     The nodes keep the file they have: nothing on them is removed, and a
     configuration still naming it keeps loading. A new one naming it is
@@ -225,6 +248,6 @@ def _remove_undefined(target: ClusterTarget, defined: set[str]) -> None:
     if not directory.is_dir():
         return
     for path in directory.glob(f"*{blocklist_store.LIST_SUFFIX}"):
-        if path.stem not in defined and blocklists.NAME.fullmatch(path.stem):
+        if path.stem not in served and blocklists.NAME.fullmatch(path.stem):
             path.unlink()
             atomic_file.sync_directory(directory)

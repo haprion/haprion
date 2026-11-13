@@ -22,6 +22,7 @@ from typing import Any, BinaryIO, TextIO
 
 from haprion import (
     address_ranges,
+    blocklist_store,
     cluster_settings,
     crs,
     exit_codes,
@@ -265,6 +266,35 @@ def _stored(base_files: Mapping[str, bytes], name: str) -> Proxy | None:
         return None
 
 
+DEFINITIONS = blocklist_store.DEFINITIONS
+"""Where the blocklist definitions are; a test points it elsewhere."""
+
+
+def _refuse_blocklist_names(groups: Mapping[str, Any]) -> None:
+    """A group may not share a name with a defined blocklist.
+
+    The generator only knows the lists that were fetched, so a list not yet
+    fetched would slip past it; the definitions are root's to read, as here.
+    """
+
+    try:
+        defined = {
+            stored.definition.name for stored in blocklist_store.read_all(directory=DEFINITIONS)
+        }
+    except blocklist_store.StoreError as exc:
+        raise Refusal(
+            "changes_invalid",
+            f"the defined blocklists could not be read, so the groups cannot be checked: {exc}",
+            exit_codes.REFUSED,
+        ) from exc
+    for name in sorted(set(groups) & defined):
+        raise Refusal(
+            "changes_invalid",
+            f"the group {name} has the name of a blocklist; rename the group on the Network page.",
+            exit_codes.REFUSED,
+        )
+
+
 def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster], Change]:
     objects = _objects(parameters)
     network = _document(parameters, "network", limit=MAX_NETWORK_BYTES)
@@ -349,6 +379,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                 # and a diff shows only what changed (K10).
                 #
                 network_document = dump_document(parsed)
+                _refuse_blocklist_names(parsed.networks)
             canonical: bytes | None = None
             if settings is not None:
                 try:

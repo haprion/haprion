@@ -14,8 +14,9 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
-from haprion import tls_policy
+from haprion import blocklist_store, blocklists, tls_policy
 from haprion.candidate_validation import ValidationResult
 from haprion.cli import changes_publish
 from haprion.version_history import count_versions, request_id_of
@@ -236,6 +237,30 @@ class NetworkPublicationTests(NetworkPublishFixture):
             self.assertEqual(document["error"]["code"], "candidate_invalid")
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
             self.assertFalse((self.repo / "managed/network.yaml").exists())
+
+    def test_a_group_with_the_name_of_a_defined_blocklist_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            definitions = Path(raw) / "blocklists"
+            definitions.mkdir()
+            item = blocklists.definition(
+                name="office", url="https://example.com/list", every_hours=24
+            )
+            blocklist_store.write(
+                blocklist_store.Stored(definition=item, secret="", revision=1),
+                directory=definitions,
+                require_secure=False,
+            )
+            before = git(self.repo, "rev-parse", "HEAD")
+
+            with mock.patch.object(changes_publish, "DEFINITIONS", definitions):
+                code, document, _err = self.publish_network(policy, self.request())
+
+            self.assertEqual(code, 65)
+            self.assertEqual(document["error"]["code"], "changes_invalid")
+            self.assertIn("group office", document["error"]["message"])
+            self.assertIn("Network page", document["error"]["message"])
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
 
 
 if __name__ == "__main__":

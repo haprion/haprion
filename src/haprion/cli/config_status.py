@@ -200,6 +200,19 @@ def _published_state(stamp: str | None) -> dict[str, Any]:
     return {"state": "published", "version": fields.get("version") or None}
 
 
+def _cause_words(cause: Mapping[str, Any]) -> str | None:
+    kind = cause.get("kind")
+    if kind == "rule_set":
+        if cause.get("published") == cause.get("installed"):
+            return f"the WAF rule files of version {cause.get('installed')} differ"
+        return f"WAF rule set {cause.get('published')} -> {cause.get('installed')}"
+    if kind == "generator":
+        return f"generator level {cause.get('published')} -> {cause.get('installed')}"
+    if kind == "addresses":
+        return "the nodes' addresses differ from the published ones"
+    return None
+
+
 def regeneration_line(result: Mapping[str, Any] | None, cluster_id: str) -> str | None:
     """What to say about a regeneration; nothing when a publish would change nothing.
 
@@ -224,6 +237,9 @@ def regeneration_line(result: Mapping[str, Any] | None, cluster_id: str) -> str 
             f"  To publish it now: haprion-publish -c {cluster_id} --regenerate\n"
         )
     line = f"  Publish and deploy to apply the update: {count} {noun} differ{'s' if count == 1 else ''}"
+    reasons = [said for cause in result.get("causes") or [] if (said := _cause_words(cause))]
+    if reasons:
+        line += f" ({', '.join(reasons)})"
     objects = [
         f"{item['name']} ({', '.join(item['parts'])})" if item.get("parts") else str(item["name"])
         for item in result.get("objects") or []

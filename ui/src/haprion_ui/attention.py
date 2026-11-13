@@ -1024,9 +1024,25 @@ def regeneration_page(cluster: str) -> str:
 def regeneration_cause(cause: Mapping[str, Any]) -> str | None:
     """One cause the engine could name, in words; none for a kind this does not know."""
 
-    if cause.get("kind") != "rule_set":
-        return None
-    return f"the WAF rule set {cause.get('published')} → {cause.get('installed')}"
+    kind = cause.get("kind")
+    if kind == "rule_set":
+        published, installed = cause.get("published"), cause.get("installed")
+        if published == installed:
+            return f"the WAF rule files of version {installed} are not the published ones"
+        return f"the WAF rule set {published} → {installed}"
+    if kind == "generator":
+        try:
+            newer = int(str(cause.get("installed"))) > int(str(cause.get("published")))
+        except ValueError:
+            return None
+        return (
+            "a newer version writes the configuration differently"
+            if newer
+            else "the published version was written by a newer product than the installed one"
+        )
+    if kind == "addresses":
+        return "the nodes' addresses are not the published ones"
+    return None
 
 
 def regeneration_variant(result: Mapping[str, Any]) -> str:

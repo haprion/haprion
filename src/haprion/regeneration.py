@@ -30,10 +30,13 @@ would read, less what only refuses:
   the sandbox's `haproxy -c`, which a publish runs and this does not.
 
 The published tree does not record which version of the product made it. It
-records the generator level its manifest was written at (B493) and the rule
-set it carries, and a difference is `required` - a reason to publish and
-deploy - only when the installed level is higher or the rule set another. Any
-other difference is how the files read; the next publish takes it.
+records the generator level its manifest was written at (B493), the rule set it
+carries and the files the nodes' addresses steer, and a difference is `required`
+- a reason to publish and deploy - when the installed level is another, the rule
+set's files are others, or one of the files that only the addresses steer
+differs (the published tree does not say which addresses it was made with, so a
+file they steer that differs is taken as them). Any other difference is how the
+files read, the same generator at the same level; the next publish takes it.
 """
 
 from __future__ import annotations
@@ -75,6 +78,12 @@ OUTCOMES = (UNCHANGED, CHANGED_OUTCOME, REFUSED, UNPUBLISHED)
 # generator that names a long path cannot make it a page.
 #
 MAX_MESSAGE = 1024
+#
+# Stand-ins for the nodes' addresses when the files they steer are looked for:
+# the benchmarking range, which no node has.
+#
+PLACEHOLDER_ADDRESS = "198.18.0.{}"
+MAX_CAUSE_FILES = 16
 
 type Addresses = tuple[tuple[str, str], ...]
 type Lookup = Callable[[Cluster], Addresses]
@@ -282,20 +291,27 @@ def _object_changes(
     ]
 
 
-def _causes(files: Mapping[str, bytes], installed_crs: str | None) -> list[dict[str, Any]]:
+def _causes(
+    files: Mapping[str, bytes],
+    installed: Callable[[], crs.RuleSet | None],
+    installed_crs: str | None,
+    steered: Sequence[str] = (),
+) -> list[dict[str, Any]]:
     """What can be said about why, from what the published tree records.
 
-    Each is a reason the difference must reach the nodes (B493): a generator
-    level above the one the published version was written at, or another rule
-    set. A difference with neither is how the files read, and goes out with the
-    next publish.
+    Each is a reason the difference must reach the nodes (B493): another
+    generator level than the one the published version was written at (a
+    rolled-back manager reads a newer version's too), a rule set whose files
+    are others - its VERSION alone does not say - or a file that only the nodes'
+    addresses steer. A difference with none of them is how the files read, and
+    goes out with the next publish.
     """
 
     causes: list[dict[str, Any]] = []
     manifest = files.get(MANIFEST_PATH)
     parsed = parse_manifest(manifest.decode("utf-8", "replace")) if manifest is not None else None
     written = parsed.generator_level if parsed is not None else BASELINE_LEVEL
-    if written < GENERATOR_LEVEL:
+    if written != GENERATOR_LEVEL:
         causes.append(
             {"kind": "generator", "published": str(written), "installed": str(GENERATOR_LEVEL)}
         )
@@ -303,11 +319,53 @@ def _causes(files: Mapping[str, bytes], installed_crs: str | None) -> list[dict[
         carried = crs.from_tree(files)
     except ConfigError:
         carried = None
-    if carried is not None and installed_crs is not None and carried.version != installed_crs:
-        causes.append(
-            {"kind": "rule_set", "published": carried.version, "installed": installed_crs}
-        )
+    if carried is not None and installed_crs is not None:
+        if carried.version != installed_crs:
+            causes.append(
+                {"kind": "rule_set", "published": carried.version, "installed": installed_crs}
+            )
+        else:
+            try:
+                today = installed()
+            except RegenerationError:
+                today = None
+            if today is not None and rules_digest(today) != rules_digest(carried):
+                causes.append(
+                    {"kind": "rule_set", "published": carried.version, "installed": installed_crs}
+                )
+    if steered:
+        causes.append({"kind": "addresses", "files": list(steered[:MAX_CAUSE_FILES])})
     return causes
+
+
+def _steered_by_addresses(
+    candidate_tree: Callable[..., dict[str, bytes]],
+    published: Mapping[str, bytes],
+    candidate: Mapping[str, bytes],
+    addresses: Addresses | ConfigError,
+) -> list[str]:
+    """The files that differ and that only the nodes' addresses steer.
+
+    Made once more with other addresses for the same nodes: a file that reads
+    differently there is one the addresses steer (keepalived's, the peers
+    section, the metrics exporter's binds), and of those the ones that differ
+    from the published tree are what the published addresses may have been.
+    """
+
+    if isinstance(addresses, ConfigError) or not addresses:
+        return []
+    placeholders = tuple(
+        (name, PLACEHOLDER_ADDRESS.format(number + 1)) for number, (name, _) in enumerate(addresses)
+    )
+    try:
+        other = build_node_artifact(candidate_tree(None, lambda: placeholders))
+    except (ConfigError, LayoutError):
+        return []
+    return sorted(
+        path
+        for path in set(candidate) | set(other)
+        if candidate.get(path) != other.get(path) and published.get(path) != candidate.get(path)
+    )
 
 
 def regenerate(
@@ -370,14 +428,16 @@ def regenerate(
         except crs.RuleSetError as exc:
             raise RegenerationError(str(exc)) from exc
 
-    def candidate_tree(sans: Mapping[str, Sequence[str]] | None) -> dict[str, bytes]:
+    def candidate_tree(
+        sans: Mapping[str, Sequence[str]] | None, nodes: Callable[[], Addresses] = node_addresses
+    ) -> dict[str, bytes]:
         managed = managed_files(
             files,
             network_document=document,
             cluster=cluster,
             country_reader=geo.tree_reader(files, location_database or geo.location_database()),
             rule_set=rules,
-            node_addresses=node_addresses,
+            node_addresses=nodes,
             certificate_sans=sans,
             blocklists=blocklists,
         )
@@ -404,7 +464,7 @@ def regenerate(
     except (ConfigError, LayoutError) as exc:
         result["outcome"] = REFUSED
         result["message"] = str(exc)[:MAX_MESSAGE]
-        result["causes"] = _causes(files, installed_crs)
+        result["causes"] = _causes(files, rules, installed_crs)
         return result
 
     if candidate == published:
@@ -418,10 +478,15 @@ def regenerate(
     if problem is not None:
         result["outcome"] = REFUSED
         result["message"] = problem.message[:MAX_MESSAGE]
-        result["causes"] = _causes(files, installed_crs)
+        result["causes"] = _causes(files, rules, installed_crs)
         return result
     diff = artifact_diff(published, candidate, commit)
-    causes = _causes(files, installed_crs)
+    causes = _causes(
+        files,
+        rules,
+        installed_crs,
+        _steered_by_addresses(candidate_tree, published, candidate, addresses),
+    )
     result.update(
         outcome=CHANGED_OUTCOME,
         causes=causes,

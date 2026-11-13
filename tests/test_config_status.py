@@ -187,6 +187,22 @@ class RegenerationTests(StatusFixture):
         )
         self.assertNotIn("balance leastconn", shown)
 
+    def test_a_cause_is_said_after_the_count(self) -> None:
+        reading = {
+            **changed_regeneration(),
+            "required": True,
+            "causes": [{"kind": "addresses", "files": ["keepalived/node-node-a.conf"]}],
+        }
+        _, shown, _ = self.run_status(
+            published=stamp("alpha", 1, self.commit), regeneration=reading
+        )
+
+        self.assertIn(
+            "\n  Publish and deploy to apply the update: 1 file differs"
+            " (the nodes' addresses differ from the published ones); objects: shop",
+            shown,
+        )
+
     def test_a_difference_the_nodes_do_not_need_asks_for_no_deploy(self) -> None:
         """B493: how the files read changed, nothing the nodes do."""
 

@@ -79,18 +79,36 @@
         "managed": { "description": "False for a published version with no generated layer to make again (a cluster written by hand, or nothing published).", "type": "boolean" },
         "message": { "type": ["string", "null"], "maxLength": 1024 },
         "causes": {
-          "description": "What can be said about why, from what the published tree records: generator, the installed generator level above the one the published version was written at; rule_set, another WAF rule set. Each is a reason the difference must reach the nodes.",
+          "description": "What can be said about why, from what the published tree records: generator, an installed generator level other than the one the published version was written at; rule_set, a WAF rule set whose version or files are others (published and installed name the same version when only a file differs); addresses, a file that only the nodes' addresses steer differs (files names them, at most 16). Each is a reason the difference must reach the nodes.",
           "type": "array",
           "maxItems": 16,
           "items": {
-            "type": "object",
-            "required": ["kind", "published", "installed"],
-            "properties": {
-              "kind": { "enum": ["generator", "rule_set"] },
-              "published": { "type": "string", "minLength": 1, "maxLength": 64 },
-              "installed": { "type": "string", "minLength": 1, "maxLength": 64 }
-            },
-            "additionalProperties": false
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["kind", "published", "installed"],
+                "properties": {
+                  "kind": { "enum": ["generator", "rule_set"] },
+                  "published": { "type": "string", "minLength": 1, "maxLength": 64 },
+                  "installed": { "type": "string", "minLength": 1, "maxLength": 64 }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["kind", "files"],
+                "properties": {
+                  "kind": { "const": "addresses" },
+                  "files": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 16,
+                    "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
           }
         },
         "required": { "description": "True when the outcome is changed and a cause says the difference must reach the nodes. False for a difference in how the files read only: the next publish takes it.", "type": "boolean" },

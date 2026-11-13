@@ -57,6 +57,7 @@ def published_tree(
     rules: crs.RuleSet | None = None,
     countries: geo.CountryReader | None = None,
     count: int = 4,
+    addresses: tuple[tuple[str, str], ...] = (),
 ) -> dict[str, bytes]:
     """A version as a publish writes it: several objects, the first two with the WAF."""
 
@@ -73,6 +74,7 @@ def published_tree(
         cluster=on or cluster(),
         rule_set=lambda: rules,
         country_reader=countries or sweden("2026-10-01", "192.0.2.0/25"),
+        node_addresses=lambda: addresses,
     )
     return {
         **base,
@@ -356,6 +358,67 @@ class AnUpdateIsRequiredOnlyWhenTheLevelSaysSo(unittest.TestCase):
 
         self.assertEqual((same["required"], higher["required"]), (False, True))
         self.assertEqual(higher["causes"][0]["published"], "1")
+
+    def test_a_revised_rule_file_under_the_same_version_is_required(self) -> None:
+        files = published_tree()
+
+        result = regenerated(files, rules=rule_set(rules=b"# rules, revised\n"))
+
+        self.assertEqual((result["outcome"], result["required"]), ("changed", True))
+        self.assertEqual(
+            result["causes"], [{"kind": "rule_set", "published": "9.9.9", "installed": "9.9.9"}]
+        )
+
+    def test_a_node_that_has_another_address_is_required(self) -> None:
+        on = dataclasses.replace(cluster(), vrrp_router_id=51)
+        published = (("node-a", "192.0.2.31"), ("node-b", "192.0.2.32"))
+        files = published_tree(on=on, addresses=published)
+
+        same = regenerated(files, on=on, addresses=published)
+        moved = regenerated(
+            files, on=on, addresses=(("node-a", "192.0.2.31"), ("node-b", "192.0.2.99"))
+        )
+
+        self.assertEqual((same["outcome"], same["required"]), ("unchanged", False))
+        self.assertEqual((moved["outcome"], moved["required"]), ("changed", True))
+        self.assertEqual(moved["causes"][0]["kind"], "addresses")
+        self.assertEqual(
+            moved["causes"][0]["files"],
+            ["keepalived/node-node-a.conf", "keepalived/node-node-b.conf"],
+        )
+
+    def test_a_generator_difference_in_a_file_the_addresses_do_not_steer_is_not_an_address(
+        self,
+    ) -> None:
+        on = dataclasses.replace(cluster(), vrrp_router_id=51)
+        addresses = (("node-a", "192.0.2.31"), ("node-b", "192.0.2.32"))
+        files = published_tree(on=on, addresses=addresses)
+        with self.another_generator():
+            result = regenerated(files, on=on, addresses=addresses)
+
+        self.assertEqual(
+            (result["outcome"], result["required"], result["causes"]), ("changed", False, [])
+        )
+
+    def test_a_version_written_by_a_newer_generator_is_required_after_a_rollback(self) -> None:
+        files = published_tree()
+        document = json.loads(files["managed/manifest.json"])
+        document["generator_level"] = generate.GENERATOR_LEVEL + 1
+        files["managed/manifest.json"] = json.dumps(document).encode()
+        with self.another_generator():
+            result = regenerated(files)
+
+        self.assertEqual((result["outcome"], result["required"]), ("changed", True))
+        self.assertEqual(
+            result["causes"],
+            [
+                {
+                    "kind": "generator",
+                    "published": str(generate.GENERATOR_LEVEL + 1),
+                    "installed": str(generate.GENERATOR_LEVEL),
+                }
+            ],
+        )
 
     def test_another_rule_set_is_required(self) -> None:
         result = regenerated(published_tree(), rules=rule_set("9.9.10", b"# rules, newer\n"))

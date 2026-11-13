@@ -1008,7 +1008,33 @@ class WhatPublishingAgainWouldChange(unittest.TestCase):
                 )
             ]
         )
-        self.assertEqual(item.message, "Publish & deploy to apply the update")
+        self.assertEqual(
+            item.message,
+            "Publish & deploy to apply the update (a newer version writes the configuration"
+            " differently)",
+        )
+
+    def test_the_other_causes_are_said_in_words_that_are_true(self) -> None:
+        def said(*causes: dict[str, object]) -> str:
+            (item,) = attention.from_regeneration(
+                [regeneration(required=True, causes=list(causes))]
+            )
+            return item.message
+
+        self.assertEqual(
+            said({"kind": "rule_set", "published": "4.25.1", "installed": "4.25.1"}),
+            "Publish & deploy to apply the update"
+            " (the WAF rule files of version 4.25.1 are not the published ones)",
+        )
+        self.assertEqual(
+            said({"kind": "addresses", "files": ["keepalived/node-node-a.conf"]}),
+            "Publish & deploy to apply the update (the nodes' addresses are not the published ones)",
+        )
+        self.assertEqual(
+            said({"kind": "generator", "published": "2", "installed": "1"}),
+            "Publish & deploy to apply the update (the published version was written by a newer"
+            " product than the installed one)",
+        )
 
     def test_a_refusal_is_its_own_row_with_the_engines_words(self) -> None:
         (item,) = attention.from_regeneration(

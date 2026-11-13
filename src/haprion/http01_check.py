@@ -145,6 +145,11 @@ def parse_name(text: str) -> str:
     name = text.strip().lower()
     if not name:
         raise CheckError("bad_input", "write the name the certificate is for, then check it")
+    #
+    # A fully qualified name ends in a dot; the form has always dropped it, so
+    # the command does too and both ways in judge the same text.
+    #
+    name = name.rstrip(".")
     if name.startswith("*."):
         raise CheckError("bad_input", "HTTP-01 does not prove a wildcard; a wildcard needs DNS-01")
     if (

@@ -80,6 +80,13 @@ class TheName(unittest.TestCase):
     def test_one_name_lowercased(self) -> None:
         self.assertEqual(http01_check.parse_name(" App.Example.COM "), NAME)
 
+    def test_a_trailing_dot_is_the_same_name(self) -> None:
+        """A fully qualified name: the form drops the dot, and so does the command."""
+
+        self.assertEqual(http01_check.parse_name("App.Example.com."), NAME)
+        with self.assertRaises(CheckError):
+            http01_check.parse_name(".")
+
     def test_a_wildcard_is_refused_with_the_method_that_proves_it(self) -> None:
         with self.assertRaises(CheckError) as caught:
             http01_check.parse_name("*.example.com")

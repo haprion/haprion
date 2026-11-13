@@ -36,13 +36,13 @@ from unittest import mock
 import psycopg
 import psycopg_pool
 from haprion import config as config_module
-from haprion import exit_codes
+from haprion import exit_codes, http01_check
 from haprion.config import ConfigError
 from starlette.applications import Starlette
 from starlette.endpoints import HTTPEndpoint
 from starlette.routing import Route
 
-from haprion_ui import api
+from haprion_ui import api, certificate_form
 from haprion_ui import config as ui_config
 from haprion_ui.app import create_app
 from tests.contract_schema import assert_contract
@@ -1448,6 +1448,22 @@ class EveryWriteHasItsCommand(unittest.TestCase):
         routes = _posted_routes() | {"/settings/something-new"}
 
         self.assertIn("/settings/something-new", routes - set(PARITY))
+
+    def test_the_http01_check_judges_the_name_as_the_form_does(self) -> None:
+        """The form's name and the command's argument are read alike."""
+
+        for text in (" App.Example.COM ", "app.example.com.", "app.example.com", "127.1", "."):
+            with self.subTest(text=text):
+                form = certificate_form.normalise(replace(certificate_form.EMPTY_FORM, domain=text))
+                try:
+                    from_command: str | None = http01_check.parse_name(text)
+                except http01_check.CheckError:
+                    from_command = None
+                try:
+                    from_form: str | None = http01_check.parse_name(form.domain)
+                except http01_check.CheckError:
+                    from_form = None
+                self.assertEqual(from_form, from_command)
 
     def test_fas_23_left_no_gap(self) -> None:
         """Every write the interface makes now has its command; a new one must name its own."""

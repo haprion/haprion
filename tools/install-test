@@ -1180,8 +1180,14 @@ class Run:
             (work / "serve.py").write_text(FAKE_BLOCKLIST)
             bearer = secrets.token_hex(16)
             (work / "bearer").write_text(bearer + "\n")
+            #
+            # The network is outside every distribution's subnet: one that held
+            # the manager would take its address into it when the list is merged,
+            # and the node's file would name the network, not the address
+            # (debian13's 198.51.100.0/24, 26-11-13).
+            #
             (work / "community.txt").write_text(
-                f"# install test\n{mgr}\n198.51.100.0/24 ; a network\nnot an address\n"
+                f"# install test\n{mgr}\n192.0.2.128/25 ; a network\nnot an address\n"
             )
             self.on("mgr", "mkdir -p /root/blocklist-fake")
             for name in ("tls.pem", "tls.key", "serve.py", "community.txt", "bearer"):
@@ -1749,6 +1755,31 @@ def run_one(
 
             header = run.api_token("install-test-write", "--level write", f"--cluster {CLUSTER}")
             document = OBJECT.format(backend=run.address("mgr")) + BLOCKING
+            #
+            # The poller reads the cluster's repository on its interval; until
+            # it has, there is no base to change objects against (409) or no
+            # stored object to replace (404).
+            #
+            #
+            # Saved once the poller has read the repository's head, as a person
+            # opening the page then would: a save against an older reading is
+            # stored, and its publish is fenced off as moved (409 conflict). The
+            # step before publishes twice just before this one (26-11-13); the
+            # scale scenario waits the same way.
+            #
+            _, newest = run.on(
+                "mgr", f"git -c safe.directory='*' -C {CONFIG_ROOT}/{CLUSTER} rev-parse HEAD"
+            )
+            until = time.monotonic() + 120
+            while True:
+                status, answer, _ = run.api(header, "GET", f"/clusters/{CLUSTER}/objects/shop")
+                if status == 200 and (answer.get("result") or {}).get("commit") == newest.strip():
+                    break
+                if time.monotonic() > until:
+                    raise Failed(
+                        f"the poller did not read {newest.strip()} within 120 s:\n{answer}"
+                    )
+                time.sleep(2)
             #
             # The poller reads the cluster's repository on its interval; until
             # it has, there is no base to change objects against (409) or no

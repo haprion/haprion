@@ -85,6 +85,22 @@ class EachKindOfChange(unittest.TestCase):
             (),
         )
 
+    def test_strict_sni_turned_on_and_off_is_said_and_absent_is_off(self) -> None:
+        on = {**PUBLISHED["vips"][0], "strict_sni": True}
+        document = saved(vips=[on, PUBLISHED["vips"][1]])
+
+        self.assertEqual(found(document)["VIP web"].what, "Strict SNI turned on")
+        self.assertEqual(
+            changes(
+                PUBLISHED, saved(vips=[{**on, "strict_sni": False}, PUBLISHED["vips"][1]]), USE
+            ),
+            (),
+        )
+        self.assertEqual(
+            changes(saved(vips=[on, PUBLISHED["vips"][1]]), saved(), USE)[0].what,
+            "Strict SNI turned off",
+        )
+
     def test_a_source_moved_and_a_group_widened(self) -> None:
         document = saved(
             sources=[{"name": "egress-2", "address": "192.0.2.31"}],

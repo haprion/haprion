@@ -62,6 +62,9 @@ class VipView:
     http3: bool = False
     """Whether https on this address is served over QUIC too (B280)."""
 
+    strict_sni: bool = False
+    """Whether a TLS client naming no certificate of this address is refused (B502)."""
+
 
 @dataclass(frozen=True, slots=True)
 class SourceView:
@@ -339,9 +342,16 @@ def changes(
                 ("source", "source changed"),
                 ("tls", "TLS policy changed"),
                 ("http3", "HTTP/3 turned " + ("on" if after[name].get("http3") else "off")),
+                (
+                    "strict_sni",
+                    "Strict SNI turned " + ("on" if after[name].get("strict_sni") else "off"),
+                ),
             )
             if before[name].get(field) != after[name].get(field)
-            and (field != "http3" or bool(before[name].get(field)) != bool(after[name].get(field)))
+            and (
+                field not in ("http3", "strict_sni")
+                or bool(before[name].get(field)) != bool(after[name].get(field))
+            )
         ]
         if default_before != default_after and name == default_after:
             what.append("made the default")
@@ -396,6 +406,7 @@ def _vips(result: Mapping[str, Any], default_vip: str) -> tuple[VipView, ...]:
             #
             tls_policy=row.get("tls") if isinstance(row.get("tls"), str) else None,
             http3=row.get("http3") is True,
+            strict_sni=row.get("strict_sni") is True,
         )
         for row in _rows(result, "vips")
     )
@@ -589,6 +600,7 @@ def result_from_document(document: str, reading: Mapping[str, Any]) -> dict[str,
                 "source": vip.source,
                 "tls": vip.tls_policy,
                 "http3": vip.http3,
+                "strict_sni": vip.strict_sni,
             }
             for vip in sorted(parsed.vips.values(), key=lambda entry: entry.name)
         ],
@@ -697,6 +709,7 @@ class NetworkForm:
     # removal: an unticked box posts nothing.
     #
     http3_vip_rows: frozenset[int] = frozenset()
+    strict_sni_vip_rows: frozenset[int] = frozenset()
     removed_source_rows: frozenset[int] = frozenset()
     removed_group_rows: frozenset[int] = frozenset()
 
@@ -783,6 +796,8 @@ def _vip_entry(form: NetworkForm, row: int, address: str) -> dict[str, str | boo
         entry["tls"] = policy
     if row in form.http3_vip_rows:
         entry["http3"] = True
+    if row in form.strict_sni_vip_rows:
+        entry["strict_sni"] = True
     return entry
 
 

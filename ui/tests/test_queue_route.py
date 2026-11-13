@@ -229,6 +229,19 @@ class RefusedBeforeAnythingIsWritten(QueueRouteTestCase):
             },
         )
 
+    def test_a_ticked_strict_sni_box_is_saved_in_the_document(self) -> None:
+        response = self.post(
+            self.writing_client(),
+            **self.network_form(default_vip_confirmation="on", vip_strict_sni=["0"]),
+        )
+
+        self.assertEqual(response.status_code, 303)
+        document = json.loads(self.saved_changes[0]["document"])
+        self.assertEqual(
+            document["vips"]["public"],
+            {"address": "192.0.2.20", "source": "192.0.2.25", "strict_sni": True},
+        )
+
     def test_a_hand_written_document_cannot_reach_the_helper_through_this_route(self) -> None:
         #
         # The field the first version of this form posted. A browser that still

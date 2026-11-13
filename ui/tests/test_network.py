@@ -79,6 +79,24 @@ class TheReadingBecomesTheCard(unittest.TestCase):
         self.assertEqual(missing.vips, ())
         self.assertFalse(missing.editable)
 
+    def test_strict_sni_reaches_the_view_and_defaults_to_off(self) -> None:
+        rows = demo.network_rows(NOW)
+        result = dict(rows[0].result)
+        result["vips"] = [{**vip, "strict_sni": vip["name"] == "public"} for vip in result["vips"]]
+        rows = (replace(rows[0], result=result), *rows[1:])
+
+        edge = next(
+            view
+            for view in build_network_overview(
+                demo.CLUSTERS, rows, now=NOW, stale_after=STALE_AFTER
+            )
+            if view.cluster == "edge-demo"
+        )
+
+        self.assertEqual(
+            {vip.name: vip.strict_sni for vip in edge.vips}, {"partner": False, "public": True}
+        )
+
     def test_the_policy_a_description_names_reaches_the_view(self) -> None:
         """It did not, and the page could not show what it had published.
 
@@ -378,6 +396,21 @@ class TheRowsBecomeTheDocument(unittest.TestCase):
         self.assertIs(document["vips"]["public"]["http3"], True)
         self.assertNotIn("http3", document["vips"]["mail"])
 
+    def test_a_ticked_strict_sni_box_is_written_on_its_row_only(self) -> None:
+        document = json.loads(
+            document_from_form(
+                self.form(
+                    vip_names=("public", "mail"),
+                    vip_addresses=("192.0.2.20", "192.0.2.21"),
+                    vip_sources=("", ""),
+                    strict_sni_vip_rows=frozenset({1}),
+                )
+            )
+        )
+
+        self.assertIs(document["vips"]["mail"]["strict_sni"], True)
+        self.assertNotIn("strict_sni", document["vips"]["public"])
+
     def test_the_filled_in_rows_become_the_document(self) -> None:
         document = json.loads(document_from_form(self.form()))
 
@@ -579,6 +612,27 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase, BadgeReading):
             )
             self.sign_in(client)
             return client.get("/network")
+
+    def test_the_reader_has_a_strict_sni_column_after_http3(self) -> None:
+        client = self.demo_client()
+        self.sign_in(client)
+
+        page = client.get("/network").text
+
+        self.assertIn("<th>HTTP/3</th><th>Strict SNI</th><th>Default</th>", page)
+        self.assertIn('<td data-label="Strict SNI"><span class="table-empty">off</span></td>', page)
+
+    def test_the_editor_has_a_strict_sni_box_per_row_after_http3(self) -> None:
+        page = self.editable_page().text
+
+        self.assertIn('<th class="editor-choice">Strict SNI</th>', page)
+        self.assertIn('name="vip_strict_sni" value="0"', page)
+        self.assertIn('aria-label="Strict SNI on VIP partner"', page)
+        self.assertIn('aria-label="Strict SNI on the new VIP"', page)
+        self.assertEqual(
+            page.count('<col class="col-http3"><col class="col-sni">'),
+            page.count('<col class="col-http3">'),
+        )
 
     def test_each_address_and_group_names_the_objects_using_it(self) -> None:
         page = self.editable_page().text

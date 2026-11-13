@@ -242,8 +242,9 @@ def build_router(config: Config) -> APIRouter:
             if existing is None:
                 return PlainTextResponse("Not found", status_code=404)
             used = blocklist_form.users(connection, name)
+            unread = "" if used else blocklist_form.unread_sentence(connection)
             recent = db.recent_jobs(connection)
-        return _remove_page(request, gate, existing, used=used, recent=recent)
+        return _remove_page(request, gate, existing, used=used, recent=recent, problem=unread)
 
     def _remove_page(
         request: Request,

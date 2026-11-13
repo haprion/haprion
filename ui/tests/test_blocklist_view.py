@@ -309,6 +309,7 @@ class BlocklistRouteTestCase(LoginTestCase):
         self.queued: list[dict[str, Any]] = []
         self.object_rows: list[db.ClusterObjects] = []
         self.network_rows: list[db.ClusterNetwork] = []
+        self.drafts: list[db.ProxyDraft] = []
 
         def save(_c: object, **fields: Any) -> db.Blocklist:
             self.saved.append(fields)
@@ -336,6 +337,7 @@ class BlocklistRouteTestCase(LoginTestCase):
                 "haprion_ui.db.cluster_networks", side_effect=lambda _c: list(self.network_rows)
             ),
             mock.patch("haprion_ui.db.cluster_changes", return_value={}),
+            mock.patch("haprion_ui.db.live_drafts", side_effect=lambda _c, _l: list(self.drafts)),
             mock.patch("haprion_ui.pages.blocklists.APPLY_WAIT", 0.3),
         ):
             patch.start()
@@ -548,6 +550,58 @@ class RemovingABlocklist(BlocklistRouteTestCase):
             follow_redirects=False,
         )
         self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.queued, [])
+
+    def test_a_saved_change_or_draft_that_names_it_blocks_the_removal(self) -> None:
+        self.blocklists = [blocklist_row()]
+        self.object_rows = [objects_reading("alpha", {"web": []})]
+        self.drafts = [
+            db.ProxyDraft(
+                cluster="alpha",
+                object_id="ssh",
+                yaml=(
+                    "name: ssh\nlisten: {protocol: tcp, port: 22}\n"
+                    "deny_from: {mode: deny, sources: [community]}\n"
+                ),
+                base_version=None,
+                base_hash="a" * 40,
+                revision=1,
+                updated_by="admin",
+                updated_at=NOW,
+                deleted=False,
+                stage="saved",
+                replaces=None,
+                base_document=None,
+            )
+        ]
+        client = self.admin()
+        response = client.post(
+            "/settings/blocklists/community/remove",
+            data={
+                auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE]),
+                "idempotency_key": KEY,
+            },
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("ssh on alpha", response.text)
+        self.assertEqual(self.queued, [])
+
+    def test_a_cluster_that_could_not_be_read_keeps_the_list(self) -> None:
+        self.blocklists = [blocklist_row()]
+        failed = replace(objects_reading("alpha", {}), outcome="failed", poll_error="timed out")
+        self.object_rows = [failed]
+        client = self.admin()
+        response = client.post(
+            "/settings/blocklists/community/remove",
+            data={
+                auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE]),
+                "idempotency_key": KEY,
+            },
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertIn(
+            "alpha could not be read; try again when the poller has read it", response.text
+        )
         self.assertEqual(self.queued, [])
 
     def test_an_unused_list_is_removed_by_its_job(self) -> None:

@@ -25,6 +25,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from haprion import blocklist_store, blocklists
+from haprion.config import ConfigError
 from haprion.dns_profile_keys import DnsProfilePublicKey
 from haprion.proxy_model import dump_document, read_document
 
@@ -177,17 +178,44 @@ def fetched_names(connection: Any) -> list[str]:
     )
 
 
-def users(connection: Any, name: str) -> dict[str, tuple[str, ...]]:
-    """The objects that name the list, per cluster, from the poller's object readings."""
+def _unread(connection: Any, readings: Sequence[db.ClusterObjects]) -> tuple[str, ...]:
+    """The clusters whose objects the poller has no good reading of."""
 
-    found: dict[str, tuple[str, ...]] = {}
-    for reading in db.cluster_objects(connection):
+    listed = db.cluster_list(connection)
+    clusters = set(listed) if listed is not None else {reading.cluster for reading in readings}
+    read = {r.cluster for r in readings if r.outcome == "done" and not r.poll_error}
+    return tuple(sorted(clusters - read))
+
+
+def unread_sentence(connection: Any) -> str:
+    """Why the lists' use cannot be told yet, or `""` when every cluster has been read."""
+
+    missing = _unread(connection, db.cluster_objects(connection))
+    if not missing:
+        return ""
+    return f"{', '.join(missing)} could not be read; try again when the poller has read it."
+
+
+def users(connection: Any, name: str) -> dict[str, tuple[str, ...]]:
+    """The objects that name the list, per cluster: published, saved changes and drafts."""
+
+    found: dict[str, set[str]] = {}
+    readings = db.cluster_objects(connection)
+    for reading in readings:
         if reading.outcome != "done" or reading.poll_error:
             continue
         named = network.usage(objects.cluster_object_views(reading)).groups.get(name, ())
         if named:
-            found[reading.cluster] = named
-    return found
+            found.setdefault(reading.cluster, set()).update(named)
+    for draft in db.live_drafts(connection, sorted({r.cluster for r in readings})):
+        try:
+            data = read_document(draft.object_id, draft.yaml.encode())
+        except ConfigError:
+            continue
+        denied = data.get("deny_from")
+        if isinstance(denied, dict) and name in (denied.get("sources") or ()):
+            found.setdefault(draft.cluster, set()).add(draft.object_id)
+    return {cluster: tuple(sorted(names)) for cluster, names in found.items()}
 
 
 def in_use_sentence(name: str, used: Mapping[str, Sequence[str]]) -> str:
@@ -334,6 +362,8 @@ def remove(
     used = users(connection, existing.name)
     if used:
         raise FormProblem(in_use_sentence(existing.name, used), code="in_use")
+    if unread := unread_sentence(connection):
+        raise FormProblem(unread, code="in_use")
     try:
         job = db.queue_job(
             connection,

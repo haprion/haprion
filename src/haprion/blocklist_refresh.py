@@ -154,8 +154,15 @@ def write_cluster(
     target: ClusterTarget,
     stored: Stored,
     networks: tuple[blocklists.Network, ...],
+    *,
+    before_change: Callable[[str], None] | None = None,
 ) -> Written:
-    """One list's file in one cluster, with that cluster's exceptions out; written only if it differs."""
+    """One list's file in one cluster, with that cluster's exceptions out; written only if it differs.
+
+    `before_change` is told the cluster just before its file is replaced, so a
+    pass that dies after the write has already remembered that the nodes were
+    not sent the file (review 2026-11-13, BL08).
+    """
 
     item = stored.definition
     result = blocklists.subtract(networks, item.excepts, target.groups)
@@ -166,6 +173,8 @@ def write_cluster(
     except FileNotFoundError:
         changed = True
     if changed:
+        if before_change is not None:
+            before_change(target.cluster)
         owned = os.geteuid() == 0
         atomic_file.write(
             path,
@@ -193,6 +202,7 @@ def run(
     state_directory: Path = blocklist_store.STATE,
     only: Sequence[str] = (),
     force: bool = False,
+    before_change: Callable[[str], None] | None = None,
 ) -> Pass:
     """One pass: fetch what is due (or `only`, or everything with `force`), then write every cluster.
 
@@ -226,7 +236,7 @@ def run(
             continue
         served.add(item.definition.name)
         for target in targets:
-            written.append(write_cluster(target, item, networks))
+            written.append(write_cluster(target, item, networks, before_change=before_change))
     for target in targets:
         _remove_unserved(target, served)
     return Pass(states=states, written=tuple(written))

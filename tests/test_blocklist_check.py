@@ -257,6 +257,34 @@ class TheHelperAndTheCommand(Fixture):
         self.assertNotIn(SAVED, err)
         self.assertIn("blocklist_check: list community", err)
 
+    def test_a_cluster_with_a_broken_network_file_is_named_and_the_others_answer(self) -> None:
+        self.policy = self.write_config(
+            {"keeper.example": {"source": {"kind": "acme"}, "clusters": ["alpha", "beta"]}}
+        )
+        broken = self.root / "config" / "beta" / "managed" / "network.yaml"
+        broken.parent.mkdir(parents=True)
+        broken.write_text("networks: [broken\n", encoding="utf-8")
+
+        code, document, err = self.ask({"list": self.form(keep_secret=True)})
+        self.assertEqual(code, 0, err)
+        result = document["result"]
+        self.assertEqual(
+            result["clusters"], [{"cluster": "alpha", "excepted": 1, "unknown_groups": []}]
+        )
+        self.assertEqual(result["unread"], ["beta"])
+        self.assertIn(
+            "the network of beta could not be read",
+            blocklist_check.Tested.from_dict(result).sentence(),
+        )
+
+        code, document, err = self.ask({"address": "198.51.100.1"})
+        self.assertEqual(code, 0, err)
+        self.assertEqual(document["result"]["unread"], ["beta"])
+        self.assertIn(
+            "The network of beta could not be read",
+            blocklist_check.AddressCheck.from_dict(document["result"]).sentence(),
+        )
+
     def test_a_test_with_the_typed_token_keeps_nothing(self) -> None:
         before = sorted(p.name for p in self.state.iterdir())
 

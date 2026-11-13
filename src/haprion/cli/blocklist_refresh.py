@@ -94,15 +94,32 @@ def write_pending(directory: Path, clusters: Iterable[str]) -> None:
     atomic_file.write(directory / PENDING, content.encode("utf-8"), mode=0o600)
 
 
+def remember(directory: Path, cluster: str) -> None:
+    """Add a cluster to the pending file now: its files are about to change."""
+
+    pending = read_pending(directory)
+    if cluster not in pending and "*" not in pending:
+        write_pending(directory, pending | {cluster})
+
+
 def deploy(
-    changed: Iterable[str], known: Sequence[str], *, directory: Path, deployer: Deployer
+    changed: Iterable[str],
+    known: Sequence[str],
+    *,
+    directory: Path,
+    deployer: Deployer,
+    skip: Iterable[str] = (),
 ) -> dict[str, int]:
-    """Deploy the changed clusters and those left over; what each answered."""
+    """Deploy the changed clusters and those left over; what each answered.
+
+    A cluster in `skip` was not written this pass: it stays pending if it was
+    and is not deployed from files this pass did not make.
+    """
 
     pending = read_pending(directory)
     if "*" in pending:
         pending = set(known)
-    wanted = (pending | set(changed)) & set(known)
+    wanted = ((pending | set(changed)) & set(known)) - set(skip)
     answers: dict[str, int] = {}
     for cluster in sorted(wanted):
         answers[cluster] = deployer(cluster)
@@ -175,13 +192,24 @@ def main(
             return refuse("another blocklist refresh is still running", exit_codes.BLOCKED)
         try:
             targets = []
+            skipped: dict[str, str] = {}
             for cluster_id in sorted(runtime.clusters):
                 target = cert_publish.cluster_target(policy.certificate_root, cluster_id)
+                #
+                # One cluster's network file that cannot be read is that
+                # cluster's problem: it is left out of this pass, said, and
+                # the others go on (review 2026-11-13, BL14).
+                #
+                try:
+                    groups = runtime.clusters[cluster_id].network().networks
+                except (ConfigError, OSError) as exc:
+                    skipped[cluster_id] = str(exc)
+                    continue
                 targets.append(
                     blocklist_refresh.ClusterTarget(
                         cluster=cluster_id,
                         directory=target.directory,
-                        groups=runtime.clusters[cluster_id].network().networks,
+                        groups=groups,
                         uid=target.uid,
                         gid=target.gid,
                         mode=target.mode,
@@ -196,12 +224,14 @@ def main(
                 state_directory=state,
                 only=only,
                 force=force,
+                before_change=lambda cluster: remember(state, cluster),
             )
             answers = deploy(
                 result.changed_clusters(),
                 sorted(runtime.clusters),
                 directory=state,
                 deployer=deployer or ClusterDeployer(errors),
+                skip=skipped,
             )
         except (cert_publish.PublishError, blocklist_store.StoreError, ConfigError, OSError) as exc:
             return refuse(str(exc), exit_codes.FAILED)
@@ -223,6 +253,11 @@ def main(
                 f"{written.name} in {written.cluster}: the exception names "
                 f"{', '.join(written.unknown_groups)}, which the cluster does not define\n"
             )
+    for cluster, reason in sorted(skipped.items()):
+        writer.write(
+            f"{cluster}: skipped, its network description could not be read: {' '.join(reason.split())}\n"
+        )
+        code = exit_codes.PARTIAL
     for cluster, answer in sorted(answers.items()):
         writer.write(f"deploy {cluster}: {'ok' if answer == 0 else f'exit {answer}'}\n")
         if answer != 0:

@@ -26,6 +26,7 @@ class TheCommand(Fixture):
         self.failure: Exception | None = None
         self.deployed: list[str] = []
         self.answer = 0
+        self.dies = False
 
     def define(self, name: str = "crowdsec", **fields: object) -> None:
         item = blocklists.definition(
@@ -46,6 +47,8 @@ class TheCommand(Fixture):
         return self.body
 
     def deployer(self, cluster: str) -> int:
+        if self.dies:
+            raise RuntimeError("the pass was stopped")
         self.deployed.append(cluster)
         return self.answer
 
@@ -101,6 +104,39 @@ class TheCommand(Fixture):
         self.assertEqual(self.deployed, ["alpha", "alpha"])
         pending = json.loads((self.state / command.PENDING).read_text())
         self.assertEqual(pending, {"clusters": []})
+
+    def test_a_pass_that_dies_after_a_file_was_written_leaves_the_cluster_pending(self) -> None:
+        self.define()
+
+        self.dies = True
+        with self.assertRaises(RuntimeError):
+            self.refresh()
+        pending = json.loads((self.state / command.PENDING).read_text())
+        self.assertEqual(pending, {"clusters": ["alpha"]})
+
+        self.dies = False
+        code, out, _ = self.refresh(now=NOW + dt.timedelta(minutes=10))
+
+        self.assertEqual(code, exit_codes.OK)
+        self.assertEqual(self.deployed, ["alpha"])
+        self.assertIn("deploy alpha: ok", out)
+
+    def test_a_cluster_with_a_broken_network_file_does_not_stop_the_others(self) -> None:
+        self.policy = self.write_config(
+            {"keeper.example": {"source": {"kind": "acme"}, "clusters": ["alpha", "beta"]}}
+        )
+        broken = self.root / "config" / "beta" / "managed" / "network.yaml"
+        broken.parent.mkdir(parents=True)
+        broken.write_text("networks: [this is not a network description\n", encoding="utf-8")
+        self.define()
+
+        code, out, _ = self.refresh()
+
+        self.assertEqual(code, exit_codes.PARTIAL)
+        self.assertEqual((self.alpha / "blocklists" / "crowdsec.lst").read_bytes(), self.body)
+        self.assertFalse((self.beta / "blocklists").exists())
+        self.assertEqual(self.deployed, ["alpha"])
+        self.assertIn("beta: skipped, its network description could not be read", out)
 
     def test_an_unreadable_pending_file_deploys_every_cluster(self) -> None:
         self.state.mkdir()

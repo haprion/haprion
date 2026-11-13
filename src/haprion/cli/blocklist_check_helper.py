@@ -37,15 +37,24 @@ LIST_OPTIONAL = frozenset({"username", "excepts", "secret", "keep_secret"})
 
 def cluster_groups(
     policy_path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
-) -> blocklist_check.Groups:
-    """Each cluster's network groups, as the timer reads them for its exceptions."""
+) -> tuple[blocklist_check.Groups, tuple[str, ...]]:
+    """Each cluster's network groups, as the timer reads them for its exceptions.
+
+    A cluster whose network description cannot be read is not among them and
+    is named in the second part, so one broken cluster does not stop the
+    answer for the others (review 2026-11-13, BL14).
+    """
 
     policy = load_policy(policy_path, require_secure=require_secure)
     runtime = load_runtime_config(policy, require_secure=require_secure)
-    return {
-        cluster_id: runtime.clusters[cluster_id].network().networks
-        for cluster_id in sorted(runtime.clusters)
-    }
+    groups: dict[str, Any] = {}
+    unread: list[str] = []
+    for cluster_id in sorted(runtime.clusters):
+        try:
+            groups[cluster_id] = runtime.clusters[cluster_id].network().networks
+        except (ConfigError, OSError):
+            unread.append(cluster_id)
+    return groups, tuple(unread)
 
 
 def _definition(fields: dict[str, Any]) -> blocklists.Definition:
@@ -127,7 +136,7 @@ def perform(
         raise HelperProtocolError(
             "parameters hold address or list, one of them", exit_code=exit_codes.REFUSED
         )
-    groups = cluster_groups(policy_path, require_secure=require_secure)
+    groups, unread = cluster_groups(policy_path, require_secure=require_secure)
     if "address" in parameters:
         stored = blocklist_store.read_all(directory=definitions)
         return blocklist_check.check_address(
@@ -136,13 +145,14 @@ def perform(
             blocklist_store.read_state(directory=state),
             groups,
             kept=lambda name: blocklist_store.kept(name, directory=state),
+            unread=unread,
         ).as_dict()
     fields = parameters["list"]
     if not isinstance(fields, dict):
         raise HelperProtocolError("parameters.list is an object", exit_code=exit_codes.REFUSED)
     item = _definition(fields)
     return blocklist_check.test(
-        item, _secret(fields, item, definitions), groups, fetch=fetch
+        item, _secret(fields, item, definitions), groups, fetch=fetch, unread=unread
     ).as_dict()
 
 

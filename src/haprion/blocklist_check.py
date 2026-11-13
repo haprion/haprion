@@ -89,6 +89,8 @@ class Tested:
     clusters: tuple[ClusterExcept, ...]
     problem: str | None
     """Why the list could not be fetched or read (`failed` only)."""
+    unread: tuple[str, ...] = ()
+    """Clusters whose network description could not be read, so their exceptions are not counted."""
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -107,6 +109,7 @@ class Tested:
                 for item in self.clusters
             ],
             "problem": self.problem,
+            **({"unread": list(self.unread)} if self.unread else {}),
         }
 
     @classmethod
@@ -130,6 +133,7 @@ class Tested:
                 for item in result["clusters"]
             ),
             problem=None if result["problem"] is None else str(result["problem"]),
+            unread=tuple(str(cluster) for cluster in result.get("unread", ())),
         )
 
     def sentence(self) -> str:
@@ -155,6 +159,8 @@ class Tested:
                 missing.setdefault(group, []).append(item.cluster)
         for group, clusters in missing.items():
             said.append(f"{group} is not a group on {_names(clusters)}")
+        if self.unread:
+            said.append(f"the network of {_names(self.unread)} could not be read")
         return " · ".join(said)
 
 
@@ -164,6 +170,7 @@ def test(
     groups: Groups,
     *,
     fetch: Fetch = blocklists.fetch,
+    unread: Sequence[str] = (),
 ) -> Tested:
     """Fetch `item` once and read it as the timer would; nothing is kept."""
 
@@ -192,6 +199,7 @@ def test(
         excepts=item.excepts,
         clusters=tuple(clusters),
         problem=None,
+        unread=tuple(unread) if item.excepts else (),
     )
 
 
@@ -227,6 +235,8 @@ class AddressCheck:
     lists: tuple[Listed, ...]
     unfetched: tuple[str, ...]
     """Lists with no good fetch kept yet: they hold nothing to look in."""
+    unread: tuple[str, ...] = ()
+    """Clusters whose network description could not be read, so their exceptions are not applied."""
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -243,6 +253,7 @@ class AddressCheck:
                 for item in self.lists
             ],
             "unfetched": list(self.unfetched),
+            **({"unread": list(self.unread)} if self.unread else {}),
         }
 
     @classmethod
@@ -264,6 +275,7 @@ class AddressCheck:
                 for item in result["lists"]
             ),
             unfetched=tuple(str(name) for name in result["unfetched"]),
+            unread=tuple(str(cluster) for cluster in result.get("unread", ())),
         )
 
     def sentence(self) -> str:
@@ -273,6 +285,11 @@ class AddressCheck:
         if self.unfetched:
             verb = "has" if len(self.unfetched) == 1 else "have"
             said.append(f"{_names(self.unfetched)} {verb} not been fetched yet.")
+        if self.unread:
+            said.append(
+                f"The network of {_names(self.unread)} could not be read, "
+                "so its exceptions are not shown."
+            )
         return " ".join(said)
 
 
@@ -296,6 +313,7 @@ def check_address(
     groups: Groups,
     *,
     kept: Kept,
+    unread: Sequence[str] = (),
 ) -> AddressCheck:
     """Which kept lists hold `address`, and where an exception keeps it off the nodes."""
 
@@ -325,4 +343,6 @@ def check_address(
                 clusters=tuple(sorted(groups)),
             )
         )
-    return AddressCheck(address=wanted, lists=tuple(listed), unfetched=tuple(unfetched))
+    return AddressCheck(
+        address=wanted, lists=tuple(listed), unfetched=tuple(unfetched), unread=tuple(unread)
+    )

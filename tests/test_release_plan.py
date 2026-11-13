@@ -257,6 +257,29 @@ class ReleasePlanTest(unittest.TestCase):
         self.assertTrue(result.security)
         self.assertIn("Generate something new", result.reason)
 
+    def test_a_file_name_with_a_blank_is_one_file_not_two(self) -> None:
+        # Split on blanks, this one name reads as two lock files.
+        self.repository.merge(
+            12,
+            APP,
+            PLAN.LOCKS_SUBJECT,
+            {"uv.lock ui/uv.lock": "lock\n"},
+            made="2026-11-15T09:00:00+00:00",
+            landed="2026-11-15T09:00:00+00:00",
+        )
+
+        result = self.repository.decide("2026-11-20T00:00:00+00:00")
+
+        self.assertEqual(result.outcome, "blocked")
+
+    def test_a_changed_file_with_a_blank_in_its_name_is_outside_the_watch(self) -> None:
+        self.repository.write("uv.lock ui/uv.lock", "lock\n")
+        self.repository.commit("operator", "A file with a blank", "2026-11-15T09:00:00+00:00")
+
+        self.assertEqual(
+            PLAN.outside_the_watch(self.repository.root, "v1.1.0"), "uv.lock ui/uv.lock"
+        )
+
     def test_the_watch_s_subject_on_other_files_is_not_the_watch(self) -> None:
         self.repository.merge(
             12,
@@ -517,6 +540,44 @@ class ReleasePlanTest(unittest.TestCase):
         result = self.repository.decide(
             "2026-11-16T12:00:00+00:00", known=PLAN.Known(release="missing")
         )
+
+        self.assertNotEqual(result.outcome, "rebuild")
+
+    def test_a_tag_on_the_version_merge_after_a_person_s_commit_is_not_automatic(self) -> None:
+        # The tag is the app's version merge, but main held a person's commit
+        # since the tag before: what the tag carries was never the watch's alone.
+        self.repository.write("src/haprion/generate.py", "x = 1\n")
+        self.repository.commit("operator", "Generate something new", "2026-11-15T08:00:00+00:00")
+        self.tagged()
+
+        result = self.repository.decide(
+            "2026-11-16T12:00:00+00:00", known=PLAN.Known(release="missing")
+        )
+
+        self.assertNotEqual(result.outcome, "rebuild")
+
+    def test_a_tag_on_a_merge_that_is_not_the_tested_head_is_not_automatic(self) -> None:
+        repository = self.repository
+        self.locks(4, "2026-11-15T09:00:00+00:00")
+        repository.git("checkout", "--quiet", "-b", "release-watch")
+        PLAN.bump(repository.root, "1.1.1")
+        repository.commit(APP, "Version 1.1.1", "2026-11-16T10:00:00+00:00")
+        repository.git("checkout", "--quiet", "main")
+        self.waf(5, "2026-11-16T10:10:00+00:00")
+        repository.git(
+            "merge",
+            "--quiet",
+            "--no-ff",
+            "--message",
+            "Merge pull request #14 from example/release-watch",
+            "release-watch",
+            author=APP,
+            when="2026-11-16T10:30:00+00:00",
+        )
+        repository.register(14, APP)
+        repository.git("tag", "v1.1.1")
+
+        result = repository.decide("2026-11-16T12:00:00+00:00", known=PLAN.Known(release="missing"))
 
         self.assertNotEqual(result.outcome, "rebuild")
 

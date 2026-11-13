@@ -178,6 +178,12 @@ def _git(source: Path, *args: str) -> str:
         raise PlanError(f"git {' '.join(args)}: {exc.stderr.strip()}") from exc
 
 
+def _paths(source: Path, *args: str) -> list[str]:
+    """The file names a git command lists with `-z`: NUL ends a name, so a blank or a newline stays in it."""
+
+    return [path for path in _git(source, *args, "-z").split("\0") if path]
+
+
 def last_tag(source: Path) -> str:
     """The newest release tag main's head descends from."""
 
@@ -234,7 +240,11 @@ def _unverified(head: str, subject: str, pulls: Mapping[int, Pull] | None, app: 
 
 
 def changes_since(
-    source: Path, tag: str, app: str, pulls: Mapping[int, Pull] | None = None
+    source: Path,
+    tag: str,
+    app: str,
+    pulls: Mapping[int, Pull] | None = None,
+    revision: str = "HEAD",
 ) -> list[Change]:
     """Every commit since the tag, with the time the merge that brought it to main landed.
 
@@ -249,7 +259,7 @@ def changes_since(
         "--first-parent",
         "--reverse",
         "--format=%H%x00%cI%x00%P%x00%an%x00%s",
-        f"{tag}..HEAD",
+        f"{tag}..{revision}",
     )
     for line in first_parent.splitlines():
         head, landed, parents, committer, subject = line.split("\x00", 4)
@@ -288,7 +298,7 @@ def changes_since(
                 )
                 continue
             files = frozenset(
-                _git(source, "diff-tree", "--no-commit-id", "--name-only", "-r", sha).split()
+                _paths(source, "diff-tree", "--no-commit-id", "--name-only", "-r", sha)
             )
             kind, security, shipped = _classify(commit_subject, author, files, app)
             changes.append(
@@ -303,7 +313,7 @@ def outside_the_watch(source: Path, tag: str, revision: str = "HEAD") -> str:
     """The first file that changed since the tag and is not one the watch, Dependabot or the version changes."""
 
     allowed = LOCK_FILES | WAF_FILES | VERSION_FILES
-    for path in _git(source, "diff", "--name-only", tag, revision).split():
+    for path in _paths(source, "diff", "--name-only", tag, revision):
         if path not in allowed and not path.startswith(".github/"):
             return path
     return ""
@@ -425,7 +435,10 @@ def automatic_tag(source: Path, tag: str, app: str, pulls: Mapping[int, Pull] | 
 
     It is the merge of a version proposal GitHub says the app opened and merged
     as exactly that commit, whose one commit says `Version` and the tag's own
-    number, and which changed the version files and nothing else.
+    number, and which changed the version files and nothing else. What came
+    before it since the tag before must pass what `tag` asks of it: every
+    commit verified, no file outside the watch's, the merge's tree the tested
+    head's.
     """
 
     merge = _git(source, "rev-parse", f"{tag}^{{commit}}").strip()
@@ -442,10 +455,25 @@ def automatic_tag(source: Path, tag: str, app: str, pulls: Mapping[int, Pull] | 
         .rstrip("\n")
         .split("\x00", 1)
     )
-    files = set(_git(source, "diff", "--name-only", parent_list[0], merge).split())
-    if proposal == app and proposal_subject == f"Version {tag[1:]}" and files <= VERSION_FILES:
-        return merge
-    return ""
+    files = set(_paths(source, "diff", "--name-only", parent_list[0], merge))
+    if proposal != app or proposal_subject != f"Version {tag[1:]}" or not files <= VERSION_FILES:
+        return ""
+    #
+    # The same bars `tag` holds the merge to, against the tag before this one:
+    # a person's change, or a tree other than the tested head's, is no tag of
+    # the watch's alone, and building it again would release it.
+    #
+    try:
+        previous = _git(
+            source, "describe", "--tags", "--abbrev=0", "--match", "v*", parent_list[0]
+        ).strip()
+    except PlanError:
+        return ""
+    if any(c.kind == "other" for c in changes_since(source, previous, app, pulls, merge)):
+        return ""
+    if outside_the_watch(source, previous, merge) or tree_problem(source, merge)[0]:
+        return ""
+    return merge
 
 
 def unpublished(tag: str, known: Known, now: datetime) -> str:

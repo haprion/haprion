@@ -265,6 +265,22 @@ class TheRedirects(Scenario):
                     self.assertEqual(len(seen), 1)
                     self.assertEqual(found.status, 301)
 
+    def test_a_redirect_to_an_address_that_is_not_one_is_another_service(self) -> None:
+        for location in (
+            "http://x.example.com:99999/",
+            "http://x.example.com:abc/",
+            "http://[::1/",
+        ):
+            with self.subTest(location=location):
+
+                def fetch(url: str, _timeout: float, location: str = location) -> Reply:
+                    return Reply(301, b"", location, ADDRESS)
+
+                found = http01_check.check(NAME, self.webroot, fetch=fetch, resolve=resolved)
+                self.assertEqual((found.answer, found.status), ("other", 301))
+                self.assertEqual(found.problem, "redirected to an address that is not one")
+                self.assertEqual(self.left(), [])
+
     def test_more_than_ten_redirects_are_said_as_such(self) -> None:
         """The known fault of 2026-11-08: the sentence said "None for the test file"."""
 

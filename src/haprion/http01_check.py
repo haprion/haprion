@@ -406,13 +406,23 @@ def _walk(
         if reply.status == 200 and reply.body.strip() == content:
             return Check(name, "reached", address, None, None)
         if reply.status in (301, 302, 303, 307, 308) and reply.location:
-            following = urljoin(url, reply.location)
-            onward = urlsplit(following)
-            if (
-                onward.scheme in PORTS
-                and onward.hostname
-                and (onward.port in (None, *PORTS.values()))
-            ):
+            try:
+                following = urljoin(url, reply.location)
+                onward = urlsplit(following)
+                port_ok = onward.port in (None, *PORTS.values())
+            except ValueError:
+                #
+                # A port that is no number or a bracket never closed: not
+                # an address, and no CA follows it either.
+                #
+                return Check(
+                    name,
+                    "other",
+                    address,
+                    reply.status,
+                    "redirected to an address that is not one",
+                )
+            if onward.scheme in PORTS and onward.hostname and port_ok:
                 url = following
                 continue
         return Check(name, "other", address, reply.status, None)

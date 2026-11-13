@@ -302,6 +302,22 @@ class TheCommandRendersWhatTheHelperSaid(unittest.TestCase):
         self.assertNotIn("network.yaml", out)
         self.assertIn("Node ownership is checked against 192.0.2.20", out)
 
+    def test_http3_and_strict_sni_are_printed_per_vip(self) -> None:
+        vips = [
+            {"name": "internal", "address": "192.0.2.20", "http3": True, "strict_sni": True},
+            {"name": "external", "address": "192.0.2.21", "http3": False, "strict_sni": False},
+            {"name": "legacy", "address": "192.0.2.22"},
+        ]
+        status, out, _ = self._run(["-c", "alpha"], self._document(vips=vips))
+
+        self.assertEqual(status, 0)
+        lines = {line.split()[0]: line.split() for line in out.splitlines() if line.strip()}
+        self.assertIn("HTTP/3", out.splitlines()[2])
+        self.assertIn("STRICT SNI", out.splitlines()[2])
+        self.assertEqual(lines["internal"][4:6], ["on", "on"])
+        self.assertEqual(lines["external"][4:6], ["-", "-"])
+        self.assertEqual(lines["legacy"][4:6], ["-", "-"])
+
     def test_a_derived_description_says_where_it_came_from(self) -> None:
         status, out, _ = self._run(
             ["-c", "alpha"],

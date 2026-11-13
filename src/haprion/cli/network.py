@@ -94,16 +94,26 @@ def _render(document: Mapping[str, Any], writer: TextIO) -> None:
     # is part of what a VIP is, and a command line that could not show it left
     # the interface as the only way to read a value both of them can write.
     # A helper too old to report it says `-`, the same as a VIP that names none.
+    # HTTP/3 and STRICT SNI are the same kind of value: a switch a VIP carries
+    # that the page shows and `--json` reports, `on` or `-`, and `-` as well
+    # for a helper that does not report them.
     #
-    writer.write(f"{'VIP':<20}{'ADDRESS':<20}{'SOURCE':<20}{'TLS':<16}DEFAULT\n")
-    writer.write(f"{'-' * 18:<20}{'-' * 18:<20}{'-' * 18:<20}{'-' * 14:<16}{'-' * 7}\n")
+    writer.write(
+        f"{'VIP':<20}{'ADDRESS':<20}{'SOURCE':<20}{'TLS':<16}{'HTTP/3':<8}{'STRICT SNI':<12}DEFAULT\n"
+    )
+    writer.write(
+        f"{'-' * 18:<20}{'-' * 18:<20}{'-' * 18:<20}{'-' * 14:<16}{'-' * 6:<8}{'-' * 10:<12}{'-' * 7}\n"
+    )
     for vip in _rows(result, "vips"):
         name = str(vip.get("name", ""))
         source = str(vip.get("source") or "-")
         policy = str(vip.get("tls") or "-")
+        http3 = "on" if vip.get("http3") is True else "-"
+        strict_sni = "on" if vip.get("strict_sni") is True else "-"
         marker = "yes" if name == default_vip else ""
         writer.write(
-            f"{name:<20}{str(vip.get('address', '')):<20}{source:<20}{policy:<16}{marker}\n"
+            f"{name:<20}{str(vip.get('address', '')):<20}{source:<20}{policy:<16}"
+            f"{http3:<8}{strict_sni:<12}{marker}\n"
         )
 
     sources = _rows(result, "sources")

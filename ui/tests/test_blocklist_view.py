@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import stat as stat_module
 import subprocess
 import tempfile
 import unittest
@@ -663,11 +664,24 @@ class TheCommand(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
 
-    def file(self, body: str, mode: int = 0o600) -> Path:
+    def file(self, body: str) -> Path:
         path = self.directory / "blocklists.yaml"
         path.write_text(body)
-        os.chmod(path, mode)
+        os.chmod(path, 0o600)
         return path
+
+    def seen_as_readable_by_others(self, path: Path) -> Any:
+        """Stat answers for `path` as a file others may read; the file itself stays 0600."""
+
+        real = Path.stat
+
+        def stat(self_: Path, *args: Any, **kwargs: Any) -> os.stat_result:
+            found = real(self_, *args, **kwargs)
+            if self_ != path:
+                return found
+            return os.stat_result((found.st_mode | stat_module.S_IROTH, *tuple(found)[1:]))
+
+        return mock.patch.object(Path, "stat", stat)
 
     def test_a_file_is_read_by_the_engine_s_rule(self) -> None:
         found = blocklist_apply.read_file(
@@ -699,8 +713,13 @@ class TheCommand(unittest.TestCase):
             "blocklists:\n  - name: community\n    url: https://lists.example.com/l.txt\n"
             f"    every_hours: 24\n    authorization: bearer\n    secret: {GUARD}\n"
         )
-        with self.assertRaisesRegex(blocklist_apply.ApplyError, "mode 0600"):
-            blocklist_apply.read_file(self.file(body, 0o644))
+        path = self.file(body)
+        with (
+            self.seen_as_readable_by_others(path),
+            self.assertRaisesRegex(blocklist_apply.ApplyError, "mode 0600"),
+        ):
+            blocklist_apply.read_file(path)
+        self.assertEqual(len(blocklist_apply.read_file(path)), 1)
         with self.assertRaisesRegex(blocklist_apply.ApplyError, "1, 6, 12 or 24"):
             blocklist_apply.read_file(self.file(body.replace("every_hours: 24", "every_hours: 2")))
         with self.assertRaisesRegex(blocklist_apply.ApplyError, "unknown field: color"):

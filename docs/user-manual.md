@@ -2843,7 +2843,9 @@ receiver's key, which can do nothing but read its own directory. For https it is
 receiver's address, which nginx writes to `/var/log/nginx/haprion-receivers.access.log`. The time is amber when
 it is older than the newest copy written for the receiver: it still holds the one before. The certificate's
 row says the same beside each receiver's *Published*. A copy that the receiver has not fetched seven days after
-it was written is listed under *Needs attention*.
+it was written is listed under *Needs attention*, but only where the manager had been reading the journal (rsync,
+sftp) or the log (https) since before the copy was written. Where it had not, the certificate's row says that
+whether it was fetched is not reported, and a source that could not be read at all shows a dash under *Last fetched*.
 
 Fetched is not installed. Nothing here sees what the receiving host did with the files; whether the service
 there uses the new certificate is still yours to check. *Never* means no fetch since the manager began to look: from

@@ -22,6 +22,7 @@ from haprion_ui import (
     db,
     demo,
 )
+from haprion_ui.certificate_receivers import ReceiverFetches
 from haprion_ui.config import Config
 
 #
@@ -234,13 +235,16 @@ def read_manager_certificates(request: Request, config: Config) -> db.ManagerCer
         return db.manager_certificates(connection)
 
 
-def read_receiver_fetches(request: Request, config: Config) -> dict[str, datetime]:
-    """When each certificate receiver last fetched (B498), as the poller recorded it."""
+def read_receiver_fetches(request: Request, config: Config) -> ReceiverFetches:
+    """When each certificate receiver last fetched (B498), and since when the sources were read."""
 
     if config.demo_fixture:
         return demo.receiver_fetches()
     with request.app.state.pool.connection() as connection:
-        return db.receiver_fetches(connection)
+        return ReceiverFetches(
+            seen=db.receiver_fetches(connection),
+            watching_since=db.receiver_witnesses(connection),
+        )
 
 
 def read_certificate_takeouts(request: Request, config: Config) -> dict[str, db.TakenOut] | None:

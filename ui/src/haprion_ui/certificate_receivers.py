@@ -187,8 +187,44 @@ def _moment(value: object) -> datetime | None:
     return parsed if parsed.tzinfo is not None else None
 
 
+#
+# Where each transport's fetches are read from: the names `receiver_witness`
+# keeps, which are the engine's (`haprion.receiver_fetches.WITNESSES`).
+#
+WITNESS_OF = {"rsync": "journal", "sftp": "journal", "https": "access_log"}
+
+
+@dataclass(frozen=True, slots=True)
+class ReceiverFetches:
+    """What the poller recorded of the receivers' fetches, and of where they are read from.
+
+    `seen` is each receiver's newest fetch. `watching_since` is, per source,
+    when it was first read successfully: a source that never was says nothing
+    about any receiver, and one that began after a copy was written says
+    nothing about that copy. Silence from either is not "has not fetched".
+    """
+
+    seen: Mapping[str, datetime]
+    watching_since: Mapping[str, datetime]
+
+    def read(self, transport: str, fetched_at: datetime | None) -> bool:
+        """Whether *Never* is a fact for this receiver: a fetch was seen, or its source was read."""
+
+        return fetched_at is not None or WITNESS_OF.get(transport, "") in self.watching_since
+
+    def covers(
+        self, transport: str, published_at: datetime | None, fetched_at: datetime | None
+    ) -> bool:
+        """Whether the fetches say anything about the copy written at `published_at`."""
+
+        if published_at is not None and fetched_at is not None and fetched_at >= published_at:
+            return True
+        since = self.watching_since.get(WITNESS_OF.get(transport, ""))
+        return since is not None and (published_at is None or since <= published_at)
+
+
 def parse_receiver_rows(
-    block: Mapping[str, Any], fetched: Mapping[str, datetime] | None = None
+    block: Mapping[str, Any], fetched: ReceiverFetches | None = None
 ) -> tuple[str | None, tuple[ReceiverRow, ...]]:
     """The manager's name and one row per registered receiver, out of the registry block.
 
@@ -223,10 +259,12 @@ def parse_receiver_rows(
             continue
         held = record.get("certificates")
         allow = record.get("allow")
+        transport = _text(record.get("transport")) or "rsync"
+        seen = fetched.seen.get(identifier) if fetched is not None else None
         rows.append(
             ReceiverRow(
                 identifier=identifier,
-                transport=_text(record.get("transport")) or "rsync",
+                transport=transport,
                 layout=_text(record.get("layout")) or "per-certificate",
                 owner=_text(record.get("owner")),
                 path=_text(record.get("path")),
@@ -240,9 +278,9 @@ def parse_receiver_rows(
                 )
                 if isinstance(held, list)
                 else (),
-                fetched_at=(fetched or {}).get(identifier),
+                fetched_at=seen,
                 published_at=published.get(identifier),
-                fetches_known=fetched is not None,
+                fetches_known=fetched is not None and fetched.read(transport, seen),
             )
         )
     return (manager if isinstance(manager, str) and manager else None), tuple(rows)

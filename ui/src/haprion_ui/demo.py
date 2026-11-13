@@ -17,6 +17,7 @@ from haprion.config import Network, Vip
 from haprion.objects import objects_result
 from haprion.proxy_model import server_name
 
+from haprion_ui.certificate_receivers import ReceiverFetches
 from haprion_ui.db import (
     ApiToken,
     ClusterBackups,
@@ -424,15 +425,22 @@ def certificate_rows(now: datetime | None = None) -> tuple[ClusterCertificates, 
     return _catalogue(now)[0]
 
 
-def receiver_fetches(now: datetime | None = None) -> dict[str, datetime]:
+def receiver_fetches(now: datetime | None = None) -> ReceiverFetches:
     """The demo receivers' fetches (B498): the https one after its copy was
-    written, the sftp one before it, and the rsync one never."""
+    written, the sftp one before it, and the rsync one never. Both sources
+    were read from before any copy was written."""
 
     moment = now or datetime.now(UTC)
-    return {
-        "192.0.2.40": moment - timedelta(hours=1, minutes=12),
-        "backup-demo.example": moment - timedelta(days=2, hours=3),
-    }
+    return ReceiverFetches(
+        seen={
+            "192.0.2.40": moment - timedelta(hours=1, minutes=12),
+            "backup-demo.example": moment - timedelta(days=2, hours=3),
+        },
+        watching_since={
+            "journal": moment - timedelta(days=90),
+            "access_log": moment - timedelta(days=90),
+        },
+    )
 
 
 def manager_certificates(now: datetime | None = None) -> ManagerCertificates:

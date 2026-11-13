@@ -45,7 +45,7 @@ failures=0
 fail() { echo "  FAIL     $*" >&2; failures=$((failures + 1)); }
 
 step "Tables"
-expected_tables=$'alembic_version\napi_token\napp_session\napp_user\nattention_ack\naudit_event\nblocklist\nblocklist_state\ncluster_backups\ncluster_certificates\ncluster_change\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_pass\ncluster_regeneration\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\ngetting_started\njob\njob_claim_gate\nlogin_attempt\nlogin_unlock\nmanager_certificates\nmetric_backend_alias\nmetric_backend_hour_delta\nmetric_backend_member\nmetric_frontend\nmetric_frontend_hour_delta\nndes_provider_profile\nnode_event\nnode_event_state\noidc_login\noidc_provider\npackage_waiting\nproxy_draft\nreceiver_fetch\nretention_run\nsearch_entry\nstatus_access\nthrottle_key\ntraffic_log\nupdate_check\nversion_diff\nwaf_finding_client\nwaf_finding_path\nwaf_match'
+expected_tables=$'alembic_version\napi_token\napp_session\napp_user\nattention_ack\naudit_event\nblocklist\nblocklist_state\ncluster_backups\ncluster_certificates\ncluster_change\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_pass\ncluster_regeneration\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\ngetting_started\njob\njob_claim_gate\nlogin_attempt\nlogin_unlock\nmanager_certificates\nmetric_backend_alias\nmetric_backend_hour_delta\nmetric_backend_member\nmetric_frontend\nmetric_frontend_hour_delta\nndes_provider_profile\nnode_event\nnode_event_state\noidc_login\noidc_provider\npackage_waiting\nproxy_draft\nreceiver_fetch\nreceiver_witness\nretention_run\nsearch_entry\nstatus_access\nthrottle_key\ntraffic_log\nupdate_check\nversion_diff\nwaf_finding_client\nwaf_finding_path\nwaf_match'
 #
 # Partitions are excluded, and only partitions. They are tables in `pg_tables`
 # and there are dozens of them - one per day per metric table, made and dropped
@@ -134,6 +134,9 @@ app_poller	package_waiting	SELECT	available, installed, name, read_at
 app_poller	receiver_fetch	INSERT	fetched_at, receiver, seen_at
 app_poller	receiver_fetch	SELECT	fetched_at, receiver, seen_at
 app_poller	receiver_fetch	UPDATE	fetched_at, seen_at
+app_poller	receiver_witness	INSERT	first_read_at, read_at, source
+app_poller	receiver_witness	SELECT	first_read_at, read_at, source
+app_poller	receiver_witness	UPDATE	read_at
 app_poller	search_entry	INSERT	admin_only, cluster, href, kind, label, source, title, value
 app_poller	search_entry	SELECT	admin_only, cluster, href, kind, label, source, title, value
 app_poller	update_check	INSERT	attempted_at, checked_at, error, failing_since, latest_tag, latest_url
@@ -208,6 +211,7 @@ app_web	proxy_draft	INSERT	base_document, base_hash, base_version, cluster, dele
 app_web	proxy_draft	SELECT	base_document, base_hash, base_version, cluster, deleted, id, object_id, replaces, revision, stage, updated_at, updated_by, yaml
 app_web	proxy_draft	UPDATE	base_document, base_hash, base_version, deleted, object_id, replaces, updated_by, yaml
 app_web	receiver_fetch	SELECT	fetched_at, receiver, seen_at
+app_web	receiver_witness	SELECT	first_read_at, read_at, source
 app_web	retention_run	SELECT	completed_at
 app_web	search_entry	SELECT	admin_only, cluster, href, kind, label, source, title, value
 app_web	status_access	INSERT	added_by, network

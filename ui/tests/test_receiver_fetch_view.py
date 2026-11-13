@@ -62,23 +62,41 @@ def block(published_at: datetime | None = WRITTEN) -> dict[str, Any]:
     }
 
 
+def fetches(
+    seen: Mapping[str, datetime] | None = None,
+    *,
+    since: datetime | None = WRITTEN - timedelta(days=30),
+) -> certificate_receivers.ReceiverFetches:
+    """What the poller recorded; both sources first read at `since`, or never."""
+
+    watching = {"journal": since, "access_log": since} if since is not None else {}
+    return certificate_receivers.ReceiverFetches(seen=seen or {}, watching_since=watching)
+
+
 class TheReceiversRow(unittest.TestCase):
-    def row(self, fetched: Mapping[str, datetime] | None) -> certificate_receivers.ReceiverRow:
+    def row(
+        self, fetched: certificate_receivers.ReceiverFetches | None
+    ) -> certificate_receivers.ReceiverRow:
         _, rows = certificate_receivers.parse_receiver_rows(block(), fetched)
         return rows[0]
 
     def test_a_fetch_after_the_copy_is_plain_and_one_before_it_is_behind(self) -> None:
-        after = self.row({"lb-02.example.net": WRITTEN + timedelta(hours=1)})
-        before = self.row({"lb-02.example.net": WRITTEN - timedelta(hours=1)})
+        after = self.row(fetches({"lb-02.example.net": WRITTEN + timedelta(hours=1)}))
+        before = self.row(fetches({"lb-02.example.net": WRITTEN - timedelta(hours=1)}))
 
         self.assertFalse(after.fetched_before_publish)
         self.assertTrue(before.fetched_before_publish)
         self.assertRegex(after.fetched_label, r"^\d\d-\d\d-\d\d \d\d:\d\d:\d\d$")
 
     def test_none_seen_is_never_and_none_read_is_not_known(self) -> None:
-        self.assertEqual(self.row({}).fetched_label, "Never")
-        self.assertTrue(self.row({}).fetches_known)
+        self.assertEqual(self.row(fetches()).fetched_label, "Never")
+        self.assertTrue(self.row(fetches()).fetches_known)
         self.assertFalse(self.row(None).fetches_known)
+
+    def test_a_source_that_was_never_read_is_not_known_and_a_fetch_seen_still_is(self) -> None:
+        self.assertFalse(self.row(fetches(since=None)).fetches_known)
+        seen = {"lb-02.example.net": WRITTEN}
+        self.assertTrue(self.row(fetches(seen, since=None)).fetches_known)
 
 
 class TheCertificatesState(unittest.TestCase):
@@ -117,6 +135,54 @@ class TheCertificatesState(unittest.TestCase):
     def test_fetches_not_read_say_what_they_always_said(self) -> None:
         _, detail, _ = self.state(self.target(None, known=False))
         self.assertEqual(detail, "Whether it was fetched is not reported")
+
+
+class TheCoverageOfTheSources(unittest.TestCase):
+    """BE05: silence from a source that could not see the copy is not "has not fetched"."""
+
+    def targets(
+        self, record: certificate_receivers.ReceiverFetches | None, transport: str
+    ) -> tuple[certificates.TargetView, ...]:
+        entry = block()["certificates"][0]
+        return certificates._target_views(entry, record, {"lb-02.example.net": transport})
+
+    def test_a_source_first_read_after_the_copy_says_nothing_about_it(self) -> None:
+        began_after = fetches(since=WRITTEN + timedelta(days=1))
+        (after,) = self.targets(began_after, "https")
+        (before,) = self.targets(fetches(since=WRITTEN - timedelta(days=1)), "https")
+
+        self.assertEqual((after.fetches_known, before.fetches_known), (False, True))
+
+    def test_a_source_that_was_never_read_says_nothing(self) -> None:
+        (target,) = self.targets(fetches(since=None), "rsync")
+        self.assertFalse(target.fetches_known)
+
+    def test_a_fetch_seen_after_the_copy_counts_whatever_the_source(self) -> None:
+        record = fetches({"lb-02.example.net": WRITTEN + timedelta(hours=1)}, since=None)
+        (target,) = self.targets(record, "rsync")
+        self.assertTrue(target.fetches_known)
+
+    def test_the_source_is_the_receivers_own_transport(self) -> None:
+        only_journal = certificate_receivers.ReceiverFetches(
+            seen={}, watching_since={"journal": WRITTEN - timedelta(days=1)}
+        )
+        (rsync,) = self.targets(only_journal, "rsync")
+        (https,) = self.targets(only_journal, "https")
+
+        self.assertEqual((rsync.fetches_known, https.fetches_known), (True, False))
+
+    def test_no_row_is_raised_where_the_fetches_cannot_vouch_for_the_copy(self) -> None:
+        for record in (fetches(since=None), fetches(since=WRITTEN + timedelta(days=1))):
+            with self.subTest(since=record.watching_since):
+                registry = mock.Mock(
+                    certificates=[
+                        mock.Mock(
+                            identifier="app.example.com",
+                            targets=self.targets(record, "rsync"),
+                        )
+                    ]
+                )
+                self.assertEqual(attention.from_receiver_fetches(registry, now=NOW), [])
 
 
 class NeedsAttention(unittest.TestCase):
@@ -212,6 +278,7 @@ class ThePollerAsksWithTheCertificates(unittest.TestCase):
             mock.patch("haprion_ui.db.record_manager_certificates"),
             mock.patch("haprion_ui.db.replace_search_entries"),
             mock.patch("haprion_ui.db.record_receiver_fetches") as recorded,
+            mock.patch("haprion_ui.db.record_receiver_witnesses") as witnessed,
         ):
             run = self.readings()
             self.assertTrue(poller.poll_manager(self.Pool(), run, watch))
@@ -224,6 +291,22 @@ class ThePollerAsksWithTheCertificates(unittest.TestCase):
             recorded.call_args.args[1],
             {"lb-02.example.net": datetime(2026, 11, 8, 6, 0, 4, tzinfo=UTC)},
         )
+        self.assertEqual(sorted(witnessed.call_args.args[1]), ["access_log", "journal"])
+
+    def test_only_the_sources_that_were_read_are_recorded_as_read(self) -> None:
+        with (
+            mock.patch("haprion_ui.db.record_manager_certificates"),
+            mock.patch("haprion_ui.db.replace_search_entries"),
+            mock.patch("haprion_ui.db.record_receiver_fetches"),
+            mock.patch("haprion_ui.db.record_receiver_witnesses") as witnessed,
+        ):
+            poller.poll_manager(
+                self.Pool(),
+                self.readings(unread=[{"source": "journal", "reason": "no"}]),
+                poller.ReceiverFetchWatch(),
+            )
+
+        self.assertEqual(sorted(witnessed.call_args.args[1]), ["access_log"])
 
     def test_a_witness_not_read_keeps_the_starting_point(self) -> None:
         watch = poller.ReceiverFetchWatch()
@@ -231,6 +314,7 @@ class ThePollerAsksWithTheCertificates(unittest.TestCase):
             mock.patch("haprion_ui.db.record_manager_certificates"),
             mock.patch("haprion_ui.db.replace_search_entries"),
             mock.patch("haprion_ui.db.record_receiver_fetches"),
+            mock.patch("haprion_ui.db.record_receiver_witnesses"),
         ):
             poller.poll_manager(
                 self.Pool(), self.readings(unread=[{"source": "journal", "reason": "no"}]), watch

@@ -4630,6 +4630,32 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
 
         self.assertEqual(found, {"lb-02.example.net": early, "192.0.2.40": early})
 
+    def test_the_sources_the_fetches_are_read_from_keep_their_first_reading(self) -> None:
+        """0121: the poller writes a source once and moves only read_at; the web reads it."""
+
+        def clear() -> None:
+            with self.connection.cursor() as cursor:
+                cursor.execute("delete from receiver_witness")
+            self.connection.commit()
+
+        self.addCleanup(clear)
+        first = datetime(2026, 11, 8, 6, 0, tzinfo=UTC)
+        later = first + timedelta(hours=1)
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as poller_connection:
+            db.record_receiver_witnesses(poller_connection, ["journal"], read_at=first)
+            db.record_receiver_witnesses(
+                poller_connection, ["journal", "access_log"], read_at=later
+            )
+            poller_connection.commit()
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                db.record_receiver_witnesses(poller_connection, ["somewhere"], read_at=later)
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as web:
+            found = db.receiver_witnesses(web)
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                db.record_receiver_witnesses(web, ["journal"], read_at=later)
+
+        self.assertEqual(found, {"journal": first, "access_log": later})
+
     def test_a_blocklist_is_saved_by_the_web_fenced_on_its_revision(self) -> None:
         """B500, 0119: insert, the next revision with the box kept or replaced, and a stale save refused."""
 
@@ -11764,6 +11790,9 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
         self.restored_from(
             "0119", grants_differ="0119 has no secret_revision on blocklist to grant on"
         )
+
+    def test_a_dump_at_0120_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
+        self.restored_from("0120", grants_differ="0120 has no receiver_witness to grant on")
 
 
 class EveryRevisionADumpCanBeAtIsRestored(unittest.TestCase):

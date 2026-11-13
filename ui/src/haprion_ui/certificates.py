@@ -28,6 +28,7 @@ from typing import Any, Literal
 from haprion.certificates import CERTIFICATE_OPENING
 
 from haprion_ui import certificate_receivers, moments, sorting
+from haprion_ui.certificate_receivers import ReceiverFetches
 from haprion_ui.cluster_identity import accent_index
 from haprion_ui.dashboard import observation_label
 from haprion_ui.db import ClusterCertificates, ManagerCertificates, TakenOut
@@ -1100,7 +1101,9 @@ def _published_label(published_at: datetime | None) -> str:
 
 
 def _target_views(
-    entry: Mapping[str, Any], fetched: Mapping[str, datetime] | None = None
+    entry: Mapping[str, Any],
+    fetched: ReceiverFetches | None = None,
+    transports: Mapping[str, str] | None = None,
 ) -> tuple[TargetView, ...]:
     targets = _mapping(entry.get("targets"))
     #
@@ -1135,6 +1138,8 @@ def _target_views(
         #
         if published_at is None:
             current = None
+        seen = fetched.seen.get(name) if fetched is not None else None
+        transport = (transports or {}).get(name, "")
         views.append(
             TargetView(
                 name=name,
@@ -1142,8 +1147,8 @@ def _target_views(
                 published_at=published_at,
                 published_label=_published_label(published_at),
                 current=current if isinstance(current, bool) else None,
-                fetched_at=(fetched or {}).get(name),
-                fetches_known=fetched is not None,
+                fetched_at=seen,
+                fetches_known=fetched is not None and fetched.covers(transport, published_at, seen),
             )
         )
     return tuple(views)
@@ -1384,7 +1389,8 @@ def _registry_certificate(
     now: datetime,
     carriage: Mapping[str, NodeCarriage],
     taken_out: Mapping[str, TakenOut] | None = None,
-    fetched: Mapping[str, datetime] | None = None,
+    fetched: ReceiverFetches | None = None,
+    transports: Mapping[str, str] | None = None,
 ) -> RegistryCertificateView | None:
     entry = _mapping(value)
     identifier = _text(entry.get("id"), "")
@@ -1414,7 +1420,7 @@ def _registry_certificate(
         # row is compared by the same.
         #
         fingerprint = _text(entry.get("bundle_sha256"), "")
-    targets = _target_views(entry, fetched)
+    targets = _target_views(entry, fetched, transports)
 
     expires_at = _expiry(entry.get("not_after")) if readable else None
     if readable:
@@ -1618,7 +1624,7 @@ def _registry_view(
     now: datetime,
     stale_after: timedelta | None = None,
     taken_out: Mapping[str, TakenOut] | None = None,
-    fetched: Mapping[str, datetime] | None = None,
+    fetched: ReceiverFetches | None = None,
 ) -> RegistryView | None:
     """The registry as one list, from the manager's own reading (B304).
 
@@ -1631,13 +1637,23 @@ def _registry_view(
         return None
     block = _mapping(result.get("registry"))
     carriage = _carriage(status_readings)
+    records = block.get("receiver_records")
+    transports = {
+        _text(_mapping(record).get("id"), ""): _text(_mapping(record).get("transport"), "")
+        for record in (records if isinstance(records, list) else [])
+    }
 
     entries = block.get("certificates")
     parsed: list[RegistryCertificateView] = []
     if isinstance(entries, list):
         for value in entries:
             certificate = _registry_certificate(
-                value, now=now, carriage=carriage, taken_out=taken_out, fetched=fetched
+                value,
+                now=now,
+                carriage=carriage,
+                taken_out=taken_out,
+                fetched=fetched,
+                transports=transports,
             )
             if certificate is not None:
                 parsed.append(certificate)
@@ -1710,7 +1726,7 @@ def build_certificate_overview(
     # When each receiver last fetched (B498). None where the caller did not
     # read it: receivers then say nothing about fetching.
     #
-    fetched: Mapping[str, datetime] | None = None,
+    fetched: ReceiverFetches | None = None,
 ) -> CertificateOverview:
     """Combine configured clusters and their newest cached certificate listing.
 

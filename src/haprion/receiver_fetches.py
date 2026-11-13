@@ -34,6 +34,10 @@ from haprion.config import Receiver
 from haprion.digits import is_digits
 
 OPERATION = "receiver_fetches"
+JOURNAL = "journal"
+ACCESS_LOG_SOURCE = "access_log"
+WITNESSES = (JOURNAL, ACCESS_LOG_SOURCE)
+"""The two places a fetch is read from, as `unread` names them."""
 #
 # Written by the interface's nginx site (`haprion.nginx.example`) for every
 # request under `/certdist/<receiver>/`, in nginx's `combined` format. Rotated
@@ -229,22 +233,25 @@ def read(
     ]
     found: dict[str, datetime] = {}
     unread: list[tuple[str, str]] = []
-    if accounts:
-        try:
-            found.update(ssh_logins(journal(since), accounts))
-        except Unreadable as exc:
-            unread.append(("journal", str(exc)))
-    if https:
-        try:
-            found.update(
-                {
-                    receiver: at
-                    for receiver, at in https_fetches(access_log(), https, prefix).items()
-                    if at >= since
-                }
-            )
-        except Unreadable as exc:
-            unread.append(("access_log", str(exc)))
+    #
+    # Both are read whether or not a receiver of that kind is registered: that
+    # a witness could be read, and since when, is what a later receiver's
+    # "has not fetched" rests on, and it cannot start on the day it is added.
+    #
+    try:
+        found.update(ssh_logins(journal(since), accounts))
+    except Unreadable as exc:
+        unread.append((JOURNAL, str(exc)))
+    try:
+        found.update(
+            {
+                receiver: at
+                for receiver, at in https_fetches(access_log(), https, prefix).items()
+                if at >= since
+            }
+        )
+    except Unreadable as exc:
+        unread.append((ACCESS_LOG_SOURCE, str(exc)))
     return Fetches(found=found, unread=tuple(unread))
 
 

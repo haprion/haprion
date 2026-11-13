@@ -367,6 +367,7 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haprion_ui.db.deploy_jobs", return_value=[]),
             # No receiver has been seen fetching (B498) unless a test says so.
             mock.patch("haprion_ui.db.receiver_fetches", return_value={}),
+            mock.patch("haprion_ui.db.receiver_witnesses", return_value={}),
             # No blocklist (B500) unless a test says so.
             mock.patch("haprion_ui.db.blocklists", side_effect=lambda _c: list(self.blocklists)),
             mock.patch(

@@ -693,6 +693,29 @@ def receiver_fetches(connection: Connection[Any]) -> dict[str, datetime]:
         return {str(row[0]): row[1] for row in cursor.fetchall()}
 
 
+def record_receiver_witnesses(
+    connection: Connection[Any], sources: Iterable[str], *, read_at: datetime
+) -> None:
+    """The sources the fetches were just read from: first read kept, last read moved (0121)."""
+
+    with connection.cursor() as cursor:
+        for source in sorted(set(sources)):
+            cursor.execute(
+                "insert into receiver_witness (source, first_read_at, read_at) "
+                "values (%(source)s, %(at)s, %(at)s) "
+                "on conflict (source) do update set read_at = excluded.read_at",
+                {"source": source, "at": read_at},
+            )
+
+
+def receiver_witnesses(connection: Connection[Any]) -> dict[str, datetime]:
+    """When each source was first read successfully; a source never read has no entry."""
+
+    with connection.cursor() as cursor:
+        cursor.execute("select source, first_read_at from receiver_witness")
+        return {str(row[0]): row[1] for row in cursor.fetchall()}
+
+
 def record_manager_certificates(
     connection: Connection[Any],
     *,

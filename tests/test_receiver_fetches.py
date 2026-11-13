@@ -217,6 +217,23 @@ class AWitnessThatCannotBeRead(unittest.TestCase):
             ],
         )
 
+    def test_both_are_read_when_no_receiver_of_that_kind_is_registered(self) -> None:
+        asked: list[str] = []
+
+        def journal(_since: datetime) -> list[str]:
+            asked.append("journal")
+            return []
+
+        def access_log() -> list[str]:
+            asked.append("access_log")
+            return []
+
+        fetches = receiver_fetches.read(
+            {}, since=NOW, prefix="/certdist", journal=journal, access_log=access_log
+        )
+
+        self.assertEqual((sorted(asked), fetches.unread), (["access_log", "journal"], ()))
+
     def test_a_fetch_before_the_moment_asked_from_is_left_out(self) -> None:
         fetches = receiver_fetches.read(
             RECEIVERS,

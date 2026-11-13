@@ -954,9 +954,11 @@ def from_receiver_fetches(registry: Any, *, now: datetime) -> list[Item]:
     """Receivers that have not fetched a copy written for them a week ago (B498).
 
     Read from the registry view's receiver targets, which carry the time the
-    copy was written and the receiver's newest fetch. Nothing where the fetches
-    were not read. The copy's time is in the variant, so an acknowledged row
-    comes back when the next renewal is not fetched either.
+    copy was written and the receiver's newest fetch. Nothing for a receiver
+    whose fetches the manager cannot vouch for: the source they are read from
+    was never read, or was first read after the copy was written. The copy's
+    time is in the variant, so an acknowledged row comes back when the next
+    renewal is not fetched either.
     """
 
     items: list[Item] = []

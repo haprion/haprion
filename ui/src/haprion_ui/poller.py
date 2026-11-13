@@ -36,7 +36,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from haprion import exit_codes, package_inventory
+from haprion import exit_codes, package_inventory, receiver_fetches
 from haprion.cli.cluster_list_helper import run_cluster_list_helper
 from haprion.cli.inventory import run_inventory_helper
 from haprion.cli.list_helper import MAX_DIFFS
@@ -1098,14 +1098,21 @@ class ReceiverFetchWatch:
                     fetched[entry["id"]] = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
                 except ValueError:
                     continue
+        unread = [entry for entry in result.get("unread") or () if isinstance(entry, Mapping)]
+        #
+        # Which sources answered, kept beside the fetches: a source that was
+        # never read, or began after a copy was written, says nothing about
+        # that copy, and the pages must not read its silence as "not fetched".
+        #
+        answered = set(receiver_fetches.WITNESSES) - {str(entry.get("source")) for entry in unread}
         try:
             with pool.connection() as connection:
                 db.record_receiver_fetches(connection, fetched, seen_at=at)
+                db.record_receiver_witnesses(connection, answered, read_at=at)
                 connection.commit()
         except Exception as exc:  # noqa: BLE001 - asked again from the same point next cycle
             logger.warning("receiver fetches were not recorded: %s", exc)
             return
-        unread = [entry for entry in result.get("unread") or () if isinstance(entry, Mapping)]
         for entry in unread:
             logger.warning("receiver fetches: %s", entry.get("reason"))
         if not unread:

@@ -167,7 +167,8 @@ socket is not sent to a node still on the old package. The deploy stops before i
 **What is released when.** A version with new functions (1.2, 1.3) is made by hand. A patch version (1.1.1,
 1.1.2) is made automatically and carries only updated dependencies and WAF engine, never a new function:
 
-- a fix for a known vulnerability in a dependency or the WAF engine is released within a day
+- a fix for a known vulnerability in a dependency or the WAF engine is released a day after it is merged at the
+  earliest, once the release's own tests have passed, which takes some hours more
 - other dependency and WAF updates are released together on the first of the month, when there are any
 
 Nothing is installed by itself; an update is `sudo apt upgrade` when you choose. The WAF engine and its rules

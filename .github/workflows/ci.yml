@@ -373,6 +373,14 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: python3 tools/upstream-watch ran --repository "${REPOSITORY}" --workflow upstream-merge.yml --hours 12
 
+      # The automatic release (B507). CI starts it too, so its schedule is the
+      # safety net: runs started that way are not counted, only the schedule's.
+      - name: A scheduled release run inside the last 12 hours
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: python3 tools/upstream-watch ran --repository "${REPOSITORY}" --workflow auto-release.yml --hours 12
+
   # The branch rule requires this name. A matrix job reports one check per
   # Python, so this one stands for both and passes only when both did.
   gates:
@@ -386,3 +394,39 @@ jobs:
         env:
           RESULT: ${{ needs.checks.result }}
         run: test "${RESULT}" = success
+
+  # The automatic release is scheduled hourly, but GitHub ran the schedule three
+  # to four times a day (26-11-13), so a fix merged at night waited. A run
+  # started with workflow_dispatch from the workflow's own token does start
+  # (the one event the token may start; GitHub's documentation on GITHUB_TOKEN),
+  # so CI starts the release when what it waits for is done: the gates on a push
+  # to main, and the gates and the installation test on the version proposal's
+  # branch in this repository - never a fork's, whose code must not start
+  # anything. Not a required check, and a start that fails is a warning: the
+  # schedule still comes.
+  start-release:
+    name: Start the automatic release
+    needs: [gates, install-test]
+    if: >-
+      always()
+      && github.repository == 'haprion/haprion'
+      && ((github.event_name == 'push'
+           && github.ref == 'refs/heads/main'
+           && needs.gates.result == 'success')
+          || (github.event_name == 'pull_request'
+              && github.head_ref == 'release-watch'
+              && github.event.pull_request.head.repo.full_name == github.repository
+              && needs.gates.result == 'success'
+              && needs.install-test.result == 'success'))
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      actions: write # start a workflow
+    steps:
+      - name: Run the automatic release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          gh workflow run auto-release.yml --ref main --repo "${REPOSITORY}" \
+            || echo "::warning::auto-release.yml was not started; the next scheduled run takes it up"

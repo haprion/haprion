@@ -775,6 +775,26 @@ class TheWorkflowsSayWhatThePlanReads(unittest.TestCase):
         self.assertIn("RED_TITLE", release["env"])
         self.assertIn("date -u -d '24 hours ago'", text)
 
+    def test_ci_starts_the_release_when_its_checks_are_done_and_never_fails_for_it(self) -> None:
+        ci = yaml.safe_load((self.workflows / "ci.yml").read_text(encoding="utf-8"))
+        job = ci["jobs"]["start-release"]
+        steps = " ".join(step.get("run", "") for step in job["steps"])
+
+        # a push to main after the gates, and the version proposal's own branch in this
+        # repository after the gates and the installation test; never a fork's
+        self.assertEqual(set(job["needs"]), {"gates", "install-test"})
+        for part in (
+            "github.ref == 'refs/heads/main'",
+            "github.head_ref == 'release-watch'",
+            "github.event.pull_request.head.repo.full_name == github.repository",
+            "needs.install-test.result == 'success'",
+        ):
+            self.assertIn(part, job["if"])
+        self.assertEqual(job["permissions"], {"actions": "write"})
+        self.assertIn("gh workflow run auto-release.yml --ref main", steps)
+        self.assertIn("::warning::", steps)
+        self.assertNotIn("workflow_run", (self.workflows / "ci.yml").read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

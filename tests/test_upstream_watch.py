@@ -423,7 +423,7 @@ class WhetherTheWatchStillRuns(unittest.TestCase):
             for s in ci["jobs"]["upstream-watch-ran"]["steps"]
             if "upstream-watch ran" in s.get("run", "")
         ]
-        self.assertEqual(len(steps), 2)
+        self.assertEqual(len(steps), 3)
         for step in steps:
             self.assertIn("--repository", step["run"])
             named = (
@@ -641,6 +641,7 @@ class TheWorkflow(unittest.TestCase):
         runs = [step.get("run", "") for step in ci["jobs"]["upstream-watch-ran"]["steps"]]
         self.assertIn('python3 tools/upstream-watch ran --repository "${REPOSITORY}"', runs)
         self.assertTrue(any("--workflow upstream-merge.yml --hours 12" in run for run in runs))
+        self.assertTrue(any("--workflow auto-release.yml --hours 12" in run for run in runs))
         workflow = {"state": "active", "created_at": "2026-10-23T00:00:00Z"}
         newest = {"created_at": "2026-10-23T10:41:00Z"}
         at = datetime(2026, 10, 23, 22, 42, tzinfo=UTC)

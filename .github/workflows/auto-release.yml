@@ -12,9 +12,16 @@ name: automatic release
 #            starts apt-repo.yml, which builds twice more, compares with the
 #            release's files, signs and publishes. What landed on main after
 #            the merge is the next release's
+#   rebuild  the last tag is this workflow's and has no release (the build
+#            failed after the tag was pushed): the tagged commit is built
+#            twice and compared again and the release is made; no new tag
 #   blocked  a person's change is on main since the tag; nothing is released,
 #            and while a security fix waits behind it an issue says so
 #   wait, nothing
+#
+# The package repository is asked too: when it serves no haprion-cli of the
+# last tag three hours after its release, an issue says so (apt-repo.yml's run
+# may have been replaced, or failed).
 #
 # A release made by hand starts by building the automatic ones since the last
 # one again and comparing (B506); tools/release-plan's documentation says
@@ -38,6 +45,7 @@ concurrency:
 env:
   BRANCH: release-watch
   BLOCKED_TITLE: "A security fix waits for a release made by hand"
+  UNPUBLISHED_TITLE: "The package repository does not serve the latest release"
 
 jobs:
   plan:
@@ -54,6 +62,7 @@ jobs:
       next: ${{ steps.plan.outputs.next }}
       security: ${{ steps.plan.outputs.security }}
       tag_commit: ${{ steps.plan.outputs.tag_commit }}
+      repository: ${{ steps.plan.outputs.repository }}
       ready: ${{ steps.gates.outputs.ready }}
 
     steps:
@@ -66,7 +75,9 @@ jobs:
       # A commit's author name is only a name. What GitHub says of each pull
       # request merged since the tag - who opened it, which commit it was
       # merged as - is what lets a merge be counted as the watch's (B507). One
-      # the API does not know is left out, and the plan blocks on it.
+      # the API does not know is left out, and the plan blocks on it. The last
+      # tag's release, and the haprion-cli versions the repository lists, are
+      # asked as well; a repository that cannot be read is not reported.
       - name: Decide
         id: plan
         shell: bash
@@ -85,14 +96,46 @@ jobs:
               >> "${pulls}" || echo "pull request #${number} is not known to GitHub"
           done
           jq -s . "${pulls}" > "${RUNNER_TEMP}/pulls.json"
+          known=()
+          if release=$(gh api "repos/${REPOSITORY}/releases/tags/${tag}" 2>"${RUNNER_TEMP}/release.err"); then
+            known+=(--last-release present --released-at "$(jq -r .created_at <<<"${release}")")
+          elif grep -q "HTTP 404" "${RUNNER_TEMP}/release.err"; then
+            known+=(--last-release missing)
+          else
+            cat "${RUNNER_TEMP}/release.err" >&2
+            exit 1
+          fi
+          if curl --fail --silent --show-error --retry 3 --max-time 60 \
+              "https://haprion.github.io/haprion/dists/deb13/main/binary-amd64/Packages" \
+              --output "${RUNNER_TEMP}/Packages"; then
+            awk 'BEGIN { RS = ""; FS = "\n" }
+                 { cli = 0; version = ""
+                   for (i = 1; i <= NF; i++) {
+                     if ($i == "Package: haprion-cli") cli = 1
+                     if ($i ~ /^Version: /) version = substr($i, 10)
+                   }
+                   if (cli && version != "") print version }' \
+              "${RUNNER_TEMP}/Packages" > "${RUNNER_TEMP}/published.txt"
+            known+=(--published "${RUNNER_TEMP}/published.txt")
+          else
+            echo "the package repository could not be read; what it serves is not checked"
+          fi
           python3 tools/release-plan decide --source . --pulls "${RUNNER_TEMP}/pulls.json" \
-            --notes "${RUNNER_TEMP}/notes.md" | tee "${RUNNER_TEMP}/plan.json"
+            "${known[@]}" --notes "${RUNNER_TEMP}/notes.md" | tee "${RUNNER_TEMP}/plan.json"
+          # The note of a release made late is the proposal's own text.
+          if [[ "$(jq -r .outcome "${RUNNER_TEMP}/plan.json")" == rebuild ]]; then
+            number=$(git log -1 --format=%s "$(jq -r .tag_commit "${RUNNER_TEMP}/plan.json")" \
+              | sed -n 's/^Merge pull request #\([0-9][0-9]*\) .*/\1/p')
+            gh api "repos/${REPOSITORY}/pulls/${number}" --jq .body > "${RUNNER_TEMP}/notes.md"
+            test -s "${RUNNER_TEMP}/notes.md"
+          fi
           {
             echo "outcome=$(jq -r .outcome "${RUNNER_TEMP}/plan.json")"
             echo "next=$(jq -r '.next // empty' "${RUNNER_TEMP}/plan.json")"
             echo "security=$(jq -r .security "${RUNNER_TEMP}/plan.json")"
             echo "tag_commit=$(jq -r '.tag_commit // empty' "${RUNNER_TEMP}/plan.json")"
             echo "pull_head=$(jq -r '.pull_head // empty' "${RUNNER_TEMP}/plan.json")"
+            echo "repository=$(jq -r .repository "${RUNNER_TEMP}/plan.json")"
           } >> "${GITHUB_OUTPUT}"
           jq -r '"\(.outcome): \(.reason)"' "${RUNNER_TEMP}/plan.json" >> "${GITHUB_STEP_SUMMARY}"
 
@@ -132,7 +175,7 @@ jobs:
           if-no-files-found: error
 
   report:
-    name: Say when a security fix waits for a person
+    name: Say when a security fix waits or the repository lags
     needs: plan
     runs-on: ubuntu-26.04
     timeout-minutes: 10
@@ -175,6 +218,32 @@ jobs:
             fi
           elif [[ -n "${open}" ]]; then
             gh issue close "${open}" --repo "${REPOSITORY}" --comment "Nothing waits behind a change made by hand."
+          fi
+
+      - name: Open, keep or close the report on the package repository
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          NOTIFY: ${{ vars.UPSTREAM_WATCH_NOTIFY }}
+          PROBLEM: ${{ needs.plan.outputs.repository }}
+        run: |
+          set -euo pipefail
+          open=$(gh issue list --repo "${REPOSITORY}" --state open --search "in:title \"${UNPUBLISHED_TITLE}\"" \
+            --json number,title --jq "map(select(.title == env.UNPUBLISHED_TITLE))[0].number // empty")
+          if [[ -n "${PROBLEM}" ]]; then
+            if [[ -z "${open}" ]]; then
+              body="${RUNNER_TEMP}/repository.md"
+              { echo "${PROBLEM}."
+                echo
+                echo "The run of apt-repo.yml the tag started may have failed or been replaced by a later"
+                echo "one (its concurrency group keeps one waiting run). Run it again for the tag."
+              } > "${body}"
+              gh issue create --repo "${REPOSITORY}" --title "${UNPUBLISHED_TITLE}" --body-file "${body}" \
+                ${NOTIFY:+--assignee "${NOTIFY}"}
+            fi
+          elif [[ -n "${open}" ]]; then
+            gh issue close "${open}" --repo "${REPOSITORY}" --comment "The repository serves the latest release."
           fi
 
   propose:
@@ -319,7 +388,9 @@ jobs:
   build:
     name: Build the release (${{ matrix.copy }})
     needs: plan
-    if: needs.plan.outputs.outcome == 'tag' && needs.plan.outputs.ready == 'true'
+    if: >-
+      needs.plan.outputs.outcome == 'rebuild'
+      || (needs.plan.outputs.outcome == 'tag' && needs.plan.outputs.ready == 'true')
     runs-on: ubuntu-26.04
     timeout-minutes: 90
     strategy:
@@ -402,11 +473,15 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           VERSION: ${{ needs.plan.outputs.next }}
           TAG_COMMIT: ${{ needs.plan.outputs.tag_commit }}
+          OUTCOME: ${{ needs.plan.outputs.outcome }}
           BUILDS: ${{ runner.temp }}/builds
         run: |
           set -euo pipefail
-          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
-          git -c http.extraheader="${auth}" push --quiet \
-            "https://github.com/${REPOSITORY}.git" "${TAG_COMMIT}:refs/tags/v${VERSION}"
+          # `rebuild` is a tag already pushed whose release was never made.
+          if [[ "${OUTCOME}" == tag ]]; then
+            auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+            git -c http.extraheader="${auth}" push --quiet \
+              "https://github.com/${REPOSITORY}.git" "${TAG_COMMIT}:refs/tags/v${VERSION}"
+          fi
           gh release create "v${VERSION}" --repo "${REPOSITORY}" --verify-tag --title "v${VERSION}" --latest \
             --notes-file "${BUILDS}/release-note/notes.md" "${BUILDS}"/release-a/*

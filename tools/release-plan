@@ -2,6 +2,7 @@
 """Whether the dependency fixes on main are released now, and as which version (B355, B505, B506).
 
     tools/release-plan decide --source <tree> --pulls <json> [--now <iso>] [--app <login>]
+        [--last-release present|missing] [--released-at <iso>] [--published <file>]
     tools/release-plan bump --source <tree> --version <x.y.z>
 
 The upstream watch proposes, and the merge workflow merges, the fixes the
@@ -14,9 +15,18 @@ locks and the WAF pins need (B353, B354). `decide` reads main since the last
              automatic one would ship it unreviewed
     wait     something is waiting, and its time has not come (`due_at`)
     release  propose the next patch version now
+    rebuild  the last tag is an automatic one and has no GitHub release: build
+             the tagged commit again, twice, and make the release (no new tag)
     tag      the version proposal is merged: tag its merge (`tag_commit`) and
              release it. What landed on main after the merge is not in the
              tree that was tested and goes in the next release
+
+A tag that carries no release (the build failed after the tag was pushed) and
+a repository that serves no `haprion-cli` of the last tag three hours after
+its release (apt-repo.yml's run was replaced or failed) are what the workflow
+tells the plan with `--last-release`, `--released-at` and `--published` (the
+versions the published `Packages` lists, one per line); the second is the
+plan's `repository` text, which the workflow turns into an issue.
 
 A security fix is what the watch knows to be one: the locks' proposal, which
 only ever moves a package an advisory names (B353), and a WAF proposal made
@@ -74,6 +84,7 @@ DEFAULT_APP = "haprion-upstream-watch[bot]"
 
 TAG = re.compile(r"v(\d{1,4})\.(\d{1,4})\.(\d{1,4})")
 SECURITY_WAIT = timedelta(hours=24)
+PUBLISH_WAIT = timedelta(hours=3)
 
 #
 # Where the version is written, and the line that holds it in each.
@@ -114,6 +125,17 @@ def read_pulls(path: Path) -> dict[int, Pull]:
 
 
 @dataclass(frozen=True, slots=True)
+class Known:
+    """What the workflow asked GitHub and the published repository about the last tag."""
+
+    release: str = ""
+    """`present`, `missing`, or empty when it was not asked."""
+    released_at: datetime | None = None
+    published: tuple[str, ...] | None = None
+    """The `haprion-cli` versions the repository lists; None when it was not read."""
+
+
+@dataclass(frozen=True, slots=True)
 class Change:
     commit: str
     subject: str
@@ -142,6 +164,8 @@ class Plan:
     """`tag`: the version proposal's merge, the commit the tag goes on."""
     pull_head: str | None = None
     """`tag`: the version proposal's head, the commit the checks ran on."""
+    repository: str = ""
+    """Not empty: the published repository does not serve the last tag's package."""
     changes: list[Change] = field(default_factory=list)
 
 
@@ -396,8 +420,57 @@ def tree_problem(source: Path, merge: str) -> tuple[str, str]:
     return "", parents[1]
 
 
+def automatic_tag(source: Path, tag: str, app: str, pulls: Mapping[int, Pull] | None) -> str:
+    """The commit the tag stands on when this workflow made it; empty otherwise.
+
+    It is the merge of a version proposal GitHub says the app opened and merged
+    as exactly that commit, whose one commit says `Version` and the tag's own
+    number, and which changed the version files and nothing else.
+    """
+
+    merge = _git(source, "rev-parse", f"{tag}^{{commit}}").strip()
+    line = _git(source, "log", "-1", "--format=%P%x00%s", merge).rstrip("\n")
+    parents, subject = line.split("\x00", 1)
+    parent_list = parents.split()
+    number = _pull_request(subject)
+    if len(parent_list) != 2 or number is None or _unverified(merge, subject, pulls, app):
+        return ""
+    if pulls is None or pulls[number].author != app:
+        return ""
+    proposal, proposal_subject = (
+        _git(source, "log", "-1", "--format=%an%x00%s", parent_list[1])
+        .rstrip("\n")
+        .split("\x00", 1)
+    )
+    files = set(_git(source, "diff", "--name-only", parent_list[0], merge).split())
+    if proposal == app and proposal_subject == f"Version {tag[1:]}" and files <= VERSION_FILES:
+        return merge
+    return ""
+
+
+def unpublished(tag: str, known: Known, now: datetime) -> str:
+    """Why the published repository is not serving the tag's `haprion-cli`; empty if it is or was not read."""
+
+    if known.release != "present" or known.published is None or known.released_at is None:
+        return ""
+    if now < known.released_at + PUBLISH_WAIT:
+        return ""
+    wanted = re.compile(rf"{re.escape(tag[1:])}\+git\d{{14}}\.[0-9a-f]{{12}}")
+    if any(wanted.fullmatch(version) for version in known.published):
+        return ""
+    return (
+        f"the repository serves no haprion-cli {tag[1:]} {PUBLISH_WAIT // timedelta(hours=1)} "
+        f"hours after {tag} was released"
+    )
+
+
 def decide(
-    source: Path, tag: str, app: str, pulls: Mapping[int, Pull] | None, now: datetime
+    source: Path,
+    tag: str,
+    app: str,
+    pulls: Mapping[int, Pull] | None,
+    now: datetime,
+    known: Known | None = None,
 ) -> Plan:
     """The plan for what main holds since the tag.
 
@@ -406,6 +479,17 @@ def decide(
     (the next run reads it from the new tag).
     """
 
+    known = known or Known()
+    if known.release == "missing":
+        commit = automatic_tag(source, tag, app, pulls)
+        if commit:
+            return Plan(
+                outcome="rebuild",
+                reason=f"{tag} is an automatic tag without a release; build it again and release it",
+                last=tag,
+                next=tag[1:],
+                tag_commit=commit,
+            )
     changes = changes_since(source, tag, app, pulls)
     version = next((change for change in changes if change.kind == "version"), None)
     merge = version.merge_commit if version else ""
@@ -425,6 +509,7 @@ def decide(
             result.outcome = "blocked"
             result.reason = problem
             result.next = result.tag_commit = result.pull_head = None
+    result.repository = unpublished(tag, known, now)
     return result
 
 
@@ -476,6 +561,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     deciding.add_argument("--now", type=datetime.fromisoformat)
     deciding.add_argument("--app", default=DEFAULT_APP)
     deciding.add_argument("--notes", type=Path, help="write the release note here")
+    deciding.add_argument("--last-release", choices=("present", "missing"), default="")
+    deciding.add_argument("--released-at", type=datetime.fromisoformat)
+    deciding.add_argument(
+        "--published", type=Path, help="the haprion-cli versions the repository lists, one a line"
+    )
     version = commands.add_parser("bump")
     version.add_argument("--source", type=Path, required=True)
     version.add_argument("--version", required=True)
@@ -489,7 +579,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise PlanError("--now needs a time zone")
         tag = last_tag(args.source)
         pulls = read_pulls(args.pulls) if args.pulls else None
-        result = decide(args.source, tag, args.app, pulls, now)
+        published = (
+            tuple(args.published.read_text(encoding="utf-8").split()) if args.published else None
+        )
+        released_at = args.released_at
+        if released_at is not None and released_at.tzinfo is None:
+            raise PlanError("--released-at needs a time zone")
+        known = Known(args.last_release, released_at, published)
+        result = decide(args.source, tag, args.app, pulls, now, known)
     except (PlanError, OSError) as exc:
         print(f"release-plan: {exc}", file=sys.stderr)
         return 2

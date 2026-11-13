@@ -128,10 +128,15 @@ class Repository:
         path.write_text(json.dumps(list(self.pulls.values())), encoding="utf-8")
         return path
 
-    def decide(self, now: str, *, pulls: bool = True) -> Any:
+    def decide(self, now: str, *, pulls: bool = True, known: Any = None) -> Any:
         read = PLAN.read_pulls(self.pulls_file()) if pulls else None
         return PLAN.decide(
-            self.root, PLAN.last_tag(self.root), APP, read, datetime.fromisoformat(now)
+            self.root,
+            PLAN.last_tag(self.root),
+            APP,
+            read,
+            datetime.fromisoformat(now),
+            known or PLAN.Known(),
         )
 
 
@@ -470,6 +475,95 @@ class ReleasePlanTest(unittest.TestCase):
         self.assertIsNone(result.tag_commit)
         self.assertIn("other than its pull request's head", result.reason)
 
+    def tagged(self, version: str = "1.1.1") -> str:
+        """The proposal merged and tagged as the workflow does: the tag on the merge."""
+
+        self.locks(4, "2026-11-15T09:00:00+00:00")
+        self.bump_merged(version)
+        self.repository.git("tag", f"v{version}")
+        return self.repository.git("rev-parse", "HEAD").strip()
+
+    def test_an_automatic_tag_without_a_release_is_built_again(self) -> None:
+        merge = self.tagged()
+
+        result = self.repository.decide(
+            "2026-11-16T12:00:00+00:00", known=PLAN.Known(release="missing")
+        )
+
+        self.assertEqual(result.outcome, "rebuild")
+        self.assertEqual(result.next, "1.1.1")
+        self.assertEqual(result.tag_commit, merge)
+
+    def test_a_tag_made_by_hand_without_a_release_is_left_alone(self) -> None:
+        result = self.repository.decide(
+            "2026-11-16T12:00:00+00:00", known=PLAN.Known(release="missing")
+        )
+
+        self.assertEqual(result.outcome, "nothing")
+
+    def test_a_tag_on_a_merge_a_person_opened_is_not_automatic(self) -> None:
+        self.tagged()
+        self.repository.pulls[14]["author"] = "operator"
+
+        result = self.repository.decide(
+            "2026-11-16T12:00:00+00:00", known=PLAN.Known(release="missing")
+        )
+
+        self.assertNotEqual(result.outcome, "rebuild")
+
+    def test_a_release_present_is_no_rebuild(self) -> None:
+        self.tagged()
+
+        result = self.repository.decide(
+            "2026-11-16T12:00:00+00:00", known=PLAN.Known(release="present")
+        )
+
+        self.assertEqual(result.outcome, "nothing")
+
+    def known(self, *published: str, released: str = "2026-11-16T11:00:00+00:00") -> Any:
+        return PLAN.Known(
+            release="present",
+            released_at=datetime.fromisoformat(released),
+            published=published,
+        )
+
+    def test_a_repository_that_does_not_serve_the_tag_after_three_hours_is_reported(self) -> None:
+        self.tagged()
+
+        late = self.repository.decide(
+            "2026-11-16T14:00:00+00:00", known=self.known("1.1.0+git20261110120000.0123456789ab")
+        )
+        early = self.repository.decide(
+            "2026-11-16T13:59:00+00:00", known=self.known("1.1.0+git20261110120000.0123456789ab")
+        )
+
+        self.assertIn("haprion-cli 1.1.1", late.repository)
+        self.assertEqual(early.repository, "")
+
+    def test_a_repository_that_serves_the_tag_is_fine(self) -> None:
+        self.tagged()
+
+        result = self.repository.decide(
+            "2026-11-17T00:00:00+00:00",
+            known=self.known(
+                "1.1.0+git20261110120000.0123456789ab", "1.1.1+git20261116110000.a1b2c3d4e5f6"
+            ),
+        )
+
+        self.assertEqual(result.repository, "")
+
+    def test_what_the_repository_serves_is_only_checked_when_it_was_read(self) -> None:
+        self.tagged()
+
+        result = self.repository.decide(
+            "2026-11-17T00:00:00+00:00",
+            known=PLAN.Known(
+                release="present", released_at=datetime.fromisoformat("2026-11-16T11:00:00+00:00")
+            ),
+        )
+
+        self.assertEqual(result.repository, "")
+
     def test_a_version_other_than_the_next_patch_is_left_for_a_person(self) -> None:
         self.locks(4, "2026-11-15T09:00:00+00:00")
         self.bump_merged("1.2.0")
@@ -537,6 +631,39 @@ class ReleasePlanTest(unittest.TestCase):
         self.assertIn('"outcome": "release"', completed.stdout)
         self.assertTrue(out.read_text().startswith("An automatic patch release"))
 
+    def test_the_decide_command_takes_what_was_asked_of_github_and_the_repository(self) -> None:
+        self.tagged()
+        published = self.repository.root.parent / "published.txt"
+        published.write_text("1.1.0+git20261110120000.0123456789ab\n", encoding="utf-8")
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(BASE / "tools" / "release-plan"),
+                "decide",
+                "--source",
+                str(self.repository.root),
+                "--now",
+                "2026-11-16T14:00:00+00:00",
+                "--app",
+                APP,
+                "--pulls",
+                str(self.repository.pulls_file()),
+                "--last-release",
+                "present",
+                "--released-at",
+                "2026-11-16T11:00:00+00:00",
+                "--published",
+                str(published),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("serves no haprion-cli 1.1.1", json.loads(completed.stdout)["repository"])
+
     def test_a_time_without_a_zone_is_refused(self) -> None:
         completed = subprocess.run(
             [
@@ -599,6 +726,22 @@ class TheWorkflowsSayWhatThePlanReads(unittest.TestCase):
         # a proposal behind main is closed, not merged
         self.assertIn("compare/main...${head}", release)
         self.assertIn(".behind_by", release)
+
+    def test_the_repository_is_read_where_the_site_puts_its_index(self) -> None:
+        release = (self.workflows / "auto-release.yml").read_text(encoding="utf-8")
+        apt = (BASE / "tools" / "build-apt-repo").read_text(encoding="utf-8")
+
+        self.assertIn('ARCHITECTURE = "amd64"', apt)
+        self.assertIn('COMPONENT = "main"', apt)
+        self.assertIn("dists/deb13/main/binary-amd64/Packages", release)
+        self.assertIn('"Package: haprion-cli"', release)
+        self.assertIn("UNPUBLISHED_TITLE", release)
+
+    def test_a_tag_without_a_release_is_built_again_and_not_tagged_again(self) -> None:
+        release = (self.workflows / "auto-release.yml").read_text(encoding="utf-8")
+
+        self.assertIn("needs.plan.outputs.outcome == 'rebuild'", release)
+        self.assertIn('if [[ "${OUTCOME}" == tag ]]; then', release)
 
 
 if __name__ == "__main__":

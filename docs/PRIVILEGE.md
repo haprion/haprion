@@ -146,6 +146,7 @@ never hold a transaction open across a CLI command.
   `/etc/haprion/blocklists`, mode 0600 in a 0700 directory, written by its helper from a sealed box the
   web cannot open and the helper opens only for the URL, authorization and username it was sealed for. The lists the timer keeps in `/var/lib/haprion/blocklists` are root's; the timer and
   the blocklist check helper read them.
+- The HTTP-01 check makes its directory under the webroot world-readable (0755, its test file 0644) because the web server reads it as its own user and serves it to anyone, the same way the certificate client's webroot plugin does.
 - The traffic log mirror is written by the collector and readable, never writable, by the web.
 - The answers the socket helpers keep for recovery are in `/var/lib/haprion/answers`, root's and
   readable by the worker's group, never writable by it. A helper locks its answer while it runs; the

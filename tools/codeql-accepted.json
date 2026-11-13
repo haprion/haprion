@@ -95,6 +95,14 @@
       "count": 1,
       "decided": "2026-10-31",
       "reason": "B416: an API token's secret is made by `haprion-api-token add` and printed once to the operator who ran it, because the integration must be given it and the manager keeps only its SHA-256. It goes to stdout of the operator's own terminal (or the envelope's result with --json), alone on its line so a script can capture it; never to a log, the audit trail or the database. The interface is the ordinary way and shows it once on the page instead. The same shape as cert_receiver's password (B306)."
+    },
+    {
+      "rule": "py/overly-permissive-file",
+      "path": "src/haprion/http01_check.py",
+      "message": "Overly permissive mask in open sets file to world readable.",
+      "count": 1,
+      "decided": "2026-11-13",
+      "reason": "The HTTP-01 check makes its challenge directory under the webroot 0o755 and its test file 0o644 because the web server serves both to anyone over plain HTTP and reads them as its own user. Certbot's webroot plugin makes and uses the same directory with the same modes, so a tighter mode here would protect nothing and the check would fail to fetch its own file. The file holds a random token and no secret, and the check removes both again."
     }
   ]
 }

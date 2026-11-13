@@ -1078,6 +1078,7 @@ class AnExpiredCertificate(unittest.TestCase):
         )  # fmt: skip
         cls.authority = ca.read_text()
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(expired, key)
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         cls.server.socket = context.wrap_socket(cls.server.socket, server_side=True)

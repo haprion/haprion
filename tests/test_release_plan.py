@@ -146,7 +146,14 @@ class ReleasePlanTest(unittest.TestCase):
     def setUp(self) -> None:
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        self.repository = Repository(Path(directory.name))
+        #
+        # The repository is a directory inside the test's own, so the files the
+        # tests write beside it (the pull requests, what the repository serves)
+        # are removed with it.
+        #
+        root = Path(directory.name) / "repository"
+        root.mkdir()
+        self.repository = Repository(root)
 
     def locks(self, number: int, landed: str) -> None:
         self.repository.merge(

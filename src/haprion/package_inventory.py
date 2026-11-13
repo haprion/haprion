@@ -23,6 +23,7 @@ from __future__ import annotations
 import gzip
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import cmp_to_key
 from pathlib import Path
 from typing import BinaryIO
 
@@ -92,6 +93,31 @@ def installed_version(name: str, status: Path = DPKG_STATUS) -> str | None:
         return installed(status).get(name)
     except OSError:
         return None
+
+
+def newest_known(name: str, status: Path | None = None, lists: Path | None = None) -> str | None:
+    """The newest version of one project package this host knows: installed, or offered by apt's lists.
+
+    The same two sources the poller's `Reader` compares, read once. A source
+    that cannot be read is left out - the installed version stands when the
+    lists fail, the lists' when dpkg's file does - and none at all is None.
+    Never raises: a status report is not worth a failure over it.
+    """
+
+    found: list[str] = []
+    try:
+        version = installed(status or DPKG_STATUS).get(name)
+        if version:
+            found.append(version)
+    except (OSError, ValueError):
+        pass
+    try:
+        offered = available(_lists(lists or APT_LISTS)).get(name)
+        if offered:
+            found.append(offered)
+    except (OSError, ValueError):
+        pass
+    return max(found, key=cmp_to_key(compare)) if found else None
 
 
 def _lists(directory: Path) -> list[Path]:

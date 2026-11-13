@@ -20,7 +20,7 @@ from unittest import mock
 
 import yaml
 
-from haprion import cluster_status, dnsdist_config, exit_codes, status_collect
+from haprion import cluster_status, dnsdist_config, exit_codes, package_inventory, status_collect
 from haprion.cli import status, status_helper
 from haprion.config import Node
 from haprion.status_collect import NodeResponse, ReadNode
@@ -1069,11 +1069,35 @@ class CallerTests(HelperFixture):
             out,
         )
 
-    def test_the_waf_engine_this_host_has_is_in_the_summary(self) -> None:
+    def test_the_newest_waf_engine_this_host_knows_is_in_the_summary(self) -> None:
         code, out, _ = self.run_helper(request(), engine_reader=lambda: "0.9.1-3")
         self.assertEqual(code, 0)
         summary = assert_contract("haprion-status", out)["result"]["summary"]
-        self.assertEqual(summary["waf_engine_version"], "0.9.1-3")
+        self.assertEqual(summary["waf_engine_newest"], "0.9.1-3")
+
+    def test_the_helper_reads_the_engine_from_dpkg_and_apt_lists(self) -> None:
+        """PI09: an engine only published in the lists is the one the nodes are read against."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "status").write_text(
+                "Package: haprion-coraza-spoa\nStatus: install ok installed\nVersion: 0.9.1-2\n"
+            )
+            lists = root / "lists"
+            lists.mkdir()
+            (lists / "example.org_x_Packages").write_text(
+                "Package: haprion-coraza-spoa\nVersion: 0.9.1-3\n"
+            )
+            with (
+                mock.patch.object(package_inventory, "DPKG_STATUS", root / "status"),
+                mock.patch.object(package_inventory, "APT_LISTS", lists),
+            ):
+                self.assertEqual(status_helper._newest_engine(), "0.9.1-3")
+                (lists / "example.org_x_Packages").unlink()
+                lists.rmdir()
+                self.assertEqual(status_helper._newest_engine(), "0.9.1-2")
+                (root / "status").unlink()
+                self.assertIsNone(status_helper._newest_engine())
 
     def test_a_node_engine_older_than_this_hosts_says_what_to_run(self) -> None:
         def engine(version: str | None) -> dict[str, object]:
@@ -1099,7 +1123,7 @@ class CallerTests(HelperFixture):
         _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
         self.assertIn("WAF engine:   ACTIVE (0.9.1-3)\n", out)
         self.assertIn(
-            "WAF engine:   ACTIVE (0.9.1-2)  OLDER than this host's 0.9.1-3"
+            "WAF engine:   ACTIVE (0.9.1-2)  OLDER - 0.9.1-3 is published"
             " - run sudo apt upgrade on the node\n",
             out,
         )

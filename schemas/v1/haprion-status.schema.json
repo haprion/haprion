@@ -764,8 +764,8 @@
           "type": ["string", "null"],
           "maxLength": 64
         },
-        "waf_engine_version": {
-          "description": "The version of the haprion-coraza-spoa package installed on the management host, the engine its nodes' engines are read against; null when it is not installed or dpkg's status cannot be read. Absent from an engine older than the field.",
+        "waf_engine_newest": {
+          "description": "The newest version of the haprion-coraza-spoa package the management host knows, installed on it or published in its apt lists, the engine its nodes' engines are read against; null when it knows none or cannot read dpkg's status and apt's lists. Absent from an engine older than the field.",
           "type": ["string", "null"],
           "maxLength": 64
         }

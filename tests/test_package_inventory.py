@@ -150,5 +150,46 @@ class OneInstalledVersion(unittest.TestCase):
             )
 
 
+class TheNewestVersionKnown(Fixture):
+    """One package's newest version: installed, or offered by apt's lists (PI09)."""
+
+    def test_a_newer_one_in_the_lists_wins_over_the_installed(self) -> None:
+        self.assertEqual(
+            package_inventory.newest_known("haprion-cli", self.status, self.lists),
+            "0.99.1+git20261108120000.89abcdef0123",
+        )
+
+    def test_an_installed_one_the_lists_do_not_beat_is_the_answer(self) -> None:
+        self.assertEqual(
+            package_inventory.newest_known("haprion-ui", self.status, self.lists),
+            "0.99.0+git20261101120000.0123456789ab~ubuntu26.04",
+        )
+
+    def test_one_only_the_lists_offer_is_the_answer(self) -> None:
+        self.assertEqual(
+            package_inventory.newest_known("haprion-certbot", self.status, self.lists), "5.9.0"
+        )
+
+    def test_an_unreadable_status_leaves_what_the_lists_offer_and_never_raises(self) -> None:
+        self.assertEqual(
+            package_inventory.newest_known("haprion-certbot", self.root / "none", self.lists),
+            "5.9.0",
+        )
+        self.assertIsNone(
+            package_inventory.newest_known("haprion-ui-none", self.root / "none", self.root / "x")
+        )
+
+    def test_unreadable_lists_leave_the_installed_version(self) -> None:
+        self.assertEqual(
+            package_inventory.newest_known("haprion-ui", self.status, self.root / "none"),
+            "0.99.0+git20261101120000.0123456789ab~ubuntu26.04",
+        )
+        with mock.patch.object(package_inventory, "available", side_effect=ValueError("bad")):
+            self.assertEqual(
+                package_inventory.newest_known("haprion-ui", self.status, self.lists),
+                "0.99.0+git20261101120000.0123456789ab~ubuntu26.04",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -481,7 +481,11 @@ def from_dashboard(
                         message=node.engine_message,
                         since=None,
                         link=card_link(cluster.cluster),
-                        variant="waf_engine",
+                        #
+                        # The newest engine in the key: an acknowledged row
+                        # comes back when a newer one is published.
+                        #
+                        variant=f"waf_engine {node.engine_known}",
                     )
                 )
             if node.host_name_message:

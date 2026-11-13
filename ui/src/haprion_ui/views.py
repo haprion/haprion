@@ -778,14 +778,8 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
     clusters, status_rows = read_source(request, config, STATUS_SOURCE)
     status_rows = tuple(status_rows)
     _, network_rows = read_source(request, config, NETWORK_SOURCE)
-    with request.app.state.pool.connection() as connection:
-        packages_waiting = db.package_waiting(connection)
     board = dashboard.build_dashboard(
-        clusters,
-        status_rows,
-        stale_after=stale_after,
-        network_readings=network_rows,
-        engine_waiting=dashboard.waiting_engine(packages_waiting),
+        clusters, status_rows, stale_after=stale_after, network_readings=network_rows
     )
     certificate_clusters, certificate_rows = read_source(request, config, CERTIFICATE_SOURCE)
     certificate_rows = tuple(certificate_rows)
@@ -820,7 +814,7 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
             maintained_at=db.retention_completed(connection),
             claim_pause=db.claim_pause(connection),
         )
-        items += attention.from_packages(packages_waiting)
+        items += attention.from_packages(db.package_waiting(connection))
         items += attention.from_api_tokens(db.api_tokens(connection), now=now)
         blocklist_rows = db.blocklists(connection)
         blocklist_states = db.blocklist_states(connection)

@@ -43,6 +43,7 @@ __all__ = [
     "against_carried",
     "compare",
     "engine_behind",
+    "engine_published",
     "newest",
     "node_package_standing",
     "notes",
@@ -292,11 +293,17 @@ def newest(*versions: object) -> str | None:
     return max(found, key=_Version) if found else None
 
 
+def engine_published(known: str) -> str:
+    """How the CLI and the interface both name the engine a node is behind."""
+
+    return f"{known} is published"
+
+
 def engine_behind(engine: object, known: object) -> str | None:
     """The version of a node's WAF engine when it is older than `known`, else None.
 
     `engine` is the node status's `waf_engine`, `known` the newest engine
-    version the manager has: installed on it, or waiting in the repository.
+    version the manager knows: installed on it, or published in its apt lists.
     Nothing is said for an engine that is the same or newer, for one the node
     does not report (an older status script, or no engine installed), or when
     the manager names no version.

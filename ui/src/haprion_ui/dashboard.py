@@ -75,6 +75,7 @@ class NodeView:
     #
     engine_note: str | None = None
     engine_message: str | None = None
+    engine_known: str | None = None
     #
     # The host name the node reports is not the name Haprion knows it by
     # (B447, N02). The node's deploy keeps working under the name in its
@@ -381,8 +382,8 @@ def node_package_words(installation: object, carried: object) -> tuple[str, str]
 def node_engine_words(engine: object, known: object) -> tuple[str, str] | None:
     """The Runtime cell's note and Needs attention's sentence for a node's WAF engine.
 
-    Read against `known`, the newest engine version the manager has: installed
-    on it or waiting in the repository. None when the node's is the same or
+    Read against `known`, the newest engine version the manager knows, from the
+    status's `waf_engine_newest`. None when the node's is the same or
     newer, or says nothing.
     """
 
@@ -391,7 +392,7 @@ def node_engine_words(engine: object, known: object) -> tuple[str, str] | None:
         return None
     return (
         "Older WAF engine",
-        f"WAF engine {installed} is installed; the manager's is {known}"
+        f"WAF engine {installed} is installed; {haproxy_versions.engine_published(str(known))}"
         f" - {haproxy_versions.UPGRADE_ON_THE_NODE}",
     )
 
@@ -584,6 +585,7 @@ def _node_view(
             package_message=package_message,
             engine_note=engine_note,
             engine_message=engine_message,
+            engine_known=str(engine) if engine_message else None,
             host_name_message=host_name_message,
             package_version=_known_text(_mapping(status.get("installation")).get("version")),
         )
@@ -607,6 +609,7 @@ def _node_view(
         package_message=package_message,
         engine_note=engine_note,
         engine_message=engine_message,
+        engine_known=str(engine) if engine_message else None,
         host_name_message=host_name_message,
         release_number=_positive(release.get("version")),
         haproxy_version=_known_text(runtime.get("version")),
@@ -745,7 +748,6 @@ def _cluster_view(
     configured: bool,
     now: datetime,
     stale_after: timedelta,
-    engine_waiting: str | None = None,
 ) -> ClusterView:
     result = _mapping(reading.result)
     summary = _mapping(result.get("summary"))
@@ -753,10 +755,10 @@ def _cluster_view(
     target_hash = _mapping(summary.get("target")).get("hash")
     target_version = _mapping(summary.get("target")).get("version")
     #
-    # The newest WAF engine the manager has: the one installed on it, which
-    # the status reports, or a newer one waiting in the repository.
+    # The newest WAF engine the manager knows, as the status helper worked it
+    # out: the one place that value is counted (PI09).
     #
-    engine = haproxy_versions.newest(summary.get("waf_engine_version"), engine_waiting)
+    engine = summary.get("waf_engine_newest")
     nodes = (
         tuple(
             _node_view(
@@ -1004,11 +1006,6 @@ def build_dashboard(
     # out by the callers that only need a cluster's serving state.
     #
     network_readings: Iterable[Any] = (),
-    #
-    # The WAF engine version waiting in the repository, for the nodes' engines
-    # to be read against beside the one installed on the manager.
-    #
-    engine_waiting: str | None = None,
 ) -> DashboardView:
     """Build one deterministic view from configuration and cached status rows."""
 
@@ -1025,7 +1022,6 @@ def build_dashboard(
                 configured=cluster in configured_set,
                 now=clock,
                 stale_after=stale_after,
-                engine_waiting=engine_waiting,
             ),
             vip_count=vip_counts.get(cluster, 1),
         )
@@ -1112,12 +1108,3 @@ def build_dashboard(
         vip_tone=vip_tone,
         release_tone=release_tone,
     )
-
-
-def waiting_engine(rows: Iterable[Any]) -> str | None:
-    """The WAF engine version a newer package is waiting with in the repository, if one is."""
-
-    for row in rows:
-        if row.name == "haprion-coraza-spoa":
-            return str(row.available)
-    return None

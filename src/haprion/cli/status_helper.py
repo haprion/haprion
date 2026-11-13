@@ -179,18 +179,20 @@ def main(
         package_reader or node_package.carried_version
     )()
     #
-    # And the WAF engine this host has installed, which the nodes' engines are
-    # read against: the engine is published apart from the releases, so a node
-    # can be left behind it.
+    # And the newest WAF engine this host knows, installed or published in its
+    # apt lists (the poller's source for what is waiting), which the nodes'
+    # engines are read against: the engine is published apart from the
+    # releases, so a node can be left behind it. The one value the CLI and the
+    # interface both read (PI09).
     #
-    report.result["summary"]["waf_engine_version"] = (engine_reader or _installed_engine)()
+    report.result["summary"]["waf_engine_newest"] = (engine_reader or _newest_engine)()
     return write_document(
         writer, report.as_envelope(request.cluster, request_id=request.request_id), report.exit_code
     )
 
 
-def _installed_engine() -> str | None:
-    return package_inventory.installed_version(waf_engine_package.PACKAGE)
+def _newest_engine() -> str | None:
+    return package_inventory.newest_known(waf_engine_package.PACKAGE)
 
 
 if __name__ == "__main__":

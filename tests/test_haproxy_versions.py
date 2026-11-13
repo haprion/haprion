@@ -12,6 +12,7 @@ from haprion.haproxy_versions import (
     against_carried,
     compare,
     engine_behind,
+    engine_published,
     newest,
     node_package_standing,
     notes,
@@ -255,6 +256,9 @@ class TheWafEngine(unittest.TestCase):
         for known in (None, "", 3):
             with self.subTest(known=known):
                 self.assertIsNone(engine_behind({"version": "0.9.1-2"}, known))
+
+    def test_the_cli_and_the_interface_name_the_newest_engine_in_the_same_words(self) -> None:
+        self.assertEqual(engine_published("0.9.1-3"), "0.9.1-3 is published")
 
     def test_the_newest_is_dpkgs_order(self) -> None:
         self.assertEqual(newest("0.9.1-3", "0.9.1-10", None), "0.9.1-10")

@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 BASE = Path(__file__).resolve().parents[1]
 APP = "haprion-upstream-watch[bot]"
 
@@ -742,6 +744,25 @@ class TheWorkflowsSayWhatThePlanReads(unittest.TestCase):
 
         self.assertIn("needs.plan.outputs.outcome == 'rebuild'", release)
         self.assertIn('if [[ "${OUTCOME}" == tag ]]; then', release)
+
+    def test_only_the_app_s_proposal_for_the_next_version_is_merged(self) -> None:
+        release = yaml.safe_load((self.workflows / "auto-release.yml").read_text(encoding="utf-8"))
+        merge = release["jobs"]["merge"]
+        text = (self.workflows / "auto-release.yml").read_text(encoding="utf-8")
+
+        self.assertEqual(merge["if"], "needs.plan.outputs.outcome == 'release'")
+        self.assertIn('--author "app/${APP_SLUG}"', text)
+        self.assertIn('!= "Version ${VERSION}" ]]', text)
+        self.assertEqual(merge["permissions"]["actions"], "write")
+
+    def test_a_red_proposal_is_run_again_a_day_later_and_reported(self) -> None:
+        release = yaml.safe_load((self.workflows / "auto-release.yml").read_text(encoding="utf-8"))
+        text = (self.workflows / "auto-release.yml").read_text(encoding="utf-8")
+
+        self.assertIn("select(.updated_at < (now - 86400 | todate))", text)
+        self.assertIn("/rerun-failed-jobs", text)
+        self.assertIn("RED_TITLE", release["env"])
+        self.assertIn("date -u -d '24 hours ago'", text)
 
 
 if __name__ == "__main__":

@@ -46,6 +46,7 @@ env:
   BRANCH: release-watch
   BLOCKED_TITLE: "A security fix waits for a release made by hand"
   UNPUBLISHED_TITLE: "The package repository does not serve the latest release"
+  RED_TITLE: "The version proposal has been red for a day"
 
 jobs:
   plan:
@@ -175,7 +176,7 @@ jobs:
           if-no-files-found: error
 
   report:
-    name: Say when a security fix waits or the repository lags
+    name: Say when a security fix waits, the proposal stays red or the repository lags
     needs: plan
     runs-on: ubuntu-26.04
     timeout-minutes: 10
@@ -184,6 +185,9 @@ jobs:
     environment:
       name: upstream-watch
       deployment: false
+    permissions:
+      contents: read
+      actions: read # when the proposal's checks first failed
 
     steps:
       - name: Act as the app
@@ -193,6 +197,7 @@ jobs:
           client-id: ${{ vars.UPSTREAM_WATCH_CLIENT_ID }}
           private-key: ${{ secrets.UPSTREAM_WATCH_PRIVATE_KEY }}
           permission-issues: write # the report
+          permission-pull-requests: read # the version proposal
 
       - name: Open, keep or close the report
         shell: bash
@@ -244,6 +249,44 @@ jobs:
             fi
           elif [[ -n "${open}" ]]; then
             gh issue close "${open}" --repo "${REPOSITORY}" --comment "The repository serves the latest release."
+          fi
+
+      # The failed checks of an unchanged proposal are run again once a day
+      # (the merge job); one that is still red after a day is not the
+      # runner's bad luck.
+      - name: Open, keep or close the report on a red proposal
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          RUN_TOKEN: ${{ github.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          REPOSITORY: ${{ github.repository }}
+          NOTIFY: ${{ vars.UPSTREAM_WATCH_NOTIFY }}
+        run: |
+          set -euo pipefail
+          open=$(gh issue list --repo "${REPOSITORY}" --state open --search "in:title \"${RED_TITLE}\"" \
+            --json number,title --jq "map(select(.title == env.RED_TITLE))[0].number // empty")
+          number=$(gh pr list --repo "${REPOSITORY}" --head "${BRANCH}" --author "app/${APP_SLUG}" --state open \
+            --json number --jq '.[0].number // empty')
+          first_failure=""
+          if [[ -n "${number}" ]]; then
+            head=$(gh pr view "${number}" --repo "${REPOSITORY}" --json headRefOid --jq .headRefOid)
+            first_failure=$(GH_TOKEN="${RUN_TOKEN}" gh api --method GET "repos/${REPOSITORY}/actions/runs" \
+              -f head_sha="${head}" -f status=failure \
+              --jq '[.workflow_runs[].created_at] | min // empty')
+          fi
+          if [[ -n "${first_failure}" && "${first_failure}" < "$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)" ]]; then
+            if [[ -z "${open}" ]]; then
+              body="${RUNNER_TEMP}/red.md"
+              { echo "The version proposal #${number} failed a check at ${first_failure}, and it has failed"
+                echo "again when it was run again. No release is made until it passes: look at the"
+                echo "failed job. Closing the proposal makes the workflow open it again."
+              } > "${body}"
+              gh issue create --repo "${REPOSITORY}" --title "${RED_TITLE}" --body-file "${body}" \
+                ${NOTIFY:+--assignee "${NOTIFY}"}
+            fi
+          elif [[ -n "${open}" ]]; then
+            gh issue close "${open}" --repo "${REPOSITORY}" --comment "The version proposal is not red."
           fi
 
   propose:
@@ -315,14 +358,22 @@ jobs:
             --title "Version ${VERSION}" --body-file "${RUNNER_TEMP}/note/notes.md" \
             ${NOTIFY:+--assignee "${NOTIFY}"}
 
+  # Only while the plan says a release is due: that is when this workflow's
+  # proposal can be open. It is the app's pull request, titled for the next
+  # version, on the current main; any other is closed and made again by
+  # `propose`.
   merge:
     name: Merge the version proposal when every check passed
     needs: plan
+    if: needs.plan.outputs.outcome == 'release'
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     environment:
       name: upstream-watch
       deployment: false
+    permissions:
+      contents: read
+      actions: write # run the proposal's failed checks again
 
     steps:
       - name: Act as the app
@@ -341,16 +392,19 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
+          RUN_TOKEN: ${{ github.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
           REPOSITORY: ${{ github.repository }}
+          VERSION: ${{ needs.plan.outputs.next }}
           REQUIRED: |
             Source, quality, and security gates
             Installation test
         run: |
           set -euo pipefail
-          pr=$(gh pr list --repo "${REPOSITORY}" --head "${BRANCH}" --state open \
-            --json number,headRefOid,labels --jq '.[0] // empty')
+          pr=$(gh pr list --repo "${REPOSITORY}" --head "${BRANCH}" --author "app/${APP_SLUG}" --state open \
+            --json number,headRefOid,labels,title --jq '.[0] // empty')
           if [[ -z "${pr}" ]]; then
-            echo "no proposal is open"
+            echo "no proposal of the app is open"
             exit 0
           fi
           number=$(jq -r .number <<<"${pr}")
@@ -358,6 +412,11 @@ jobs:
           labels=$(jq -r '[.labels[].name] | join(" ")' <<<"${pr}")
           if [[ " ${labels} " == *" hold "* ]]; then
             echo "#${number} is on hold"
+            exit 0
+          fi
+          if [[ "$(jq -r .title <<<"${pr}")" != "Version ${VERSION}" ]]; then
+            gh pr close "${number}" --repo "${REPOSITORY}" --delete-branch \
+              --comment "This is not the proposal for version ${VERSION}, the one the plan calls for. It is proposed again."
             exit 0
           fi
           # The tag stands on the merge, and the installation test ran on the
@@ -370,6 +429,16 @@ jobs:
               --comment "main moved on: this proposal lies ${behind} commits behind it, so what was tested is not what a merge would tag. It is proposed again on the current main."
             exit 0
           fi
+          # An unchanged proposal gets no new checks, so a failure from
+          # outside would hold it for good. A run that failed more than a day
+          # ago is run again, which is once a day at most; a real failure
+          # fails again and stays in view (the report job counts its age).
+          for run in $(GH_TOKEN="${RUN_TOKEN}" gh api --method GET "repos/${REPOSITORY}/actions/runs" \
+              -f head_sha="${head}" -f status=failure \
+              --jq '.workflow_runs[] | select(.updated_at < (now - 86400 | todate)) | .id'); do
+            echo "running the failed jobs of ${run} again"
+            GH_TOKEN="${RUN_TOKEN}" gh api --method POST "repos/${REPOSITORY}/actions/runs/${run}/rerun-failed-jobs"
+          done
           checks=$(gh pr checks "${number}" --repo "${REPOSITORY}" --json name,bucket || true)
           if jq -e 'any(.[]; .bucket != "pass" and .bucket != "skipping")' <<<"${checks}" >/dev/null; then
             echo "#${number}: not every check has passed"

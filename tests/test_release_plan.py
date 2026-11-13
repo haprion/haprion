@@ -526,6 +526,30 @@ class ReleasePlanTest(unittest.TestCase):
         self.assertEqual(result.next, "1.1.1")
         self.assertEqual(result.tag_commit, merge)
 
+    def test_the_pull_requests_the_workflow_reads_let_a_tag_without_a_release_be_built_again(
+        self,
+    ) -> None:
+        """Review 2026-11-13, PK01: the workflow read from the tag's own merge only."""
+
+        merge = self.tagged()
+        numbers = PLAN.pull_numbers(self.repository.root)
+        self.repository.pulls = {
+            number: pull for number, pull in self.repository.pulls.items() if number in numbers
+        }
+
+        result = self.repository.decide(
+            "2026-11-16T12:00:00+00:00", known=PLAN.Known(release="missing")
+        )
+
+        self.assertEqual(numbers, [4, 14])
+        self.assertEqual(result.outcome, "rebuild")
+        self.assertEqual(result.tag_commit, merge)
+
+    def test_with_one_tag_the_pull_requests_are_those_since_its_own_merge(self) -> None:
+        self.locks(4, "2026-11-15T09:00:00+00:00")
+
+        self.assertEqual(PLAN.pull_numbers(self.repository.root), [4])
+
     def test_a_tag_made_by_hand_without_a_release_is_left_alone(self) -> None:
         result = self.repository.decide(
             "2026-11-16T12:00:00+00:00", known=PLAN.Known(release="missing")
@@ -758,6 +782,29 @@ class TheWorkflowsSayWhatThePlanReads(unittest.TestCase):
 
     workflows = BASE / ".github" / "workflows"
 
+    def test_the_workflow_reads_the_pull_requests_the_plan_names(self) -> None:
+        release = (self.workflows / "auto-release.yml").read_text(encoding="utf-8")
+
+        self.assertIn("$(python3 tools/release-plan pulls --source .)", release)
+        self.assertNotIn('"${tag}^..HEAD"', release)
+
+    def test_the_reason_is_one_line_of_output(self) -> None:
+        release = (self.workflows / "auto-release.yml").read_text(encoding="utf-8")
+
+        self.assertIn('.reason | gsub("[\\\\r\\\\n]+"; " ")', release)
+        self.assertNotIn('echo "reason=$(jq -r .reason ', release)
+
+    def test_a_blocked_issue_a_person_closed_stays_closed_for_the_same_reason(self) -> None:
+        release = (self.workflows / "auto-release.yml").read_text(encoding="utf-8")
+
+        self.assertIn('"${closed}" == "$(cat "${body}")"', release)
+
+    def test_the_build_issue_counts_only_the_build_and_release_jobs(self) -> None:
+        release = (self.workflows / "auto-release.yml").read_text(encoding="utf-8")
+
+        self.assertIn('startswith("Build the release")) or .name == "Tag and release"', release)
+        self.assertIn('"${OUTCOME}" != tag && "${OUTCOME}" != rebuild', release)
+
     def test_the_watch_s_subjects_are_the_plan_s(self) -> None:
         watch = (self.workflows / "upstream-watch.yml").read_text(encoding="utf-8")
 
@@ -861,7 +908,7 @@ class TheWorkflowsSayWhatThePlanReads(unittest.TestCase):
         self.assertIn('"${OUTCOME}" == blocked ]]', step["run"])
         self.assertNotIn("blocked &&", step["run"])
         self.assertEqual(step["env"]["REASON"], "${{ needs.plan.outputs.reason }}")
-        self.assertIn('echo "reason=$(jq -r .reason', text)
+        self.assertIn("echo \"reason=$(jq -r '.reason", text)
         self.assertIn("reason: ${{ steps.plan.outputs.reason }}", text)
         self.assertIn("gh issue close", step["run"])
         self.assertNotIn("made by a person", release["env"]["BLOCKED_TITLE"])

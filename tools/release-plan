@@ -578,6 +578,43 @@ def bump(source: Path, version: str) -> None:
         path.write_text(new, encoding="utf-8")
 
 
+def pull_numbers(source: Path) -> list[int]:
+    """The pull requests whose merges `decide` verifies, in the order main has them.
+
+    Every merge on main's first-parent line since the tag before the last one:
+    the plan reads from the last tag, and a tag without a release is checked
+    from the one before it (review 2026-11-13, PK01). With one tag only, from
+    that tag's own merge.
+    """
+
+    tag = last_tag(source)
+    try:
+        parent = _git(source, "rev-parse", "--verify", "--quiet", f"{tag}^").strip()
+    except PlanError:
+        parent = ""
+    before = ""
+    if parent:
+        try:
+            before = _git(
+                source, "describe", "--tags", "--abbrev=0", "--match", "v*", parent
+            ).strip()
+        except PlanError:
+            before = ""
+    if TAG.fullmatch(before):
+        span = f"{before}..HEAD"
+    elif parent:
+        span = f"{parent}..HEAD"
+    else:
+        span = "HEAD"
+    numbers = []
+    subjects = _git(source, "log", "--first-parent", "--reverse", "--format=%s", span)
+    for subject in subjects.splitlines():
+        number = _pull_request(subject)
+        if number is not None:
+            numbers.append(number)
+    return numbers
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="release-plan", description=__doc__.split("\n", 1)[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -594,6 +631,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     deciding.add_argument(
         "--published", type=Path, help="the haprion-cli versions the repository lists, one a line"
     )
+    numbers = commands.add_parser("pulls")
+    numbers.add_argument("--source", type=Path, required=True)
     version = commands.add_parser("bump")
     version.add_argument("--source", type=Path, required=True)
     version.add_argument("--version", required=True)
@@ -601,6 +640,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "bump":
             bump(args.source, args.version)
+            return 0
+        if args.command == "pulls":
+            print("\n".join(str(number) for number in pull_numbers(args.source)))
             return 0
         now = args.now or datetime.now(UTC)
         if now.tzinfo is None:

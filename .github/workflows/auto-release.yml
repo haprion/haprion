@@ -95,8 +95,9 @@ jobs:
           tag=$(git describe --tags --abbrev=0 --match 'v*' HEAD)
           pulls="${RUNNER_TEMP}/pulls.jsonl"
           : > "${pulls}"
-          for number in $(git log --first-parent --format=%s "${tag}^..HEAD" \
-              | sed -n 's/^Merge pull request #\([0-9][0-9]*\) .*/\1/p'); do
+          # The plan names the pull requests it verifies: those since the tag
+          # before the last, since a tag without a release is checked from it.
+          for number in $(python3 tools/release-plan pulls --source .); do
             # Only a 404 says the pull request is not there (the plan blocks on
             # it); any other answer is no answer, and the step fails.
             if found=$(gh api "repos/${REPOSITORY}/pulls/${number}" \
@@ -148,7 +149,9 @@ jobs:
             echo "outcome=$(jq -r .outcome "${RUNNER_TEMP}/plan.json")"
             echo "next=$(jq -r '.next // empty' "${RUNNER_TEMP}/plan.json")"
             echo "security=$(jq -r .security "${RUNNER_TEMP}/plan.json")"
-            echo "reason=$(jq -r .reason "${RUNNER_TEMP}/plan.json")"
+            # One line: a file name since the tag may hold a line break, and the
+            # line after it would be read as an output of its own.
+            echo "reason=$(jq -r '.reason | gsub("[\\r\\n]+"; " ")' "${RUNNER_TEMP}/plan.json")"
             echo "tag_commit=$(jq -r '.tag_commit // empty' "${RUNNER_TEMP}/plan.json")"
             echo "pull_head=$(jq -r '.pull_head // empty' "${RUNNER_TEMP}/plan.json")"
             echo "repository=$(jq -r .repository "${RUNNER_TEMP}/plan.json")"
@@ -241,7 +244,13 @@ jobs:
                 echo "A security fix is among it."
               fi
             } > "${body}"
-            if [[ -z "${open}" ]]; then
+            # One a person closed is left closed while the reason is the same;
+            # a new reason is a new issue.
+            closed=$(gh issue list --repo "${REPOSITORY}" --state closed --search "in:title \"${BLOCKED_TITLE}\"" \
+              --json title,body --jq "map(select(.title == env.BLOCKED_TITLE))[0].body // empty")
+            if [[ -z "${open}" && "${closed}" == "$(cat "${body}")" ]]; then
+              echo "closed by a person for the same reason; left closed"
+            elif [[ -z "${open}" ]]; then
               gh issue create --repo "${REPOSITORY}" --title "${BLOCKED_TITLE}" --body-file "${body}" \
                 ${NOTIFY:+--assignee "${NOTIFY}"}
             else
@@ -616,17 +625,26 @@ jobs:
           NOTIFY: ${{ vars.UPSTREAM_WATCH_NOTIFY }}
           BUILD: ${{ needs.build.result }}
           RELEASE: ${{ needs.release.result }}
+          OUTCOME: ${{ needs.plan.outputs.outcome }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           open=$(gh issue list --repo "${REPOSITORY}" --state open --search "in:title \"${BUILD_TITLE}\"" \
             --json number,title --jq "map(select(.title == env.BUILD_TITLE))[0].number // empty")
           if [[ "${BUILD}" == failure || "${RELEASE}" == failure ]]; then
-            # The current run is not completed, so the first completed one is the one before.
-            previous=$(GH_TOKEN="${RUN_TOKEN}" gh api --method GET \
+            # The current run is not completed, so the first completed one is
+            # the one before; it counts only when its own build or release job
+            # failed, not another of its jobs.
+            run=$(GH_TOKEN="${RUN_TOKEN}" gh api --method GET \
               "repos/${REPOSITORY}/actions/workflows/auto-release.yml/runs" \
-              -f status=completed -f per_page=1 --jq '.workflow_runs[0].conclusion // empty')
-            echo "the run before: ${previous:-none}"
+              -f status=completed -f per_page=1 --jq '.workflow_runs[0].id // empty')
+            previous=""
+            if [[ -n "${run}" ]]; then
+              previous=$(GH_TOKEN="${RUN_TOKEN}" gh api --method GET "repos/${REPOSITORY}/actions/runs/${run}/jobs" \
+                --jq '[.jobs[] | select((.name | startswith("Build the release")) or .name == "Tag and release")
+                       | .conclusion] | if any(. == "failure") then "failure" else "" end')
+            fi
+            echo "the build before: ${previous:-did not fail}"
             if [[ "${previous}" == failure && -z "${open}" ]]; then
               body="${RUNNER_TEMP}/build.md"
               { echo "The build of the release, or the release itself, failed in this run and in the one"
@@ -638,6 +656,7 @@ jobs:
               gh issue create --repo "${REPOSITORY}" --title "${BUILD_TITLE}" --body-file "${body}" \
                 ${NOTIFY:+--assignee "${NOTIFY}"}
             fi
-          elif [[ "${RELEASE}" == success && -n "${open}" ]]; then
-            gh issue close "${open}" --repo "${REPOSITORY}" --comment "A release was made."
+          elif [[ -n "${open}" && ( "${RELEASE}" == success || ( "${OUTCOME}" != tag && "${OUTCOME}" != rebuild ) ) ]]; then
+            # A release was made, here or by hand: nothing is left to build.
+            gh issue close "${open}" --repo "${REPOSITORY}" --comment "Nothing is left to build."
           fi

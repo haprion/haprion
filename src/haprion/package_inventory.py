@@ -32,6 +32,9 @@ from haprion.haproxy_versions import compare
 DPKG_STATUS = Path("/var/lib/dpkg/status")
 APT_LISTS = Path("/var/lib/apt/lists")
 PREFIX = b"haprion-"
+# apt names a list for a repository's URI with every `/` an `_`: this is
+# `https://haprion.github.io/haprion/` and whatever suite it is read for.
+PROJECT_LISTS = "haprion.github.io_haprion_dists_"
 INSTALLED = b"install ok installed"
 
 
@@ -98,7 +101,10 @@ def installed_version(name: str, status: Path = DPKG_STATUS) -> str | None:
 def newest_known(name: str, status: Path | None = None, lists: Path | None = None) -> str | None:
     """The newest version of one project package this host knows: installed, or offered by apt's lists.
 
-    The same two sources the poller's `Reader` compares, read once. A source
+    The same two sources the poller's `Reader` compares, read once, and from
+    the lists of the project's own repository when there are any: every list
+    is what a distribution costs (some 150 MB) on every status call. A host
+    that has none under that name has them read all. A source
     that cannot be read is left out - the installed version stands when the
     lists fail, the lists' when dpkg's file does - and none at all is None.
     Never raises: a status report is not worth a failure over it.
@@ -112,7 +118,9 @@ def newest_known(name: str, status: Path | None = None, lists: Path | None = Non
     except (OSError, ValueError):
         pass
     try:
-        offered = available(_lists(lists or APT_LISTS)).get(name)
+        every = _lists(lists or APT_LISTS)
+        ours = [path for path in every if path.name.startswith(PROJECT_LISTS)]
+        offered = available(ours or every).get(name)
         if offered:
             found.append(offered)
     except (OSError, ValueError):

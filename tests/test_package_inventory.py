@@ -153,6 +153,13 @@ class OneInstalledVersion(unittest.TestCase):
 class TheNewestVersionKnown(Fixture):
     """One package's newest version: installed, or offered by apt's lists (PI09)."""
 
+    def setUp(self) -> None:
+        super().setUp()
+        # apt names a list for `https://haprion.github.io/haprion/` and its suite like this.
+        (self.lists / "example.org_haprion_dists_resolute_main_binary-amd64_Packages").rename(
+            self.lists / "haprion.github.io_haprion_dists_ubuntu26.04_main_binary-amd64_Packages"
+        )
+
     def test_a_newer_one_in_the_lists_wins_over_the_installed(self) -> None:
         self.assertEqual(
             package_inventory.newest_known("haprion-cli", self.status, self.lists),
@@ -168,6 +175,25 @@ class TheNewestVersionKnown(Fixture):
     def test_one_only_the_lists_offer_is_the_answer(self) -> None:
         self.assertEqual(
             package_inventory.newest_known("haprion-certbot", self.status, self.lists), "5.9.0"
+        )
+
+    def test_a_list_from_another_repository_is_not_read(self) -> None:
+        self.assertIsNone(
+            package_inventory.newest_known(
+                "haprion-lookalike-from-elsewhere", self.root / "none", self.lists
+            )
+        )
+
+    def test_without_a_list_from_the_project_s_repository_every_list_is_read(self) -> None:
+        (
+            self.lists / "haprion.github.io_haprion_dists_ubuntu26.04_main_binary-amd64_Packages"
+        ).unlink()
+
+        self.assertEqual(
+            package_inventory.newest_known(
+                "haprion-lookalike-from-elsewhere", self.root / "none", self.lists
+            ),
+            "1.0",
         )
 
     def test_an_unreadable_status_leaves_what_the_lists_offer_and_never_raises(self) -> None:

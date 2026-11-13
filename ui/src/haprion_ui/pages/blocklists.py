@@ -37,6 +37,14 @@ from haprion_ui.views import posted_form, read_dns_public_key
 #
 APPLY_WAIT = 6.0
 CARD = "/settings#blocklists"
+FORM_AGAIN = "The form needs another look."
+CHECK_FAILED = "The test could not be made."
+CHECK_WORDS = {
+    "unavailable": "The helper did not answer.",
+    "bad_input": "The helper refused the list as it stands.",
+}
+# What the script is told when a test could not be made: fixed words per code, never an
+# exception's own text. Without script, the form is drawn again with the full sentence.
 
 
 def build_router(config: Config) -> APIRouter:
@@ -220,16 +228,24 @@ def build_router(config: Config) -> APIRouter:
                 secret=secret,
                 keep_secret=keep,
             )
-        except (blocklist_form.FormProblem, CheckError) as problem:
+        except blocklist_form.FormProblem as problem:
             answer = ("critical", blocklist_form.sentence(problem))
+            said: dict[str, object] = {"tone": "critical", "answer": FORM_AGAIN, "page": True}
+        except CheckError as problem:
+            answer = ("critical", blocklist_form.sentence(problem))
+            said = {"tone": "critical", "answer": CHECK_WORDS.get(problem.code, CHECK_FAILED)}
         else:
             answer = (
                 ("healthy", tested.sentence())
                 if tested.answer == "fetched"
                 else ("critical", tested.sentence())
             )
+            said = {
+                "tone": "healthy" if tested.answer == "fetched" else "critical",
+                "answer": tested.sentence(),
+            }
         if wants_json:
-            return JSONResponse({"tone": answer[0], "answer": answer[1]})
+            return JSONResponse(said)
         return _page(request, gate, form, existing=existing, tested=answer)
 
     @router.get("/settings/blocklists/{name}/remove", response_class=HTMLResponse)

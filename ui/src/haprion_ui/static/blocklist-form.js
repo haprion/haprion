@@ -34,6 +34,10 @@
         credentials: "same-origin",
       });
       const said = await response.json();
+      if (said.page) {
+        form.requestSubmit(test);
+        return;
+      }
       const dot = document.createElement("span");
       dot.className = `status-dot status-${said.tone === "healthy" ? "healthy" : "critical"}`;
       dot.setAttribute("aria-hidden", "true");

@@ -534,6 +534,47 @@ class SavingABlocklist(BlocklistRouteTestCase):
             page = self.post(self.admin(), action="test").text
         self.assertIn("The helper did not answer.", page)
 
+    def test_a_failing_exception_text_does_not_reach_the_json_answer(self) -> None:
+        client = self.admin()
+        for error in (
+            CheckError("unavailable", "socket /run/secret.sock: Traceback boom"),
+            CheckError("odd_code", "leaky detail from the helper"),
+        ):
+            with mock.patch("haprion.blocklist_check_socket.test", side_effect=error):
+                response = client.post(
+                    "/settings/blocklists/new",
+                    data={
+                        "name": "community",
+                        "url": "https://lists.example.com/community.txt",
+                        "auth": "none",
+                        "every_hours": "24",
+                        "action": "test",
+                        auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE]),
+                    },
+                    headers={"Accept": "application/json"},
+                )
+            self.assertEqual(response.json()["tone"], "critical")
+            self.assertNotIn("boom", response.text)
+            self.assertNotIn("leaky", response.text)
+            self.assertNotIn("secret.sock", response.text)
+
+    def test_a_form_problem_sends_the_script_back_to_the_page(self) -> None:
+        client = self.admin()
+        response = client.post(
+            "/settings/blocklists/new",
+            data={
+                "name": "community",
+                "url": "https://lists.example.com/community.txt",
+                "auth": "none",
+                "every_hours": "7",
+                "action": "test",
+                auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE]),
+            },
+            headers={"Accept": "application/json"},
+        )
+        self.assertTrue(response.json()["page"])
+        self.assertNotIn("1, 6, 12", response.text)
+
 
 class RemovingABlocklist(BlocklistRouteTestCase):
     def test_a_list_an_object_names_is_not_removed(self) -> None:

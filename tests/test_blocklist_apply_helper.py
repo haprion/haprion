@@ -218,6 +218,13 @@ class Applying(ApplyFixture):
         blocklist_store.keep(
             "crowdsec", blocklists.parse(b"192.0.2.0/24\n").networks, directory=self.state
         )
+        blocklist_store.write_state(
+            {
+                "crowdsec": blocklist_store.ListState(attempted_at="2026-11-13T06:00:00+00:00"),
+                "other": blocklist_store.ListState(attempted_at="2026-11-13T06:00:00+00:00"),
+            },
+            directory=self.state,
+        )
 
         code, document, _ = self.invoke(
             json.dumps(
@@ -235,3 +242,4 @@ class Applying(ApplyFixture):
         self.assertTrue(document["result"]["removed"])
         self.assertEqual(blocklist_store.read_all(directory=self.lists), ())
         self.assertIsNone(blocklist_store.kept("crowdsec", directory=self.state))
+        self.assertEqual(list(blocklist_store.read_state(directory=self.state)), ["other"])

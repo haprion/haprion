@@ -278,14 +278,23 @@ def remove(name: str, *, directory: Path = DEFINITIONS, require_secure: bool = T
 
 
 def forget(name: str, *, directory: Path = STATE) -> None:
-    """Remove the last good list of a list that is gone, so one made again under the name starts empty."""
+    """Remove the last good list and the state of a list that is gone, so one made again under the name starts empty.
+
+    A state left behind would say the list was fetched from this source at that
+    time, and a list made again with the same name and URL would not be due
+    while its file is missing.
+    """
 
     try:
         list_path(name, directory=directory).unlink()
     except FileNotFoundError:
-        return
+        pass
     except OSError as exc:
         raise StoreError(f"the kept list of {name} could not be removed: {exc.strerror}") from exc
+    states = read_state(directory=directory)
+    if name in states:
+        del states[name]
+        write_state(states, directory=directory)
 
 
 def _read_one(path: Path) -> Stored:

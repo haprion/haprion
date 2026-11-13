@@ -202,6 +202,25 @@ class TheStateAndTheLastGoodList(unittest.TestCase):
         with self.assertRaises(StoreError):
             blocklist_store.read_state(directory=self.directory)
 
+    def test_forgetting_a_list_removes_its_file_and_its_state_and_no_other(self) -> None:
+        networks = blocklists.parse(b"192.0.2.0/24\n").networks
+        blocklist_store.keep("crowdsec", networks, directory=self.directory)
+        blocklist_store.write_state(
+            {"crowdsec": ListState(entries=3), "drop": ListState(entries=4)},
+            directory=self.directory,
+        )
+
+        blocklist_store.forget("crowdsec", directory=self.directory)
+        blocklist_store.forget("crowdsec", directory=self.directory)
+
+        self.assertIsNone(blocklist_store.kept("crowdsec", directory=self.directory))
+        self.assertEqual(list(blocklist_store.read_state(directory=self.directory)), ["drop"])
+
+    def test_forgetting_a_list_with_no_state_file_makes_none(self) -> None:
+        blocklist_store.forget("crowdsec", directory=self.directory)
+
+        self.assertFalse((self.directory / "state.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

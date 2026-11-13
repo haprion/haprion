@@ -217,8 +217,11 @@ jobs:
               commit --quiet --all --message "${subject}"
           auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
           remote="https://github.com/${REPOSITORY}.git"
+          # The subject is part of the proposal: the same tree found to be a
+          # security fix tonight is pushed again with the new subject.
           if git -c http.extraheader="${auth}" fetch --quiet "${remote}" "${BRANCH}" 2>/dev/null \
-              && [[ "$(git rev-parse 'FETCH_HEAD^{tree}')" == "$(git rev-parse 'HEAD^{tree}')" ]]; then
+              && [[ "$(git rev-parse 'FETCH_HEAD^{tree}')" == "$(git rev-parse 'HEAD^{tree}')" ]] \
+              && [[ "$(git log -1 --format=%s FETCH_HEAD)" == "${subject}" ]]; then
             echo "the branch already holds this proposal"
             echo "unchanged=true" >> "${GITHUB_OUTPUT}"
           else

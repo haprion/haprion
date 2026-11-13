@@ -698,6 +698,17 @@ class TheWorkflowsSayWhatThePlanReads(unittest.TestCase):
         suffix = PLAN.WAF_SECURITY_SUBJECT.removeprefix(PLAN.WAF_SUBJECT)
         self.assertIn(f'subject="${{subject}}{suffix}"', watch)
 
+    def test_a_changed_security_subject_is_pushed_though_the_tree_is_the_same(self) -> None:
+        watch = (self.workflows / "upstream-watch.yml").read_text(encoding="utf-8")
+
+        # The subject is what tools/release-plan reads as "security" (B506): the
+        # branch is left alone only when its tree and its subject are both the new ones.
+        self.assertIn(
+            "&& [[ \"$(git rev-parse 'FETCH_HEAD^{tree}')\" == \"$(git rev-parse 'HEAD^{tree}')\" ]]",
+            watch,
+        )
+        self.assertIn('&& [[ "$(git log -1 --format=%s FETCH_HEAD)" == "${subject}" ]]', watch)
+
     def test_the_version_proposal_is_install_tested_as_a_whole_release(self) -> None:
         release = (self.workflows / "auto-release.yml").read_text(encoding="utf-8")
         ci = (self.workflows / "ci.yml").read_text(encoding="utf-8")

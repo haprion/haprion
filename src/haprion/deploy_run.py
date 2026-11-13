@@ -829,7 +829,12 @@ def _certificate_preflight(
         return DeployRun(exit_codes.BLOCKED, report)
 
     for name, what in unverified_certificates(observation, preflight.target):
-        warning = f"{name} did not report its {what}; they were not checked"
+        warning = (
+            f"{name} runs a node package without blocklists; update it, or a configuration "
+            "that names a blocklist is refused there"
+            if what == "blocklists"
+            else f"{name} did not report its {what}; they were not checked"
+        )
         writer.write(f"WARNING: {warning}\n")
         report.warnings.append(Message(code="certificates_unverified", message=warning, node=name))
     return None

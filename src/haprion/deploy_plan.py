@@ -287,8 +287,6 @@ class CertificateTarget:
             return None
         if self.authorities and node.authorities is None:
             return None
-        if self.blocklists and node.blocklists is None:
-            return None
         carried = dict(node.certificates)
         chains = dict(node.chains)
         held = dict(node.authorities or ())
@@ -296,7 +294,17 @@ class CertificateTarget:
         return (
             all(ref.matches(carried.get(ref.id), chains.get(ref.id)) for ref in self.certificates)
             and all(held.get(ref.id) == ref.fingerprint for ref in self.authorities)
-            and all(lists.get(ref.id) == ref.fingerprint for ref in self.blocklists)
+            and (
+                #
+                # A node package from before the lists cannot carry them, and
+                # a push could not change that: it is judged on what it can
+                # carry, and told to update (`unverified_certificates`).
+                # Asking for them made every certificate deploy report it as
+                # failed (review 2026-11-13, BL13).
+                #
+                node.blocklists is None
+                or all(lists.get(ref.id) == ref.fingerprint for ref in self.blocklists)
+            )
         )
 
     def skip_reason(self, node: NodeObservation) -> str:

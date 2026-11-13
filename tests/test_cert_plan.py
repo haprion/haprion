@@ -33,6 +33,7 @@ from haprion.deploy_plan import (
     Outcome,
     VipState,
     certificate_gaps,
+    unverified_certificates,
 )
 from tests.plan_harness import drive, pair
 
@@ -438,8 +439,21 @@ class TheClustersBlocklistsCount(unittest.TestCase):
         self.assertIs(self.TARGET.is_current(self.observed((("crowdsec", UNRELATED),))), False)
         self.assertIs(self.TARGET.is_current(self.observed(())), False)
 
-    def test_a_node_that_says_nothing_about_blocklists_is_unknown(self) -> None:
-        self.assertIsNone(self.TARGET.is_current(self.observed(None)))
+    def test_a_node_that_says_nothing_about_blocklists_is_judged_on_its_certificates(self) -> None:
+        # An older node package cannot carry them; asking for them would fail every deploy.
+        self.assertIs(self.TARGET.is_current(self.observed(None)), True)
+        stale = NodeObservation(
+            name="node-a", status_ok=True, certificates=(("example-net", UNRELATED),)
+        )
+        self.assertIs(self.TARGET.is_current(stale), False)
+
+    def test_such_a_node_is_said_to_need_its_package_updated(self) -> None:
+        observation = ClusterObservation(
+            nodes=(self.observed(None),), vip_state=VipState.SINGLE_OWNER
+        )
+        self.assertEqual(
+            unverified_certificates(observation, self.TARGET), (("node-a", "blocklists"),)
+        )
 
     def test_a_cluster_without_blocklists_does_not_ask(self) -> None:
         self.assertIs(ONE.is_current(self.observed(None)), True)

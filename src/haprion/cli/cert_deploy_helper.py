@@ -128,7 +128,15 @@ def trigger_node(
     # for, and the node's wrapper refuses a request without IDs (lab 26-10-26).
     #
     requests.extend(_batches(REQUEST_VERB, [ref.id for ref in target.certificates]))
-    requests.extend(_batches(BLOCKLIST_VERB, [ref.id for ref in target.blocklists]))
+    if target.blocklists and node.status_ok and node.blocklists is None:
+        #
+        # A node package from before the lists answers the verb with "unknown
+        # request", which failed every certificate deploy to it (review
+        # 2026-11-13, BL13). Said once, as the cause.
+        #
+        writer.write(f"WARNING: {node.name} runs a node package without blocklists; update it\n")
+    else:
+        requests.extend(_batches(BLOCKLIST_VERB, [ref.id for ref in target.blocklists]))
     for request in requests:
         code = run_trigger(
             node_ssh.ssh_argv(identity.key, identity.user, node.mgmt_host, request),

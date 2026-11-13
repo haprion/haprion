@@ -348,7 +348,15 @@ class TriggerTests(unittest.TestCase):
 class BatchTests(unittest.TestCase):
     """E02: a cluster with more files than the node takes in one request is asked in batches."""
 
-    def ask(self, certificates: int, authorities: int = 0, blocklists: int = 0) -> list[str]:
+    def ask(
+        self,
+        certificates: int,
+        authorities: int = 0,
+        blocklists: int = 0,
+        *,
+        carries: tuple[tuple[str, str], ...] | None = (),
+        said: io.StringIO | None = None,
+    ) -> list[str]:
         from haprion.deploy_plan import CertificateRef, CertificateTarget
 
         def refs(prefix: str, count: int) -> tuple[CertificateRef, ...]:
@@ -381,13 +389,14 @@ class BatchTests(unittest.TestCase):
             owns_vip=True,
             release_hash=None,
             error_code=None,
+            blocklists=carries,
         )
         with mock.patch.object(node_ssh, "run_bounded", fake_run):
             code = cert_deploy_helper.trigger_node(
                 node,
                 DeployIdentity(user="svc-app", key=Path("/root/.ssh/id_ed25519")),
                 target,
-                io.StringIO(),
+                said or io.StringIO(),
             )
         self.assertEqual(code, 0)
         return sent
@@ -421,6 +430,14 @@ class BatchTests(unittest.TestCase):
             [request.split()[0] for request in sent],
             ["ca-pull", "cert-pull", "blocklist-pull", "blocklist-pull"],
         )
+
+    def test_a_node_package_without_blocklists_is_not_asked_for_them_and_is_told_so(self) -> None:
+        said = io.StringIO()
+
+        sent = self.ask(1, blocklists=2, carries=None, said=said)
+
+        self.assertEqual(sent, ["cert-pull site01"])
+        self.assertIn("node-a runs a node package without blocklists; update it", said.getvalue())
 
     def test_a_cluster_with_only_blocklists_asks_for_them_alone(self) -> None:
         self.assertEqual(self.ask(0, blocklists=1), ["blocklist-pull list01"])

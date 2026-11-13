@@ -6,8 +6,12 @@ Wants=network-online.target
 
 # Fetches the blocklists that are due, writes each cluster's files under the
 # certificate root and deploys them with haprion-cert-deploy, as the
-# certificates go (B500). As root and sandboxed like certbot's renewal, which
-# deploys to the same nodes the same way.
+# certificates go (B500). As root, and sandboxed to what a pass writes: the
+# certificate directories, the last good lists, the locks and, through
+# haprion-cert-deploy, the nodes over SSH with the key under /root/.ssh, which
+# is read and never written here (ProtectHome=read-only).
+#
+# The runtime policy's roots are filled in below as for the worker's unit.
 [Service]
 Type=oneshot
 ExecStart=/opt/haprion/current/bin/haprion-blocklist-refresh
@@ -15,4 +19,33 @@ ExecStart=/opt/haprion/current/bin/haprion-blocklist-refresh
 # deploy it starts afterwards, haprion-cert-deploy, runs in this unit too.
 MemoryMax=512M
 MemorySwapMax=0
+# A fetch has 30 s in all and a node's deploy a minute of silence at most, so
+# a pass is minutes. A source or a node that stalls past this is ended, and the
+# next timer starts a pass; without it a oneshot unit has no start timeout and
+# one stalled pass holds every list and every deploy for good.
+TimeoutStartSec=20min
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/haprion/blocklists /run @POLICY_PATHS@
+ProtectHome=read-only
 PrivateTmp=true
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@obsolete
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Root writes files owned by each cluster's certificate account, in directories
+# that account owns.
+CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_FSETID CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH

@@ -71,5 +71,31 @@ class EachUnitHasItsMeasuredLimit(unittest.TestCase):
                 self.assertGreaterEqual(int(limit.removesuffix("M")), 2 * measured)
 
 
+class TheRefreshPassIsBoundedAndSandboxed(unittest.TestCase):
+    """The timer's pass fetches text from the internet as root (review 2026-11-13, BL03, BL15)."""
+
+    def setUp(self) -> None:
+        self.text = (EXAMPLES / "haprion-blocklist-refresh.service.example").read_text()
+
+    def test_a_stalled_pass_is_ended(self) -> None:
+        # A oneshot unit has no start timeout of its own.
+        self.assertEqual(len(directives(self.text, "TimeoutStartSec")), 1)
+
+    def test_it_is_sandboxed_to_what_a_pass_writes(self) -> None:
+        for key, value in {
+            "NoNewPrivileges": "yes",
+            "ProtectSystem": "strict",
+            "ProtectHome": "read-only",
+            "RestrictAddressFamilies": "AF_UNIX AF_INET AF_INET6",
+            "ProtectKernelTunables": "yes",
+            "RestrictNamespaces": "yes",
+        }.items():
+            with self.subTest(key=key):
+                self.assertEqual(directives(self.text, key), [value])
+        writable = directives(self.text, "ReadWritePaths")[0].split()
+        self.assertIn("/var/lib/haprion/blocklists", writable)
+        self.assertIn("@POLICY_PATHS@", writable)
+
+
 if __name__ == "__main__":
     unittest.main()

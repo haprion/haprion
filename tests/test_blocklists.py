@@ -7,6 +7,7 @@ import ipaddress
 import random
 import ssl
 import threading
+import time
 import tracemalloc
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -257,6 +258,7 @@ class Source:
         source = self
         self.answer: tuple[int, dict[str, str], bytes] = (200, {}, RAW)
         self.seen: list[dict[str, str]] = []
+        self.drip = False
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *_: Any) -> None:
@@ -264,6 +266,17 @@ class Source:
 
             def do_GET(self) -> None:
                 source.seen.append(dict(self.headers.items()))
+                if source.drip:
+                    # A header sent a byte at a time, each well inside the socket's timeout.
+                    try:
+                        self.wfile.write(b"HTTP/1.1 200 OK\r\nX-Slow: ")
+                        for _ in range(200):
+                            time.sleep(0.1)
+                            self.wfile.write(b"x")
+                            self.wfile.flush()
+                    except OSError:
+                        pass  # the client gave up, as it should
+                    return
                 status, headers, body = source.answer
                 self.send_response(status)
                 for key, value in headers.items():
@@ -336,6 +349,14 @@ class TheFetchIsHttpsAndNothingElse(unittest.TestCase):
         with self.assertRaises(BlocklistError) as caught:
             blocklists.fetch(self._item(), context=self.context)
         self.assertEqual(caught.exception.code, "too_large")
+
+    def test_an_answer_that_drips_its_header_ends_at_the_total_limit(self) -> None:
+        self.source.drip = True
+        started = time.monotonic()
+        with self.assertRaises(BlocklistError) as caught:
+            blocklists.fetch(self._item(), context=self.context, timeout=1)
+        self.assertEqual(caught.exception.code, "unreachable")
+        self.assertLess(time.monotonic() - started, 2.5)
 
 
 if __name__ == "__main__":

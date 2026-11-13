@@ -29,6 +29,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from haprion import address_ranges, http_answer
 
@@ -398,6 +399,45 @@ def _headers(item: Definition, secret: str) -> dict[str, str]:
     return headers
 
 
+def _bounded(deadline: float, timeout: float) -> type[ssl.SSLSocket]:
+    """A TLS socket class whose every read, write and handshake step ends by `deadline`.
+
+    A socket's timeout bounds one call, and a server that sends the status line
+    and a header a byte at a time never lets one run out (review 2026-11-13,
+    BL03). The context makes its sockets of this class, so the whole exchange
+    from the handshake to the last byte has the one limit.
+    """
+
+    def arm(sock: ssl.SSLSocket) -> None:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise TimeoutError("the answer took longer than it may")
+        sock.settimeout(min(left, timeout))
+
+    class Bounded(ssl.SSLSocket):
+        def do_handshake(self, *args: Any, **kwargs: Any) -> None:
+            arm(self)
+            super().do_handshake(*args, **kwargs)
+
+        def recv(self, *args: Any, **kwargs: Any) -> bytes:
+            arm(self)
+            return super().recv(*args, **kwargs)
+
+        def recv_into(self, *args: Any, **kwargs: Any) -> int:
+            arm(self)
+            return super().recv_into(*args, **kwargs)
+
+        def send(self, *args: Any, **kwargs: Any) -> int:
+            arm(self)
+            return super().send(*args, **kwargs)
+
+        def sendall(self, *args: Any, **kwargs: Any) -> None:
+            arm(self)
+            super().sendall(*args, **kwargs)
+
+    return Bounded
+
+
 def fetch(
     item: Definition,
     secret: str = "",
@@ -412,13 +452,15 @@ def fetch(
     if any(character in secret for character in "\r\n") or len(secret) > SECRET_MAX:
         raise BlocklistError("no_secret", "the list's password or token cannot be sent")
     url = checked_url(item.url)
+    deadline = time.monotonic() + timeout
+    context = context or ssl.create_default_context()
+    context.sslsocket_class = _bounded(deadline, timeout)
     opener = urllib.request.build_opener(
         urllib.request.ProxyHandler({}),
-        urllib.request.HTTPSHandler(context=context or ssl.create_default_context()),
+        urllib.request.HTTPSHandler(context=context),
         http_answer.NoRedirect(),
     )
     request = urllib.request.Request(url, headers=_headers(item, secret))  # noqa: S310 - https only
-    deadline = time.monotonic() + timeout
     host = urllib.parse.urlsplit(url).hostname
     try:
         with opener.open(request, timeout=timeout) as response:
@@ -436,6 +478,8 @@ def fetch(
         raise BlocklistError("unreachable", f"{host} took longer than {timeout:g} s") from exc
     except http_answer.BROKEN as exc:
         reason = getattr(exc, "reason", exc)
+        if isinstance(reason, TimeoutError):
+            raise BlocklistError("unreachable", f"{host} took longer than {timeout:g} s") from exc
         if isinstance(reason, ssl.SSLError):
             raise BlocklistError("tls", f"{host}: TLS failed: {reason.reason or reason}") from exc
         text = reason if isinstance(reason, str) else http_answer.said(reason)

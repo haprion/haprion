@@ -91,6 +91,9 @@ ensure_worker_directories() {
     ensure_dir /etc/haprion/dns-profiles root:root 700
     # The blocklists' definitions (B500), written by the apply helper.
     ensure_dir /etc/haprion/blocklists root:root 700
+    # The timer's last good lists and state (B500), the one place its sandbox
+    # writes outside the policy's roots.
+    ensure_dir /var/lib/haprion/blocklists root:root 755
     #
     # Where the helpers behind sockets keep their answers for recovery (B367):
     # root's, read by the worker. Not in the worker's ReadWritePaths - it only
@@ -340,6 +343,7 @@ render_example() {
         -e "s|OIDC_USER|${OIDC_USER}|g" \
         -e "s|COLLECTOR_USER|${COLLECTOR_USER}|g" \
         -e "s|DUMP_DIR|${DUMP_DIR}|g" \
+        -e "s|@POLICY_PATHS@|${policy_paths:-}|g" \
         "$1"
 }
 

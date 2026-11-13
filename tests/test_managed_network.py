@@ -103,6 +103,30 @@ class Http3IsTheVipsChoice(unittest.TestCase):
             self.load("vips:\n  web:\n    address: 192.0.2.20\n    http3: yes please\n")
 
 
+class StrictSniIsTheVipsChoice(unittest.TestCase):
+    """B502: `strict_sni: true` on a VIP, written back only where on."""
+
+    def load(self, text: str) -> object:
+        return load_document(
+            text.encode(), ownership_vip="192.0.2.20", location="managed/network.yaml"
+        )
+
+    def test_it_is_read_and_written_back_only_where_on(self) -> None:
+        network = self.load(
+            "vips:\n  web:\n    address: 192.0.2.20\n    strict_sni: true\n"
+            "  mail:\n    address: 192.0.2.21\ndefault_vip: web\n"
+        )
+        written = dump_document(network).decode()  # type: ignore[arg-type]
+
+        self.assertIn("strict_sni: true", written)
+        self.assertEqual(written.count("strict_sni"), 1)
+
+    def test_it_is_true_or_false(self) -> None:
+        with self.assertRaises(ConfigError) as raised:
+            self.load("vips:\n  web:\n    address: 192.0.2.20\n    strict_sni: yes please\n")
+        self.assertIn("strict_sni", str(raised.exception))
+
+
 #
 # Written as numbers: the secret scanner refuses a dotted address outside the
 # documentation ranges, and these four are what the test is about.

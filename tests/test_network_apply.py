@@ -109,6 +109,22 @@ class TheNetworkFromAFile(NetworkPublishFixture):
             self.assertEqual((self.repo / "managed/network.yaml").read_text(), CHANGED)
             self.assertEqual(int(git(self.repo, "rev-list", "--count", "HEAD")), int(before) + 1)
 
+    def test_strict_sni_in_the_file_is_stored_and_reported_back(self) -> None:
+        wanted = NETWORK.replace(
+            "    source: 192.0.2.25\n", "    source: 192.0.2.25\n    strict_sni: true\n"
+        )
+        with tempfile.TemporaryDirectory() as raw, tempfile.TemporaryDirectory() as files:
+            policy = self.runtime(Path(raw))
+            self.published(policy)
+            path = Path(files, "network.yaml")
+            path.write_text(wanted)
+
+            code, out, _ = self.run_apply(policy, path, "--json")
+
+            answer: dict[str, Any] = assert_contract("haprion-network-apply", out)
+            self.assertEqual((code, answer["result"]["changed"]), (0, True))
+            self.assertEqual((self.repo / "managed/network.yaml").read_text(), wanted)
+
     def test_the_same_network_written_another_way_is_no_change(self) -> None:
         """K10: the page stores what it sends as JSON; a playbook's YAML is not a new version."""
 

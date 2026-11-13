@@ -17,6 +17,7 @@ Skipped where HAProxy is missing or built without QUIC.
 from __future__ import annotations
 
 import shutil
+import socket
 import ssl
 import subprocess
 import tempfile
@@ -72,6 +73,11 @@ frontend client
     default_backend h3
 backend h3
     server site quic4@127.0.0.1:{site} ssl verify none alpn h3 sni req.hdr(host)
+frontend client_other
+    bind 127.0.0.1:{other}
+    default_backend h3_other
+backend h3_other
+    server site quic4@127.0.0.1:{site} ssl verify none alpn h3 sni str(nobody.example.com)
 """
 
 
@@ -84,12 +90,17 @@ HAPROXY = shutil.which("haproxy")
 
 
 @unittest.skipUnless(HAPROXY and _has_quic(HAPROXY), "haproxy with QUIC is not installed here")
-class AVipServesHttp3BesideTcp(unittest.TestCase):
+class _Rig(unittest.TestCase):
+    """One generated frontend and the HTTP/3 client beside it; the VIP's options are the subclass's."""
+
+    http3: bool = True
+    strict_sni: bool = False
     directory: tempfile.TemporaryDirectory[str]
     servers: list[ThreadingHTTPServer]
     running: list[subprocess.Popen[bytes]]
     site: int
     client: int
+    other: int
 
     @classmethod
     @spawned.retry_on_taken_port
@@ -115,7 +126,11 @@ class AVipServesHttp3BesideTcp(unittest.TestCase):
                     ).encode(),
                 ),
             ],
-            vips={"main": Vip(name="main", address="127.0.0.1", http3=True)},
+            vips={
+                "main": Vip(
+                    name="main", address="127.0.0.1", http3=cls.http3, strict_sni=cls.strict_sni
+                )
+            },
             default_vip="main",
             ports={"http": free_port(), "https": cls.site},
             certificates=("site",),
@@ -127,8 +142,10 @@ class AVipServesHttp3BesideTcp(unittest.TestCase):
         cls.running = [
             start_haproxy(HAPROXY, write_release(release, layer, certificates), cls.site)
         ]
-        cls.client = free_port()
-        (root / "client.cfg").write_text(CLIENT.format(port=cls.client, site=cls.site))
+        cls.client, cls.other = free_port(), free_port()
+        (root / "client.cfg").write_text(
+            CLIENT.format(port=cls.client, other=cls.other, site=cls.site)
+        )
         try:
             cls.running.append(start_haproxy(HAPROXY, ["-f", str(root / "client.cfg")], cls.client))
         except BaseException:
@@ -147,8 +164,10 @@ class AVipServesHttp3BesideTcp(unittest.TestCase):
             server.server_close()
         cls.directory.cleanup()
 
-    def over_http3(self, host: str) -> tuple[int, str]:
-        connection = HTTPConnection("127.0.0.1", self.client, timeout=10)
+    def over_http3(self, host: str, port: int | None = None) -> tuple[int, str]:
+        """The answer for `host`; through `port`, the client that always names an unknown server name."""
+
+        connection = HTTPConnection("127.0.0.1", port or self.client, timeout=10)
         try:
             connection.putrequest("GET", "/", skip_host=True, skip_accept_encoding=True)
             connection.putheader("Host", host)
@@ -158,6 +177,8 @@ class AVipServesHttp3BesideTcp(unittest.TestCase):
         finally:
             connection.close()
 
+
+class AVipServesHttp3BesideTcp(_Rig):
     def test_the_site_answers_over_quic(self) -> None:
         self.assertEqual(self.over_http3("open.example.com"), (200, "open /"))
 
@@ -180,6 +201,53 @@ class AVipServesHttp3BesideTcp(unittest.TestCase):
                     self.assertEqual(response.getheader("alt-svc"), f'h3=":{self.site}"; ma=86400')
         finally:
             connection.close()
+
+
+class AVipWithoutItAnswersAnUnknownNameOverQuic(_Rig):
+    """The control for the one above: the same client, the same name, and it is answered."""
+
+    def test_the_default_certificate_is_served(self) -> None:
+        self.assertEqual(self.over_http3("open.example.com", self.other), (200, "open /"))
+
+
+class AStrictSniVipRefusesAClientThatNamesNothingItHolds(_Rig):
+    """B502: over TCP and over QUIC alike, a name no certificate covers gets no answer."""
+
+    strict_sni = True
+
+    def over_tcp(self, server_name: str | None) -> int:
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        connection = HTTPSConnection("127.0.0.1", self.site, timeout=5, context=context)
+        connection.sock = context.wrap_socket(
+            socket.create_connection(("127.0.0.1", self.site), timeout=5),
+            server_hostname=server_name,
+        )
+        try:
+            connection.putrequest("GET", "/", skip_host=True, skip_accept_encoding=True)
+            connection.putheader("Host", "open.example.com")
+            connection.endheaders()
+            response = connection.getresponse()
+            response.read()
+            return response.status
+        finally:
+            connection.close()
+
+    def test_the_covered_name_is_answered_over_tcp(self) -> None:
+        self.assertEqual(self.over_tcp("open.example.com"), 200)
+
+    def test_no_name_and_an_unknown_name_get_an_alert_over_tcp(self) -> None:
+        for name in (None, "nobody.example.com"):
+            with self.subTest(name=name), self.assertRaises(ssl.SSLError) as raised:
+                self.over_tcp(name)
+            self.assertIn("UNRECOGNIZED_NAME", str(raised.exception))
+
+    def test_the_covered_name_is_answered_over_quic(self) -> None:
+        self.assertEqual(self.over_http3("open.example.com"), (200, "open /"))
+
+    def test_an_unknown_name_is_not_answered_over_quic(self) -> None:
+        self.assertEqual(self.over_http3("open.example.com", self.other)[0], 503)
 
 
 if __name__ == "__main__":

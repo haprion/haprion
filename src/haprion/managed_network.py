@@ -74,6 +74,7 @@ def dump_document(network: Network) -> bytes:
                 #
                 **({"tls": vip.tls_policy} if vip.tls_policy else {}),
                 **({"http3": True} if vip.http3 else {}),
+                **({"strict_sni": True} if vip.strict_sni else {}),
             }
             for name, vip in sorted(network.vips.items())
         },

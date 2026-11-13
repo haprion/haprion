@@ -940,6 +940,40 @@ class TheListenerAcceptsWhatTheClusterSaysItAccepts(unittest.TestCase):
         self.assertNotIn("ciphers", frontends)
 
 
+class StrictSniIsTheVips(unittest.TestCase):
+    """B502: `strict-sni` on every TLS bind of a VIP that asks, nothing otherwise."""
+
+    def frontends(self, **vip: Any) -> str:
+        return generate(
+            [load_proxy("app", HTTPS)],
+            vips={"main": Vip(name="main", address="192.0.2.20", **vip)},
+            default_vip="main",
+            certificates=CERTIFICATES,
+        ).configuration["1000-frontends.cfg"]
+
+    def test_the_tls_bind_carries_it_when_on(self) -> None:
+        text = self.frontends(strict_sni=True)
+        binds = [line for line in text.splitlines() if "ssl crt-list" in line]
+
+        self.assertTrue(binds)
+        for line in binds:
+            self.assertIn(" alpn h2,http/1.1 strict-sni guid-prefix ", line)
+
+    def test_the_quic_bind_carries_it_too(self) -> None:
+        text = self.frontends(strict_sni=True, http3=True)
+        binds = [line for line in text.splitlines() if "ssl crt-list" in line]
+
+        self.assertEqual(len(binds), 2)
+        for line in binds:
+            self.assertIn(" strict-sni", line)
+
+    def test_off_writes_what_it_always_wrote(self) -> None:
+        text = self.frontends(http3=True)
+
+        self.assertNotIn("strict-sni", text)
+        self.assertEqual(text, self.frontends(strict_sni=False, http3=True))
+
+
 class WhoTheBrakeHoldsResponsible(unittest.TestCase):
     """Which address is counted, which is the whole question behind a proxy."""
 

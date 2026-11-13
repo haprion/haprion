@@ -349,6 +349,14 @@ class Vip:
     that stops at 1.2 is refused beside it.
     """
 
+    strict_sni: bool = False
+    """Refuse a TLS client that names no certificate this VIP holds (B502).
+
+    HAProxy's `strict-sni` on every TLS bind of the address: a client that
+    sends no name, or one no certificate covers, gets a TLS alert instead of
+    the default certificate. Off, the bind lines are what they always were.
+    """
+
 
 @dataclass(frozen=True, slots=True)
 class UnknownHost:
@@ -880,11 +888,14 @@ def _vips(raw: Mapping[str, Any], vip: str, location: str) -> tuple[Mapping[str,
         if not isinstance(name, str) or not NAME.fullmatch(name):
             raise ConfigError(f"{where} is not a usable VIP name")
         entry = _mapping(value, where)
-        _only_keys(entry, {"address", "source", "tls", "http3"}, where)
+        _only_keys(entry, {"address", "source", "tls", "http3", "strict_sni"}, where)
         source = entry.get("source")
         http3 = entry.get("http3", False)
         if type(http3) is not bool:
             raise ConfigError(f"{where}.http3 must be true or false")
+        strict_sni = entry.get("strict_sni", False)
+        if type(strict_sni) is not bool:
+            raise ConfigError(f"{where}.strict_sni must be true or false")
         policy = _tls_policy(entry.get("tls"), f"{where}.tls")
         if http3 and policy == "tls12only":
             raise ConfigError(
@@ -896,6 +907,7 @@ def _vips(raw: Mapping[str, Any], vip: str, location: str) -> tuple[Mapping[str,
             source=None if source is None else _served_address(source, f"{where}.source"),
             tls_policy=policy,
             http3=http3,
+            strict_sni=strict_sni,
         )
 
     addresses = [entry.address for entry in vips.values()]

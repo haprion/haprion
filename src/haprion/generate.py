@@ -2456,7 +2456,13 @@ def _tls(members: Sequence[tuple[Vip, Proxy, str]], protocol: str, listing: str)
     #
     vip = members[0][0]
     policy = "" if vip.tls_policy is None else TLS_POLICIES[vip.tls_policy]
-    return f" ssl crt-list ../{CRT_LIST_TARGET}/{listing} alpn {ALPN}{policy}"
+    return f" ssl crt-list ../{CRT_LIST_TARGET}/{listing} alpn {ALPN}{policy}{_strict_sni(vip)}"
+
+
+def _strict_sni(vip: Vip) -> str:
+    """` strict-sni` where the VIP asks for it (B502); the same word on every TLS bind of it."""
+
+    return " strict-sni" if vip.strict_sni else ""
 
 
 #
@@ -2488,7 +2494,7 @@ def _quic(
     port = ports[protocol]
     return [
         f"    bind {family}@{vip.address}:{port} ssl crt-list ../{CRT_LIST_TARGET}/{listing}"
-        f" alpn h3{policy} guid-prefix {listener_guid_prefix(identity + '-quic')}",
+        f" alpn h3{policy}{_strict_sni(vip)} guid-prefix {listener_guid_prefix(identity + '-quic')}",
         f'    http-after-response set-header alt-svc "h3=\\":{port}\\"; ma={ALT_SVC_MAX_AGE}"',
     ]
 

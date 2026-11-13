@@ -48,6 +48,10 @@
         "http3": {
           "description": "Whether https is also served over QUIC on this address (B280). Absent from a helper from before it was reported, which means no.",
           "type": "boolean"
+        },
+        "strict_sni": {
+          "description": "Whether a TLS client naming no certificate of this address is refused (B502). Absent from a helper from before it was reported, which means no.",
+          "type": "boolean"
         }
       },
       "additionalProperties": false

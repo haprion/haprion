@@ -106,6 +106,7 @@ class TheResultSaysWhereItCameFrom(unittest.TestCase):
                     "source": "198.51.100.25",
                     "tls": None,
                     "http3": False,
+                    "strict_sni": False,
                 }
             ],
         )
@@ -154,6 +155,7 @@ class TheResultSaysWhereItCameFrom(unittest.TestCase):
                     "source": None,
                     "tls": None,
                     "http3": False,
+                    "strict_sni": False,
                 }
             ],
         )

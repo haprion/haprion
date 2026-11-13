@@ -24,6 +24,7 @@ names used below, that is a bug in the software, not in this guide.
   - [Addresses, and what to call them](#addresses-and-what-to-call-them)
   - [Ports the cluster takes itself](#ports-the-cluster-takes-itself)
   - [HTTP/3](#http3)
+  - [Strict SNI](#strict-sni)
   - [DNS objects](#dns-objects)
   - [Syslog objects](#syslog-objects)
 - [Accounts and signing in](#accounts-and-signing-in)
@@ -770,6 +771,15 @@ Limits:
 Outside the interface, UDP to the https port must be open to the VIP in the nodes' firewall. For clients
 outside, the outer firewall must forward it too. Until it does, nothing breaks: clients try QUIC, get no
 answer, and stay on TCP.
+
+### Strict SNI
+
+On *Network*, a VIP's row in edit mode has *Strict SNI*, off by default. On, a TLS client that sends no
+server name, or one that no certificate on the VIP covers, is refused with a TLS alert instead of being
+given a certificate. This holds for HTTP/3 as well as TCP.
+
+A client that connects to the VIP's IP address, such as a script or a monitor, sends no name and stops
+working. Point it at a hostname the VIP serves before turning this on.
 
 ### DNS objects
 
@@ -6510,12 +6520,14 @@ out behaves exactly as the example above.
       status: 404
 ```
 
-**More about `vips`.** Besides `address` and `source`, a VIP takes two optional settings:
+**More about `vips`.** Besides `address` and `source`, a VIP takes three optional settings:
 
 - `tls` is one of three policies: `intermediate` (TLS 1.2 and 1.3), `modern` (TLS 1.3 only) or
   `tls12only` (TLS 1.2 only). `tls12only` is not a Mozilla profile. It exists for one client that breaks
   on TLS 1.3, and it turns 1.3 off to get there.
 - `http3: true` turns on HTTP/3 for the VIP. It needs TLS 1.3, so it is refused together with `tls12only`.
+- `strict_sni: true` refuses a TLS client that sends no server name, or one no certificate on the VIP covers.
+  A client that connects to the IP address stops working. Off by default.
 
 Two VIP names may not share one address.
 

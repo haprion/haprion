@@ -47,7 +47,7 @@ class ATest(unittest.TestCase):
 
         self.assertEqual((tested.answer, tested.entries, tested.skipped), ("fetched", 3, 1))
         self.assertEqual(tested.clusters, ())
-        self.assertEqual(tested.sentence(), "3 addresses · 1 lines skipped")
+        self.assertEqual(tested.sentence(), "3 addresses · 1 line skipped or cut back")
 
     def test_an_exception_counts_in_each_cluster_with_its_own_groups(self) -> None:
         item = _item(excepts=("198.51.100.7", "partners"))
@@ -61,7 +61,7 @@ class ATest(unittest.TestCase):
         )
         self.assertEqual(
             tested.sentence(),
-            "3 addresses · 1 lines skipped · excepted 2 on alpha, 1 on beta "
+            "3 addresses · 1 line skipped or cut back · excepted 2 on alpha, 1 on beta "
             "(198.51.100.7, partners) · partners is not a group on beta",
         )
 
@@ -71,7 +71,8 @@ class ATest(unittest.TestCase):
         tested = blocklist_check.test(item, "", {"alpha": {}, "beta": {}}, fetch=self.fetch)
 
         self.assertEqual(
-            tested.sentence(), "3 addresses · 1 lines skipped · 1 excepted (198.51.100.7)"
+            tested.sentence(),
+            "3 addresses · 1 line skipped or cut back · 1 excepted (198.51.100.7)",
         )
 
     def test_a_fetch_that_fails_is_the_answer_not_a_refusal(self) -> None:

@@ -1697,6 +1697,7 @@ changes without a publish or a deploy: the nodes swap it in place.
 - *Name* is the group's name under *Denied — groups*: lowercase letters, digits and `-`, at most 40.
 - *URL* is where the list is, over https. The list has one address or network per line; text after `#`
   or `;` is skipped. CrowdSec's raw IP list, Spamhaus DROP and FireHOL's lists read as they are.
+  FireHOL's `level1` holds private networks on purpose; see *Private and very broad entries* below.
 - *Authorization* is *None*, *Basic* (a *Username* and a *Password*) or *Bearer* (a *Token*). The password
   or token is sealed when it is saved and is never shown again; leave it empty to keep the one stored.
   It belongs to the address it was typed for, so a new *URL*, kind of authorization or *Username* needs it
@@ -1708,9 +1709,16 @@ changes without a publish or a deploy: the nodes swap it in place.
 *Except* holds at most 256 entries.
 
 *Test* fetches the list as the form holds it and says how many addresses it holds, how many lines it
-skipped and how many *Except* takes out. Nothing is kept. *Save* stores the list and applies it, and the first
+skipped or cut back and how many *Except* takes out. Nothing is kept. *Save* stores the list and applies it, and the first
 fetch follows right away. So does a save that changes the URL, the authorization, the username or the
 password or token; a changed *Except*, interval or description does not fetch.
+
+**Private and very broad entries.** A list never refuses the networks a company runs on. Private
+networks (10/8, 172.16/12, 192.168/16 and IPv6 fc00::/7), loopback (127/8, ::1), link-local
+(169.254/16, fe80::/10) and carrier-grade NAT (100.64/10) are always taken out of a
+list: an entry that overlaps one keeps only its public part. An entry shorter than /8 (IPv4) or /16
+(IPv6) is skipped, so one broken line cannot close half the internet. *Test* and the *Addresses* column
+on *Settings → Blocklists* count these with the lines that were not addresses.
 
 **Using one.** A new object has every blocklist chosen under *Denied — groups*. *Denied — mode* decides
 what happens: *log only* records the match and serves the request, *deny* refuses it. For the objects
@@ -1740,8 +1748,8 @@ fetched, and the clusters whose *Except* keeps it off.
 **Limits.** A list is at most 4 MiB and 100 000 addresses; a larger one is refused as a failed fetch. The
 *Network* page shows each list among the groups, with its size and when it was fetched.
 
-**Removing one** is refused while an object names it under *Denied*: take it out there first. The list's
-file then leaves every cluster.
+**Removing one** is refused while an object, a saved change or a draft names it under *Denied*: take it
+out there first. The list's file then leaves every cluster; the nodes keep their copy. If a cluster could not be read, the removal waits until it has been.
 
 **From the terminal.** `haprion-blocklists apply <file>` stores and applies the lists in a file, as the
 form does, and `haprion-blocklists remove <name>` removes one. A file that changes a list's URL,

@@ -528,6 +528,8 @@ def rows(
             addresses = ""
         else:
             addresses = _figure(state.entries)
+            if state.skipped:
+                addresses += f" · {_figure(state.skipped)} skipped"
             if item.excepts:
                 addresses += f" · {len(item.excepts)} excepted"
         fetched, tone, title = _fetched(state)

@@ -245,7 +245,7 @@ class TheCardRows(unittest.TestCase):
         row = self.rows(state_row(), excepts=["192.0.2.10", "partner-sites", "198.51.100.0/24"])
         self.assertEqual(row.source, "lists.example.com")
         self.assertEqual(row.every, "24 h")
-        self.assertEqual(row.addresses, "14 812 · 3 excepted")
+        self.assertEqual(row.addresses, "14 812 · 2 skipped · 3 excepted")
         self.assertEqual(row.fetched_tone, "")
         self.assertEqual(row.href, "/settings/blocklists/community/edit")
 
@@ -518,7 +518,7 @@ class SavingABlocklist(BlocklistRouteTestCase):
         self.assertEqual(asked.call_args_list[0].kwargs["secret"], GUARD)
         self.assertEqual(asked.call_args_list[0].kwargs["authorization"], "basic")
         self.assertEqual(drawn.status_code, 200)
-        self.assertIn("14 812 addresses · 2 lines skipped", drawn.text)
+        self.assertIn("14 812 addresses · 2 lines skipped or cut back", drawn.text)
         self.assertNotIn(GUARD, drawn.text)
         self.assertEqual(answered.status_code, 200)
         self.assertEqual(answered.json()["tone"], "healthy")

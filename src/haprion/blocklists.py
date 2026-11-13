@@ -15,6 +15,13 @@ The format is one address or network to a line. Text after `#` or `;` is a
 comment, which is how all three lists above annotate theirs (Spamhaus writes
 `192.0.2.0/24 ; SBL123`). A line that is not an address is skipped and counted,
 so a list that changed its format says so instead of shrinking quietly.
+
+Two more rules keep a list from refusing the senders it was never meant for
+(B501). Entries shorter than /8 (IPv4) or /16 (IPv6) are skipped: one broken
+line must not close half the address space. Private, loopback, link-local and
+carrier-grade networks are always taken out of a list, so an entry that
+overlaps them keeps only its public part, however the source wrote it; FireHOL's
+`level1` holds private networks on purpose. Both are counted as skipped.
 """
 
 from __future__ import annotations
@@ -58,6 +65,41 @@ AUTHORIZATIONS = ("none", "basic", "bearer")
 Network = ipaddress.IPv4Network | ipaddress.IPv6Network
 _MAPPED = ipaddress.IPv6Network("::ffff:0:0/96")
 
+#
+# B501: the shortest entry a list may hold, per family, and the networks that
+# are never refused whatever a list says: RFC 1918, ULA, loopback, link-local
+# and carrier-grade NAT.
+#
+MIN_PREFIX = {4: 8, 6: 16}
+_RESERVED: tuple[Network, ...] = (
+    # RFC 1918: 10/8, 172.16/12 and 192.168/16; loopback 127/8; link-local
+    # 169.254/16; carrier-grade NAT 100.64/10. Written as octets and a prefix.
+    *(
+        ipaddress.IPv4Network((bytes(octets), prefix))
+        for octets, prefix in (
+            ((10, 0, 0, 0), 8),
+            ((172, 16, 0, 0), 12),
+            ((192, 168, 0, 0), 16),
+            ((127, 0, 0, 0), 8),
+            ((169, 254, 0, 0), 16),
+            ((100, 64, 0, 0), 10),
+        )
+    ),
+    ipaddress.IPv6Network("fc00::/7"),
+    ipaddress.IPv6Network("::1/128"),
+    ipaddress.IPv6Network("fe80::/10"),
+)
+_RESERVED_SPANS: dict[int, tuple[tuple[int, int], ...]] = {
+    version: tuple(
+        sorted(
+            (int(net.network_address), int(net.broadcast_address))
+            for net in _RESERVED
+            if net.version == version
+        )
+    )
+    for version in (4, 6)
+}
+
 
 class BlocklistError(Exception):
     """Why a list could not be fetched or read, as a stable code and a sentence."""
@@ -82,7 +124,11 @@ class Definition:
 
 @dataclass(frozen=True)
 class Parsed:
-    """A list as read: its networks, collapsed and sorted, and the lines that were not addresses."""
+    """A list as read: its networks, collapsed and sorted, and the entries skipped or cut back.
+
+    `skipped` counts the lines that were not addresses, the entries too short
+    to keep, and the entries that overlapped a private network.
+    """
 
     networks: tuple[Network, ...]
     skipped: int
@@ -204,9 +250,31 @@ def _network(text: str) -> Network | None:
     if isinstance(network, ipaddress.IPv6Network) and network.subnet_of(_MAPPED):
         mapped = address_ranges.mapped_ipv4(text)
         network = address_ranges.plain_network(mapped, strict=False) if mapped else network
-    if network.prefixlen == 0:
+    if network.prefixlen < MIN_PREFIX[network.version]:
         return None
     return network
+
+
+def _public(version: int, first: int, last: int) -> tuple[list[tuple[int, int]], bool]:
+    """The part of a range outside the reserved networks, and whether any of it was cut."""
+
+    pieces = [(first, last)]
+    cut = False
+    for low, high in _RESERVED_SPANS[version]:
+        if low > last or high < first:
+            continue
+        cut = True
+        next_pieces: list[tuple[int, int]] = []
+        for start, end in pieces:
+            if high < start or low > end:
+                next_pieces.append((start, end))
+                continue
+            if start < low:
+                next_pieces.append((start, low - 1))
+            if end > high:
+                next_pieces.append((high + 1, end))
+        pieces = next_pieces
+    return pieces, cut
 
 
 def parse(body: bytes) -> Parsed:
@@ -235,7 +303,10 @@ def parse(body: bytes) -> Parsed:
         if network is None:
             skipped += 1
             continue
-        ranges[network.version].append(_span(network))
+        pieces, cut = _public(network.version, *_span(network))
+        if cut:
+            skipped += 1
+        ranges[network.version].extend(pieces)
         read += 1
         if read > MAX_ENTRIES:
             raise BlocklistError(
@@ -243,6 +314,8 @@ def parse(body: bytes) -> Parsed:
             )
     if not read:
         raise BlocklistError("empty", "the list holds no address")
+    if not (ranges[4] or ranges[6]):
+        raise BlocklistError("empty", "the list holds no public address")
     return Parsed(networks=_merged(ranges), skipped=skipped)
 
 

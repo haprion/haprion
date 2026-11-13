@@ -23,6 +23,7 @@ from typing import Any, Literal
 
 from haprion import address_ranges, blocklists, exit_codes
 from haprion.blocklist_store import ListState
+from haprion.labels import noun
 
 Fetch = Callable[[blocklists.Definition, str], bytes]
 Groups = Mapping[str, Mapping[str, Sequence[str]]]
@@ -143,7 +144,7 @@ class Tested:
             return f"Not fetched: {self.problem}."
         said = [f"{_figure(self.entries)} addresses"]
         if self.skipped:
-            said.append(f"{_figure(self.skipped)} lines skipped")
+            said.append(f"{_figure(self.skipped)} {noun(self.skipped, 'line')} skipped or cut back")
         if self.excepts and self.clusters:
             counts = {item.excepted for item in self.clusters}
             if len(counts) == 1:

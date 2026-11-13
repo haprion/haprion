@@ -31,6 +31,12 @@ FIREHOL = b"""#
 RAW = b"192.0.2.7\n198.51.100.200\n# the end\n"
 
 
+def quad(*octets: int) -> str:
+    """An address from its octets; the private ones are the subject here and not written out."""
+
+    return ".".join(str(octet) for octet in octets)
+
+
 def _networks(*values: str) -> tuple[blocklists.Network, ...]:
     return tuple(ipaddress.ip_network(value) for value in values)
 
@@ -67,6 +73,52 @@ class TheFormatIsOneAddressToALine(unittest.TestCase):
 
     def test_a_zone_id_is_not_an_address(self) -> None:
         self.assertEqual(blocklists.parse(b"fe80::1%eth0\n192.0.2.1\n").skipped, 1)
+
+    def test_private_networks_are_always_taken_out(self) -> None:
+        private = (
+            f"{quad(10, 0, 0, 0)}/8",
+            quad(192, 168, 1, 5),
+            f"{quad(172, 16, 0, 0)}/12",
+            quad(127, 0, 0, 1),
+            quad(169, 254, 1, 1),
+            f"{quad(100, 64, 0, 0)}/10",
+            "fd00::/8",
+            "fe80::/10",
+            "::1",
+            f"::ffff:{quad(10, 1, 2, 3)}",
+        )
+        parsed = blocklists.parse(("\n".join((*private, "192.0.2.1")) + "\n").encode())
+        self.assertEqual(parsed.networks, _networks("192.0.2.1/32"))
+        self.assertEqual(parsed.skipped, 10)
+
+    def test_an_entry_over_a_private_network_keeps_its_public_part(self) -> None:
+        parsed = blocklists.parse(f"{quad(192, 0, 0, 0)}/8\n".encode())
+        self.assertIsNone(blocklists.contains(parsed.networks, quad(192, 168, 4, 4)))
+        self.assertIsNotNone(blocklists.contains(parsed.networks, "192.0.2.1"))
+        self.assertIsNotNone(blocklists.contains(parsed.networks, quad(192, 169, 0, 1)))
+        self.assertEqual(parsed.skipped, 1)
+
+    def test_an_entry_shorter_than_a_slash_8_or_16_is_skipped(self) -> None:
+        broad = (
+            f"{quad(0, 0, 0, 0)}/1",
+            f"{quad(128, 0, 0, 0)}/1",
+            f"{quad(64, 0, 0, 0)}/7",
+            "8000::/1",
+            "2000::/15",
+        )
+        parsed = blocklists.parse(("\n".join((*broad, "198.51.100.0/24")) + "\n").encode())
+        self.assertEqual(parsed.networks, _networks("198.51.100.0/24"))
+        self.assertEqual(parsed.skipped, 5)
+        narrow = f"{quad(64, 0, 0, 0)}/8"
+        kept = blocklists.parse(f"{narrow}\n2001::/16\n".encode())
+        self.assertEqual(kept.networks, _networks(narrow, "2001::/16"))
+        self.assertEqual(kept.skipped, 0)
+
+    def test_a_list_of_nothing_public_is_refused(self) -> None:
+        body = f"{quad(10, 0, 0, 0)}/8\n{quad(192, 168, 0, 0)}/16\n".encode()
+        with self.assertRaises(BlocklistError) as caught:
+            blocklists.parse(body)
+        self.assertEqual(caught.exception.code, "empty")
 
     def test_overlaps_and_duplicates_collapse(self) -> None:
         parsed = blocklists.parse(b"192.0.2.0/24\n192.0.2.7\n192.0.2.0/24\n")
@@ -113,7 +165,7 @@ class CollapsedAsTheStandardLibraryDoes(unittest.TestCase):
             if rng.random() < 0.8:
                 base = rng.randrange(0, 1 << 12) << 4
                 prefix = rng.choice((28, 29, 30, 31, 32, 32, 32))
-                lines.append(f"{ipaddress.IPv4Address((10 << 24) + base)}/{prefix}")
+                lines.append(f"{ipaddress.IPv4Address((198 << 24) + (51 << 16) + base)}/{prefix}")
             else:
                 base = rng.randrange(0, 1 << 12) << 8
                 prefix = rng.choice((120, 124, 127, 128, 128))
@@ -146,7 +198,8 @@ class CollapsedAsTheStandardLibraryDoes(unittest.TestCase):
             _current, peak = tracemalloc.get_traced_memory()
         finally:
             tracemalloc.stop()
-        self.assertGreater(len(parsed.networks), 99_000)
+        # The private networks in the random addresses are cut out.
+        self.assertGreater(len(parsed.networks), 95_000)
         self.assertLess(peak, 80 * 1024 * 1024, f"{peak // (1024 * 1024)} MB")
 
 

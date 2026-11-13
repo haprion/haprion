@@ -308,6 +308,7 @@ class BlocklistRouteTestCase(LoginTestCase):
         self.saved: list[dict[str, Any]] = []
         self.queued: list[dict[str, Any]] = []
         self.object_rows: list[db.ClusterObjects] = []
+        self.network_rows: list[db.ClusterNetwork] = []
 
         def save(_c: object, **fields: Any) -> db.Blocklist:
             self.saved.append(fields)
@@ -331,6 +332,10 @@ class BlocklistRouteTestCase(LoginTestCase):
             mock.patch(
                 "haprion_ui.db.cluster_objects", side_effect=lambda _c: list(self.object_rows)
             ),
+            mock.patch(
+                "haprion_ui.db.cluster_networks", side_effect=lambda _c: list(self.network_rows)
+            ),
+            mock.patch("haprion_ui.db.cluster_changes", return_value={}),
             mock.patch("haprion_ui.pages.blocklists.APPLY_WAIT", 0.3),
         ):
             patch.start()
@@ -464,6 +469,24 @@ class SavingABlocklist(BlocklistRouteTestCase):
         self.assertIn("must start with https://", response.text)
         self.assertNotIn(GUARD, response.text)
         self.assertEqual(self.saved, [])
+
+    def test_a_name_a_cluster_has_as_a_group_is_refused_where_it_is_typed(self) -> None:
+        self.network_rows = [
+            db.ClusterNetwork(
+                cluster="alpha",
+                observed_at=NOW,
+                outcome="done",
+                result={"groups": [{"name": "community", "members": ["192.0.2.0/24"]}]},
+                warnings=[],
+                error=None,
+                poll_error=None,
+            )
+        ]
+        response = self.post(self.admin())
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("the group community exists on alpha", response.text)
+        self.assertEqual((self.saved, self.queued), ([], []))
 
     def test_a_busy_certificate_slot_keeps_nothing(self) -> None:
         with mock.patch("haprion_ui.db.queue_job", side_effect=db.CertificateBusy()):

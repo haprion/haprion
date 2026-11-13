@@ -354,6 +354,13 @@ class TheRowsBecomeTheDocument(unittest.TestCase):
 
         self.assertEqual(str(refusal.exception), f"Group row 1: {address_ranges.HOST_BITS}.")
 
+    def test_a_group_named_like_a_blocklist_is_refused_by_row(self) -> None:
+        with self.assertRaises(FormProblem) as refusal:
+            document_from_form(self.form(), blocklists={"partners"})
+
+        self.assertEqual(str(refusal.exception), "Group row 1 has the name of a blocklist.")
+        self.assertIn("partners", json.loads(document_from_form(self.form()))["networks"])
+
     def test_a_ticked_http3_box_is_written_on_its_row_only(self) -> None:
         """B280: by row number, like a removal; an unticked box posts nothing."""
 

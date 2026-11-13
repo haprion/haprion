@@ -16,7 +16,7 @@ fail, so the distinction is carried out of the envelope and named here.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Literal
@@ -453,6 +453,12 @@ def _groups(result: Mapping[str, Any]) -> tuple[GroupView, ...]:
     )
 
 
+def group_names(reading: ClusterNetwork) -> frozenset[str]:
+    """The names of the groups one network reading holds."""
+
+    return frozenset(group.name for group in _groups(reading.result) if group.name != "—")
+
+
 def _named_sources(result: Mapping[str, Any]) -> tuple[NamedSourceView, ...]:
     return tuple(
         NamedSourceView(name=_text(row.get("name")), address=_text(row.get("address")))
@@ -780,12 +786,14 @@ def _vip_entry(form: NetworkForm, row: int, address: str) -> dict[str, str | boo
     return entry
 
 
-def document_from_form(form: NetworkForm) -> str:
+def document_from_form(form: NetworkForm, *, blocklists: Collection[str] = ()) -> str:
     """Render one submission as the document the helper parses.
 
     JSON is YAML 1.2. Rendering this as JSON avoids teaching the interface a
     second YAML emitter; the privileged helper remains the one parser and the
     canonical publisher, so what leaves here only has to be unambiguous.
+    `blocklists` are the names of the defined blocklists: a group may not
+    share one, because a list's name is what an object names under Denied.
     """
 
     vips = _named_rows(
@@ -842,6 +850,9 @@ def document_from_form(form: NetworkForm) -> str:
         removed=form.removed_group_rows,
     )
     if groups:
+        for row, name, _ in groups:
+            if name in blocklists:
+                raise FormProblem(f"Group row {row + 1} has the name of a blocklist.")
         for row, _, raw in groups:
             if any(address_ranges.has_host_bits(member) for member in _members(raw)):
                 #

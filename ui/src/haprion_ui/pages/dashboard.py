@@ -1250,6 +1250,8 @@ def build_router(config: Config) -> APIRouter:
                 # parses is assembled from them in one place, so a hand-written
                 # document can never reach the helper from this route.
                 #
+                with request.app.state.pool.connection() as connection:
+                    listed = {row.name for row in db.blocklists(connection)}
                 document = network.document_from_form(
                     network.NetworkForm(
                         vip_names=tuple(vip_name),
@@ -1265,7 +1267,8 @@ def build_router(config: Config) -> APIRouter:
                         http3_vip_rows=network.row_numbers(vip_http3),
                         removed_source_rows=network.row_numbers(source_remove),
                         removed_group_rows=network.row_numbers(group_remove),
-                    )
+                    ),
+                    blocklists=listed,
                 )
             except network.FormProblem as problem:
                 # Safe to show: these messages name a row's position, never

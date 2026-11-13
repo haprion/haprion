@@ -28,7 +28,7 @@ from haprion import blocklist_store, blocklists
 from haprion.dns_profile_keys import DnsProfilePublicKey
 from haprion.proxy_model import dump_document, read_document
 
-from haprion_ui import db, moments, network, objects, refusals
+from haprion_ui import db, moments, network, objects, refusals, saved_work
 from haprion_ui import jobs as queue
 
 OPERATION = "blocklist_apply"
@@ -154,6 +154,13 @@ def secret_choice(form: Form, existing: db.Blocklist | None) -> tuple[str, bool]
     return "", True
 
 
+def group_clusters(connection: Any, name: str) -> tuple[str, ...]:
+    """The clusters whose network has a group called `name`, saved description included."""
+
+    rows, _ = saved_work.saved_network_rows(connection, db.cluster_networks(connection))
+    return tuple(sorted(row.cluster for row in rows if name in network.group_names(row)))
+
+
 def users(connection: Any, name: str) -> dict[str, tuple[str, ...]]:
     """The objects that name the list, per cluster, from the poller's object readings."""
 
@@ -212,6 +219,11 @@ def save(
     was drawn, or another certificate job holds the queue; nothing is kept then.
     """
 
+    if existing is None and (groups := group_clusters(connection, definition.name)):
+        raise FormProblem(
+            f"Name — the group {definition.name} exists on {', '.join(groups)}. "
+            "Choose another name."
+        )
     revision = existing.revision + 1 if existing else 1
     box = (
         blocklist_store.seal_secret(

@@ -92,6 +92,22 @@ def _secret(fields: dict[str, Any], item: blocklists.Definition, definitions: Pa
         return typed
     for stored in blocklist_store.read_all(directory=definitions):
         if stored.definition.name == item.name:
+            #
+            # The saved secret is for the saved source: sent to another URL,
+            # or as another kind of authorization or user, it would hand it
+            # to whoever the web names.
+            #
+            saved = stored.definition
+            if (saved.url, saved.authorization, saved.username) != (
+                item.url,
+                item.authorization,
+                item.username,
+            ):
+                raise blocklist_check.CheckError(
+                    "no_secret",
+                    "the saved password or token belongs to another URL, kind of "
+                    "authorization or username: type it to test this one",
+                )
             return stored.secret
     raise blocklist_check.CheckError(
         "no_secret", f"no password or token is saved for {item.name}: type it to test"

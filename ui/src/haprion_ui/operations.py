@@ -339,6 +339,8 @@ class BlocklistRow:
     excepts: tuple[str, ...]
     key_id: str | None
     ciphertext: bytes | None
+    secret_revision: int
+    """The revision the box was last sealed at; `revision` may be ahead of it."""
 
 
 BlocklistLookup = Callable[[str], BlocklistRow | None]
@@ -708,6 +710,7 @@ def _certificate_operation(
                 stored=definition,
                 name=name,
                 revision=listed.revision,
+                secret_revision=listed.secret_revision,
                 key_id=listed.key_id,
                 ciphertext=listed.ciphertext,
             )

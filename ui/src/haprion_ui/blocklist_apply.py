@@ -7,9 +7,10 @@ for before the next. `remove` takes one list away, as the page's *Remove*,
 and is refused while an object still names it under *Denied*.
 
 A stored list is replaced when a field differs. The secret cannot be
-compared: it is sealed and stored when the list is new, when its
-authorization changes, or when `--replace-secret <name>` asks; otherwise the
-stored one is kept. A list whose last apply did not finish for its revision
+compared: it is sealed and stored when the list is new, when its source (the
+URL, the authorization or the username) changes, or when `--replace-secret
+<name>` asks; otherwise the stored one is kept. A secret belongs to the
+address it was given for, so a changed source needs the secret in the file. A list whose last apply did not finish for its revision
 is applied again. `--prune` removes the stored lists the file does not name.
 A file that carries a secret is refused unless only its owner may read it.
 
@@ -161,6 +162,25 @@ def _same(stored: db.Blocklist, wanted: blocklists.Definition) -> bool:
     )
 
 
+def _same_source(stored: db.Blocklist, wanted: blocklists.Definition) -> bool:
+    return (
+        stored.url == wanted.url
+        and stored.auth == wanted.authorization
+        and stored.username == wanted.username
+    )
+
+
+def _form(definition: blocklists.Definition, secret: str) -> blocklist_form.Form:
+    """What `secret_choice` needs of a listed definition: its source and the secret the file gives."""
+
+    return blocklist_form.Form(
+        url=definition.url,
+        auth=definition.authorization,
+        username=definition.username,
+        secret=secret,
+    )
+
+
 def _applied(stored: db.Blocklist, latest: db.Job | None) -> bool:
     """Whether the stored revision's newest apply finished."""
 
@@ -189,7 +209,7 @@ def plan(
     for item in found:
         name = item.definition.name
         current = stored.get(name)
-        form = blocklist_form.Form(auth=item.definition.authorization, secret=item.secret)
+        form = _form(item.definition, item.secret)
         if current is None:
             try:
                 blocklist_form.secret_choice(form, None)
@@ -208,16 +228,20 @@ def plan(
             continue
         #
         # The file's secret is sealed only when it must be: asked for, or a
-        # new authorization. Otherwise the stored one is kept, since a secret
+        # new source. Otherwise the stored one is kept, since a secret
         # cannot be compared and sealing it again on every run would make
-        # each run a change.
+        # each run a change. A new source without the secret in the file is
+        # refused, as the form refuses it: the stored secret is not sent to
+        # an address it was not given for.
         #
-        if not replacing and current.auth == item.definition.authorization:
-            form = blocklist_form.Form(auth=item.definition.authorization)
+        if not replacing and _same_source(current, item.definition):
+            form = _form(item.definition, "")
         try:
             secret, keep = blocklist_form.secret_choice(form, current)
         except blocklist_form.FormProblem as problem:
-            raise ApplyError(f"{name}: {problem}") from None
+            raise ApplyError(
+                f"{name}: {str(problem).rstrip('.')}; put it in the file as secret."
+            ) from None
         changes.append(Change(name, "replace", Wanted(item.definition, secret), keep=keep))
     if prune:
         changes.extend(Change(name, "remove") for name in sorted(set(stored) - named))

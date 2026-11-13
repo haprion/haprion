@@ -1699,13 +1699,18 @@ changes without a publish or a deploy: the nodes swap it in place.
   or `;` is skipped. CrowdSec's raw IP list, Spamhaus DROP and FireHOL's lists read as they are.
 - *Authorization* is *None*, *Basic* (a *Username* and a *Password*) or *Bearer* (a *Token*). The password
   or token is sealed when it is saved and is never shown again; leave it empty to keep the one stored.
+  It belongs to the address it was typed for, so a new *URL*, kind of authorization or *Username* needs it
+  typed again.
 - *Fetch every* is 1, 6, 12 or 24 hours.
 - *Except* names addresses, networks or groups never taken from the list. It takes effect when the list is
   saved, without waiting for a fetch.
 
+*Except* holds at most 256 entries.
+
 *Test* fetches the list as the form holds it and says how many addresses it holds, how many lines it
 skipped and how many *Except* takes out. Nothing is kept. *Save* stores the list and applies it, and the first
-fetch follows right away.
+fetch follows right away. So does a save that changes the URL, the authorization, the username or the
+password or token; a changed *Except*, interval or description does not fetch.
 
 **Using one.** A new object has every blocklist chosen under *Denied — groups*. *Denied — mode* decides
 what happens: *log only* records the match and serves the request, *deny* refuses it. For the objects
@@ -1718,7 +1723,9 @@ match, whoever a stranger decides.
 
 **When a fetch fails,** the last good list stays in effect, and the row under *Last fetched* says
 *Failed* with the list kept. The reason is on the row and under *Needs attention*. A failed list is tried
-again after an hour. An empty answer is a failure too: an empty list would refuse nobody.
+again after an hour. An empty answer is a failure too: an empty list would refuse nobody. When the first
+fetch from a new URL fails, the list from the old URL is not kept: the clusters stop being offered it,
+and the nodes keep the file they have until a fetch from the new URL succeeds.
 
 **Is this address on a list?** *Check address* on *Settings → Blocklists* looks it up in the lists kept
 now, without fetching. The answer names the list, the entry that holds the address, when the list was
@@ -1731,7 +1738,8 @@ fetched, and the clusters whose *Except* keeps it off.
 file then leaves every cluster.
 
 **From the terminal.** `haprion-blocklists apply <file>` stores and applies the lists in a file, as the
-form does, and `haprion-blocklists remove <name>` removes one. `haprion-blocklist-check <address>` is
+form does, and `haprion-blocklists remove <name>` removes one. A file that changes a list's URL,
+authorization or username carries the list's `secret` again. `haprion-blocklist-check <address>` is
 *Check address*, and `haprion-blocklist-check --list <name>` is *Test* for a stored list.
 
 ## Dynamic blocking

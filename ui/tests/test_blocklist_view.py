@@ -25,7 +25,7 @@ from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
-from haprion import blocklist_store
+from haprion import blocklist_store, blocklists
 from haprion.blocklist_check import AddressCheck, CheckError, Listed, Tested
 from haprion.dns_profile_keys import generate, render_public_key
 
@@ -199,15 +199,25 @@ class TheForm(unittest.TestCase):
                 self.assertIn(said, str(caught.exception))
                 self.assertFalse(str(caught.exception)[0].islower())
 
-    def test_an_empty_secret_keeps_the_stored_one_until_the_authorization_changes(self) -> None:
+    def test_an_empty_secret_keeps_the_stored_one_until_the_source_changes(self) -> None:
         stored = blocklist_row(auth="basic", username="svc-app", key_id="0123456789abcdef")
-        basic = blocklist_form.Form(auth="basic", username="svc-app")
+        basic = blocklist_form.Form(auth="basic", username="svc-app", url=stored.url)
         self.assertEqual(blocklist_form.secret_choice(basic, stored), ("", True))
+        with self.assertRaisesRegex(
+            blocklist_form.FormProblem, "Password must be typed again when the URL changes"
+        ):
+            blocklist_form.secret_choice(
+                replace(basic, url="https://other.example.net/community.txt"), stored
+            )
+        with self.assertRaisesRegex(
+            blocklist_form.FormProblem, "Password must be typed again when the username changes"
+        ):
+            blocklist_form.secret_choice(replace(basic, username="someone"), stored)
         self.assertEqual(
             blocklist_form.secret_choice(replace(basic, secret=GUARD), stored), (GUARD, False)
         )
         with self.assertRaisesRegex(blocklist_form.FormProblem, "Token is needed for Bearer"):
-            blocklist_form.secret_choice(blocklist_form.Form(auth="bearer"), stored)
+            blocklist_form.secret_choice(blocklist_form.Form(auth="bearer", url=stored.url), stored)
         with self.assertRaisesRegex(blocklist_form.FormProblem, "Password is needed"):
             blocklist_form.secret_choice(basic, None)
         self.assertEqual(blocklist_form.secret_choice(blocklist_form.Form(), stored), ("", False))
@@ -397,10 +407,19 @@ class SavingABlocklist(BlocklistRouteTestCase):
         self.assertEqual(saved["excepts"], ("192.0.2.10/32", "partner-sites"))
         self.assertEqual(saved["key_id"], self.public_key.key_id)
         self.assertNotIn(GUARD.encode(), saved["ciphertext"])
-        secret, revision = blocklist_store.open_secret(
-            self.private_key, saved["ciphertext"], name="community", revision=1
+        secret = blocklist_store.open_secret(
+            self.private_key,
+            saved["ciphertext"],
+            definition=blocklists.definition(
+                name="community",
+                url="https://lists.example.com/community.txt",
+                every_hours=24,
+                authorization="basic",
+                username="svc-app",
+            ),
+            revision=1,
         )
-        self.assertEqual((secret, revision), (GUARD, 1))
+        self.assertEqual(secret, GUARD)
         (job,) = self.queued
         self.assertEqual(job["operation"], "blocklist_apply")
         self.assertEqual(job["payload"], {"name": "community", "revision": 1})
@@ -422,6 +441,21 @@ class SavingABlocklist(BlocklistRouteTestCase):
             (saved["name"], saved["previous"], saved["keep_secret"]), ("community", 4, True)
         )
         self.assertIsNone(saved["ciphertext"])
+
+    def test_a_new_url_needs_the_secret_typed_again_and_nothing_is_saved(self) -> None:
+        self.blocklists = [
+            blocklist_row(auth="basic", username="svc-app", key_id="0" * 16, revision=4)
+        ]
+        response = self.post(
+            self.admin(),
+            "/settings/blocklists/community/edit",
+            secret="",
+            url="https://other.example.net/community.txt",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Password must be typed again when the URL changes.", response.text)
+        self.assertEqual((self.saved, self.queued), ([], []))
 
     def test_a_refusal_redraws_the_form_without_the_secret(self) -> None:
         response = self.post(self.admin(), url="http://lists.example.com/l.txt")
@@ -603,11 +637,11 @@ class TheCommand(unittest.TestCase):
         )
         self.assertEqual(changed.changes[0].action, "replace")
 
-    def test_the_stored_secret_is_kept_unless_asked_or_the_authorization_changes(self) -> None:
+    def test_the_stored_secret_is_kept_unless_asked_or_the_source_changes(self) -> None:
         stored = [blocklist_row(auth="bearer", key_id="0" * 16)]
         body = (
-            "blocklists:\n  - name: community\n    url: https://lists.example.com/other.txt\n"
-            f"    every_hours: 24\n    authorization: bearer\n    secret: {GUARD}\n"
+            "blocklists:\n  - name: community\n    url: https://lists.example.com/community.txt\n"
+            f"    every_hours: 6\n    authorization: bearer\n    secret: {GUARD}\n"
         )
         kept = self.plan(body, stored, {}).changes[0]
         self.assertEqual((kept.action, kept.keep), ("replace", True))
@@ -620,6 +654,24 @@ class TheCommand(unittest.TestCase):
                 stored,
                 {},
             )
+        moved = body.replace("lists.example.com/community", "lists.example.com/other")
+        with self.assertRaisesRegex(
+            blocklist_apply.ApplyError, "Token must be typed again when the URL changes; put it"
+        ):
+            self.plan(moved.replace(f"    secret: {GUARD}\n", ""), stored, {})
+        sealed = self.plan(moved, stored, {}).changes[0]
+        self.assertEqual((sealed.keep, sealed.wanted.secret), (False, GUARD))
+
+    def test_a_changed_except_of_a_bearer_list_keeps_the_secret_the_file_carries(self) -> None:
+        # BL01 by the terminal: the file carries `secret`, an Except line is added.
+        stored = [blocklist_row(auth="bearer", key_id="0" * 16)]
+        body = (
+            "blocklists:\n  - name: community\n    url: https://lists.example.com/community.txt\n"
+            f"    every_hours: 24\n    authorization: bearer\n    secret: {GUARD}\n"
+            "    except: [192.0.2.10]\n"
+        )
+        change = self.plan(body, stored, {}).changes[0]
+        self.assertEqual((change.action, change.keep, change.wanted.secret), ("replace", True, ""))
 
 
 class TheListAsAGroup(unittest.TestCase):

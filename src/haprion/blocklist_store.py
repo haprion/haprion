@@ -12,12 +12,21 @@ from here and nowhere else, so the CLI fetches a list without the web.
     /var/lib/haprion/blocklists/state.json when each list was fetched or failed, and why
 
 The sealed plaintext carries its own binding, as a DNS profile's does: a box
-sealed for one list or an older revision opens and is refused.
+sealed for one list, for another source (the URL, the kind of authorization and
+the username) or at an older revision than the row's `secret_revision` opens
+and is refused. The source is in the box because a password belongs to the
+account at the address it was typed for: a web that could keep it while the
+URL changed could make root send it to any host.
+
+The row's `revision` rises with every save; its `secret_revision` only when a
+password or token is sealed. The definition carries both, so the refresh timer
+can tell a changed source from a changed exception.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import stat
@@ -58,6 +67,11 @@ class Stored:
     definition: blocklists.Definition
     secret: str
     revision: int
+    secret_revision: int = 1
+
+    @property
+    def source(self) -> str:
+        return source_key(self.definition, self.secret_revision)
 
 
 @dataclass(frozen=True)
@@ -70,6 +84,24 @@ class ListState:
     error: str = ""
     entries: int = 0
     skipped: int = 0
+    source: str = ""
+    """`source_key` of what the last attempt fetched from; the kept list came from it."""
+
+
+def source_key(definition: blocklists.Definition, secret_revision: int) -> str:
+    """What a fetch depends on, as a digest: the URL, the authorization, the username and the secret's revision.
+
+    The digest, not the parts, goes in the state file, which anyone on the
+    manager may read and a URL may carry a token in its query. An exception,
+    the interval and the description are not in it: changing them is not a
+    new source.
+    """
+
+    text = json.dumps(
+        [definition.url, definition.authorization, definition.username, secret_revision],
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def check_revision(value: object) -> int:
@@ -81,29 +113,45 @@ def check_revision(value: object) -> int:
 # - the sealed secret -------------------------------------------------------
 
 
-def seal_secret(public_key: DnsProfilePublicKey, *, name: str, revision: int, secret: str) -> bytes:
-    """The secret sealed for root, bound to this list and this revision."""
+def seal_secret(
+    public_key: DnsProfilePublicKey,
+    *,
+    definition: blocklists.Definition,
+    revision: int,
+    secret: str,
+) -> bytes:
+    """The secret sealed for root, bound to this list, its source and this revision."""
 
-    blocklists.checked_name(name)
     check_revision(revision)
     if len(secret) > blocklists.SECRET_MAX or any(c in secret for c in "\r\n"):
         raise StoreError("the password or token is too long or holds a line break")
     plaintext = {
         "schema_version": SCHEMA_VERSION,
-        "blocklist": name,
+        "blocklist": definition.name,
         "key_id": public_key.key_id,
         "revision": revision,
+        "url": definition.url,
+        "authorization": definition.authorization,
+        "username": definition.username,
         "secret": secret,
     }
     return seal(public_key, json.dumps(plaintext, separators=(",", ":")).encode("utf-8"))
 
 
 def open_secret(
-    key: DnsProfilePrivateKey, ciphertext: bytes, *, name: str, revision: int
-) -> tuple[str, int]:
-    """The secret and the revision it was sealed at, or `StoreError` naming the binding that failed."""
+    key: DnsProfilePrivateKey,
+    ciphertext: bytes,
+    *,
+    definition: blocklists.Definition,
+    revision: int,
+) -> str:
+    """The secret, if the box was sealed for this list and source at `revision` or later.
 
-    blocklists.checked_name(name)
+    `StoreError` names the binding that failed. `revision` is the row's
+    `secret_revision`: the definition's own revision may be newer, since a
+    save that leaves the password alone does not seal it again.
+    """
+
     check_revision(revision)
     if len(ciphertext) > MAX_CIPHERTEXT:
         raise StoreError("the sealed secret is larger than one can be")
@@ -115,15 +163,41 @@ def open_secret(
         document = json.loads(plaintext.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
         raise StoreError("the opened secret is not a JSON document") from None
-    expected = {"schema_version", "blocklist", "key_id", "revision", "secret"}
+    expected = {
+        "schema_version",
+        "blocklist",
+        "key_id",
+        "revision",
+        "url",
+        "authorization",
+        "username",
+        "secret",
+    }
+    if isinstance(document, dict) and set(document) == expected - {
+        "url",
+        "authorization",
+        "username",
+    }:
+        raise StoreError(
+            "the password or token was sealed before it was bound to its source: type it again"
+        )
     if not isinstance(document, dict) or set(document) != expected:
         raise StoreError("the opened secret does not have the blocklist shape")
     if document["schema_version"] != SCHEMA_VERSION:
         raise StoreError("the opened secret has a schema version this helper does not read")
-    if document["blocklist"] != name:
+    if document["blocklist"] != definition.name:
         raise StoreError("the secret was sealed for another blocklist")
     if document["key_id"] != key.key_id:
         raise StoreError("the opened secret names another key than the one that opened it")
+    if (document["url"], document["authorization"], document["username"]) != (
+        definition.url,
+        definition.authorization,
+        definition.username,
+    ):
+        raise StoreError(
+            "the password or token was sealed for another URL, kind of authorization or "
+            "username: type it again"
+        )
     sealed_revision = document["revision"]
     if type(sealed_revision) is not int or sealed_revision < revision:
         raise StoreError("the secret is an older revision than the job asked for")
@@ -131,7 +205,7 @@ def open_secret(
     secret = document["secret"]
     if not isinstance(secret, str) or len(secret) > blocklists.SECRET_MAX:
         raise StoreError("the opened secret is not text")
-    return secret, sealed_revision
+    return secret
 
 
 # - the definitions ---------------------------------------------------------
@@ -153,6 +227,7 @@ def _document(stored: Stored) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "revision": stored.revision,
+        "secret_revision": stored.secret_revision,
         "name": item.name,
         "description": item.description,
         "url": item.url,
@@ -200,6 +275,17 @@ def remove(name: str, *, directory: Path = DEFINITIONS, require_secure: bool = T
     return True
 
 
+def forget(name: str, *, directory: Path = STATE) -> None:
+    """Remove the last good list of a list that is gone, so one made again under the name starts empty."""
+
+    try:
+        list_path(name, directory=directory).unlink()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise StoreError(f"the kept list of {name} could not be removed: {exc.strerror}") from exc
+
+
 def _read_one(path: Path) -> Stored:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
@@ -208,6 +294,7 @@ def _read_one(path: Path) -> Stored:
     expected = {
         "schema_version",
         "revision",
+        "secret_revision",
         "name",
         "description",
         "url",
@@ -241,7 +328,12 @@ def _read_one(path: Path) -> Stored:
         raise StoreError(f"{path}: {exc}") from exc
     if path.name != f"{item.name}{SUFFIX}":
         raise StoreError(f"{path} holds the blocklist {item.name}")
-    return Stored(definition=item, secret=secret, revision=check_revision(document["revision"]))
+    return Stored(
+        definition=item,
+        secret=secret,
+        revision=check_revision(document["revision"]),
+        secret_revision=check_revision(document["secret_revision"]),
+    )
 
 
 def read_all(*, directory: Path = DEFINITIONS) -> tuple[Stored, ...]:
@@ -321,13 +413,15 @@ def build_request(
     stored: blocklists.Definition | None,
     name: str,
     revision: int,
+    secret_revision: int = 1,
     key_id: str | None = None,
     ciphertext: bytes | None = None,
 ) -> str:
     """The request the worker sends the apply helper; `stored` None removes the definition.
 
     The box travels base64 inside the JSON, as a DNS profile's does, and the
-    helper holds it to the list's name and to a revision no older than this.
+    helper holds it to the list's name and source and to `secret_revision`, the
+    revision the secret was last sealed at, which `revision` may be ahead of.
     """
 
     parameters: dict[str, Any] = {"name": name, "revision": revision}
@@ -336,6 +430,7 @@ def build_request(
     else:
         parameters.update(
             {
+                "secret_revision": secret_revision,
                 "url": stored.url,
                 "every_hours": stored.every_hours,
                 "authorization": stored.authorization,

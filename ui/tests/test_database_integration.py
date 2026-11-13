@@ -4685,6 +4685,20 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
         with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as worker:
             sealed = db.sealed_blocklist(worker, "community")
         self.assertEqual(sealed.ciphertext if sealed else None, b"b" * 64)
+        #
+        # B501, 0120: the box is as old as the save that sealed it. The row moved to revision 2
+        # and the box kept stays at 1; a save that seals again moves it to that save's revision.
+        #
+        self.assertEqual(sealed.secret_revision if sealed else None, 1)
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as web:
+            db.save_blocklist(web, previous=2, **{**fields, "ciphertext": b"c" * 64})
+            web.commit()
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as worker:
+            sealed = db.sealed_blocklist(worker, "community")
+        self.assertEqual(
+            (sealed.revision, sealed.secret_revision, sealed.ciphertext) if sealed else None,
+            (3, 3, b"c" * 64),
+        )
 
     def test_the_poller_writes_the_blocklists_state_whole_and_the_web_reads_it(self) -> None:
         """B500, 0119: a list the timer no longer keeps state for goes."""
@@ -11745,6 +11759,11 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
 
     def test_a_dump_at_0118_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
         self.restored_from("0118", grants_differ="0118 has no blocklist to grant on")
+
+    def test_a_dump_at_0119_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
+        self.restored_from(
+            "0119", grants_differ="0119 has no secret_revision on blocklist to grant on"
+        )
 
 
 class EveryRevisionADumpCanBeAtIsRestored(unittest.TestCase):

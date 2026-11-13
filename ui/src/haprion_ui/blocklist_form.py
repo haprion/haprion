@@ -6,7 +6,7 @@ the same way. A list is checked with the engine's own `blocklists.definition`
 anything is stored. The password or token is sealed against the
 installation's DNS profile key, bound to the list and its revision, and the
 web cannot read it back: a save that leaves it empty keeps the stored one,
-which is refused once the authorization changes. The row and its
+which is refused once the URL, the authorization or the username changes. The row and its
 `blocklist_apply` job are one transaction, as a DNS profile's are: a list
 saved without its job would look defined and never be fetched.
 
@@ -139,9 +139,19 @@ def secret_choice(form: Form, existing: db.Blocklist | None) -> tuple[str, bool]
         if len(form.secret) > blocklists.SECRET_MAX or any(c in form.secret for c in "\r\n"):
             raise FormProblem(f"{label} is one line of at most {blocklists.SECRET_MAX} characters.")
         return form.secret, False
-    if existing is not None and existing.auth == form.auth:
-        return "", True
-    raise FormProblem(f"{label} is needed for {AUTH_LABEL[form.auth]} authorization.")
+    if existing is None or existing.auth != form.auth:
+        raise FormProblem(f"{label} is needed for {AUTH_LABEL[form.auth]} authorization.")
+    #
+    # A password or token belongs to the account at the address it was typed
+    # for. Kept across a new URL, the next fetch would send it to whoever
+    # holds that address; the box root opens is bound to the source as well
+    # (B501), so the helper refuses it even if this check is skipped.
+    #
+    if existing.url != form.url:
+        raise FormProblem(f"{label} must be typed again when the URL changes.")
+    if existing.username != form.username:
+        raise FormProblem(f"{label} must be typed again when the username changes.")
+    return "", True
 
 
 def users(connection: Any, name: str) -> dict[str, tuple[str, ...]]:
@@ -205,7 +215,7 @@ def save(
     revision = existing.revision + 1 if existing else 1
     box = (
         blocklist_store.seal_secret(
-            public_key, name=definition.name, revision=revision, secret=secret
+            public_key, definition=definition, revision=revision, secret=secret
         )
         if secret
         else None

@@ -47,6 +47,8 @@ class SealedBlocklist:
     key_id: str | None
     ciphertext: bytes | None
     revision: int
+    secret_revision: int
+    """The revision the box was last sealed at; `revision` is ahead of it when a save kept the box."""
 
 
 @dataclass(frozen=True)
@@ -99,9 +101,11 @@ def save_blocklist(
 ) -> Blocklist:
     """Insert a new list (`previous` None) or the next revision of one, fenced on `previous`.
 
-    `keep_secret` leaves the stored box as it is - a save that changed
-    neither the authorization nor the secret - and is refused when the
-    authorization changed, which the form says before it gets here.
+    `keep_secret` leaves the stored box, and its `secret_revision`, as they
+    are - a save that changed neither the source (the URL, the authorization
+    and the username) nor the secret - and is refused when the source changed,
+    which the form says before it gets here. A save that seals writes
+    `secret_revision` with the revision it makes.
     """
 
     values = {
@@ -121,9 +125,9 @@ def save_blocklist(
         if previous is None:
             cursor.execute(
                 "insert into blocklist (name, description, url, auth, username, every_hours, "
-                "       excepts, key_id, ciphertext, revision, updated_by) "
+                "       excepts, key_id, ciphertext, revision, secret_revision, updated_by) "
                 "values (%(name)s, %(description)s, %(url)s, %(auth)s, %(username)s, "
-                "        %(every_hours)s, %(excepts)s, %(key_id)s, %(box)s, 1, %(actor)s) "
+                "        %(every_hours)s, %(excepts)s, %(key_id)s, %(box)s, 1, 1, %(actor)s) "
                 "on conflict (name) do nothing "
                 "returning name, description, url, auth, username, every_hours, excepts, key_id, revision, created_at, updated_at, updated_by",
                 values,
@@ -136,6 +140,7 @@ def save_blocklist(
                 "       excepts = %(excepts)s, revision = revision + 1, "
                 "       updated_at = statement_timestamp(), updated_by = %(actor)s "
                 " where name = %(name)s and revision = %(previous)s and auth = %(auth)s "
+                "   and url = %(url)s and username = %(username)s "
                 "returning name, description, url, auth, username, every_hours, excepts, key_id, revision, created_at, updated_at, updated_by",
                 values,
             )
@@ -145,7 +150,7 @@ def save_blocklist(
                 "   set description = %(description)s, url = %(url)s, auth = %(auth)s, "
                 "       username = %(username)s, every_hours = %(every_hours)s, "
                 "       excepts = %(excepts)s, key_id = %(key_id)s, ciphertext = %(box)s, "
-                "       revision = revision + 1, "
+                "       revision = revision + 1, secret_revision = revision + 1, "
                 "       updated_at = statement_timestamp(), updated_by = %(actor)s "
                 " where name = %(name)s and revision = %(previous)s "
                 "returning name, description, url, auth, username, every_hours, excepts, key_id, revision, created_at, updated_at, updated_by",
@@ -163,7 +168,7 @@ def sealed_blocklist(connection: Connection[Any], name: str) -> SealedBlocklist 
     with connection.cursor(row_factory=class_row(SealedBlocklist)) as cursor:
         cursor.execute(
             "select name, description, url, auth, username, every_hours, excepts, key_id, "
-            "       ciphertext, revision from blocklist where name = %(name)s",
+            "       ciphertext, revision, secret_revision from blocklist where name = %(name)s",
             {"name": name},
         )
         return cursor.fetchone()

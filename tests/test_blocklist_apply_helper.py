@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-from haprion import blocklist_store, exit_codes
+from haprion import blocklist_store, blocklists, exit_codes
 from haprion.cli import blocklist_apply_helper
 from haprion.dns_profile_keys import generate, render_private_key
 from tests.contract_schema import assert_contract
@@ -35,16 +35,30 @@ class ApplyFixture(Fixture):
         self.policy_path.write_text(yaml.safe_dump(document), encoding="utf-8")
         self.lists = self.root / "blocklists"
         self.lists.mkdir(mode=0o700)
+        self.state = self.root / "state"
+        self.state.mkdir()
         self.started = 0
 
-    def sealed(self, name: str = "crowdsec", revision: int = 2) -> str:
-        box = blocklist_store.seal_secret(self.public, name=name, revision=revision, secret=SECRET)
+    def sealed(self, revision: int = 2, **fields: object) -> str:
+        """The box for the request's own list and source, unless a field says otherwise."""
+
+        base: dict[str, object] = {
+            "name": "crowdsec",
+            "url": "https://example.com/list.txt",
+            "every_hours": 24,
+            "authorization": "bearer",
+        }
+        item = blocklists.definition(**{**base, **fields})  # type: ignore[arg-type]
+        box = blocklist_store.seal_secret(
+            self.public, definition=item, revision=revision, secret=SECRET
+        )
         return base64.b64encode(box).decode("ascii")
 
     def request(self, **overrides: object) -> str:
         parameters: dict[str, object] = {
             "name": "crowdsec",
             "revision": 2,
+            "secret_revision": 2,
             "url": "https://example.com/list.txt",
             "every_hours": 24,
             "authorization": "bearer",
@@ -81,6 +95,7 @@ class ApplyFixture(Fixture):
             require_secure=False,
             require_root=False,
             directory=self.lists,
+            state=self.state,
             starter=self.starter,
         )
         document = assert_contract("haprion-blocklist-apply", output.getvalue())
@@ -117,8 +132,51 @@ class Applying(ApplyFixture):
         self.assertEqual(blocklist_store.read_all(directory=self.lists), ())
         self.assertEqual(self.started, 0)
 
+    def test_a_save_that_left_the_secret_alone_is_written_at_the_jobs_revision(self) -> None:
+        # A box sealed at revision 1, the row at revision 2: an Except line was added (BL01).
+        code, document, errors = self.invoke(
+            self.request(revision=2, secret_revision=1, ciphertext=self.sealed(revision=1))
+        )
+
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(document["result"]["revision"], 2)
+        (stored,) = blocklist_store.read_all(directory=self.lists)
+        self.assertEqual((stored.revision, stored.secret_revision, stored.secret), (2, 1, SECRET))
+
+    def test_a_box_older_than_the_secret_revision_is_blocked(self) -> None:
+        code, document, _ = self.invoke(
+            self.request(revision=3, secret_revision=3, ciphertext=self.sealed(revision=2))
+        )
+
+        self.assertEqual(code, exit_codes.BLOCKED)
+        self.assertEqual(document["error"]["code"], "binding_mismatch")
+        self.assertEqual(blocklist_store.read_all(directory=self.lists), ())
+
+    def test_a_box_kept_across_a_new_url_is_blocked_and_nothing_written(self) -> None:
+        # The web kept the box while the URL changed: root refuses to send it to the new host (BL02).
+        code, document, _ = self.invoke(
+            self.request(
+                revision=3,
+                secret_revision=1,
+                url="https://attacker.example.net/list.txt",
+                ciphertext=self.sealed(revision=1),
+            )
+        )
+
+        self.assertEqual(code, exit_codes.BLOCKED)
+        self.assertEqual(document["error"]["code"], "binding_mismatch")
+        self.assertIn("type it again", document["error"]["message"])
+        self.assertEqual(blocklist_store.read_all(directory=self.lists), ())
+        self.assertEqual(self.started, 0)
+
+    def test_a_secret_revision_ahead_of_the_revision_is_refused(self) -> None:
+        code, document, _ = self.invoke(self.request(revision=2, secret_revision=3))
+
+        self.assertEqual(code, exit_codes.REFUSED)
+        self.assertEqual(document["error"]["code"], "bad_input")
+
     def test_an_older_revision_than_the_written_one_is_refused(self) -> None:
-        self.invoke(self.request(revision=3, ciphertext=self.sealed(revision=3)))
+        self.invoke(self.request(revision=3, secret_revision=3, ciphertext=self.sealed(revision=3)))
 
         code, document, _ = self.invoke(self.request())
 
@@ -145,8 +203,11 @@ class Applying(ApplyFixture):
                 self.assertEqual(code, exit_codes.REFUSED)
                 self.assertEqual(document["error"]["code"], "bad_input")
 
-    def test_remove_deletes_the_definition(self) -> None:
+    def test_remove_deletes_the_definition_and_the_last_good_list(self) -> None:
         self.invoke(self.request())
+        blocklist_store.keep(
+            "crowdsec", blocklists.parse(b"192.0.2.0/24\n").networks, directory=self.state
+        )
 
         code, document, _ = self.invoke(
             json.dumps(
@@ -163,3 +224,4 @@ class Applying(ApplyFixture):
         self.assertEqual(code, 0)
         self.assertTrue(document["result"]["removed"])
         self.assertEqual(blocklist_store.read_all(directory=self.lists), ())
+        self.assertIsNone(blocklist_store.kept("crowdsec", directory=self.state))

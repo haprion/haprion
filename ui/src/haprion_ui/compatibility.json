@@ -2,12 +2,13 @@
   "schema_version": 1,
   "requires": {
     "database_baseline": "0115",
-    "database_head": "0119",
+    "database_head": "0120",
     "rollback_safe_from": "0115",
     "database_revisions": [
       "0117",
       "0118",
-      "0119"
+      "0119",
+      "0120"
     ],
     "engine_api": 44,
     "node_api": 1,

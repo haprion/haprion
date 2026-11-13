@@ -330,6 +330,7 @@ class ApplyingABlocklist(unittest.TestCase):
         excepts=("192.0.2.10/32", "partner-sites"),
         key_id="0123456789abcdef",
         ciphertext=b"x" * 48,
+        secret_revision=2,
     )
 
     def prepare(self, payload: dict[str, object], row: object = ROW) -> operations.Prepared:
@@ -349,6 +350,10 @@ class ApplyingABlocklist(unittest.TestCase):
         self.assertEqual(parameters["excepts"], ["192.0.2.10/32", "partner-sites"])
         self.assertEqual(parameters["key_id"], "0123456789abcdef")
         self.assertEqual(parameters["ciphertext"], "eHh4" * 16)
+        #
+        # The row is at revision 3 and its box was sealed at 2: both travel (BL01).
+        #
+        self.assertEqual((parameters["revision"], parameters["secret_revision"]), (3, 2))
         self.assertNotIn("remove", parameters)
 
     def test_a_newer_row_is_applied_and_an_older_refused(self) -> None:

@@ -640,6 +640,7 @@ def _blocklist_row(connection: Any, name: str) -> operations.BlocklistRow | None
         excepts=tuple(row.excepts),
         key_id=row.key_id,
         ciphertext=None if row.ciphertext is None else bytes(row.ciphertext),
+        secret_revision=row.secret_revision,
     )
 
 

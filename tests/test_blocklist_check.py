@@ -277,6 +277,19 @@ class TheHelperAndTheCommand(Fixture):
         self.assertEqual(document["error"]["code"], "no_secret")
         self.assertEqual(self.secrets, [])
 
+    def test_the_saved_token_is_not_sent_to_another_url_or_as_another_user(self) -> None:
+        for fields in (
+            self.form(url="https://attacker.example.net/raw", keep_secret=True),
+            self.form(authorization="basic", username="svc-app", keep_secret=True),
+        ):
+            with self.subTest(fields=fields):
+                code, document, _err = self.ask({"list": fields})
+                self.assertEqual(code, exit_codes.REFUSED)
+                self.assertEqual(document["error"]["code"], "no_secret")
+                self.assertIn("type it to test", document["error"]["message"])
+                self.assertNotIn("lists.example.com", document["error"]["message"])
+        self.assertEqual(self.secrets, [])
+
     def test_a_field_the_form_cannot_hold_is_refused_before_anything_is_fetched(self) -> None:
         for fields in (
             self.form(every_hours=2),

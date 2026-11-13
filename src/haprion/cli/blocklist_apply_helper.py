@@ -2,10 +2,11 @@
 
 The worker's `blocklist_apply` job sends the list's fields and, when it has a
 password or token, the box the web sealed it in. This opens the box with the
-installation's DNS profile key, holds it to this list and this revision,
-writes the definition root-only under /etc/haprion/blocklists, and starts the
-refresh service without waiting for it: a new list is fetched and a changed
-exception reaches the nodes by that pass, not by the next timer. `remove`
+installation's DNS profile key, holds it to this list, its source and the
+revision the secret was last sealed at, writes the definition root-only under
+/etc/haprion/blocklists, and starts the refresh service without waiting for
+it: a new list or a new source is fetched and a changed exception reaches the
+nodes by that pass, not by the next timer. `remove`
 deletes the definition; whether an object still names the list is the web's
 check, made before the job is queued.
 """
@@ -33,6 +34,7 @@ PARAMETERS = frozenset(
     {
         "name",
         "revision",
+        "secret_revision",
         "url",
         "every_hours",
         "authorization",
@@ -71,6 +73,7 @@ def main(
     require_secure: bool = True,
     require_root: bool = True,
     directory: Path = blocklist_store.DEFINITIONS,
+    state: Path = blocklist_store.STATE,
     starter: Starter = start_refresh,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
@@ -97,7 +100,11 @@ def main(
         if not isinstance(remove, bool):
             raise ValueError("remove must be true or false")
         item = None
+        secret_revision = 1
         if not remove:
+            secret_revision = blocklist_store.check_revision(parameters.get("secret_revision"))
+            if secret_revision > revision:
+                raise ValueError("secret_revision is ahead of the revision")
             raw = parameters.get("excepts", [])
             if not isinstance(raw, list) or not all(isinstance(e, str) for e in raw):
                 raise ValueError("excepts must be a list of text")
@@ -158,8 +165,8 @@ def main(
                 exit_codes.CONFIG,
             )
         try:
-            secret, revision = blocklist_store.open_secret(
-                selected, ciphertext, name=name, revision=revision
+            secret = blocklist_store.open_secret(
+                selected, ciphertext, definition=item, revision=secret_revision
             )
         except StoreError as exc:
             return refuse("binding_mismatch", str(exc), exit_codes.BLOCKED)
@@ -169,9 +176,15 @@ def main(
             removed = blocklist_store.remove(
                 name, directory=directory, require_secure=require_secure
             )
+            blocklist_store.forget(name, directory=state)
         else:
             blocklist_store.write(
-                Stored(definition=item, secret=secret, revision=revision),
+                Stored(
+                    definition=item,
+                    secret=secret,
+                    revision=revision,
+                    secret_revision=secret_revision,
+                ),
                 directory=directory,
                 require_secure=require_secure,
             )

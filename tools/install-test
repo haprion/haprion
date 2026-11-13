@@ -1119,6 +1119,33 @@ class Run:
         if said.strip() != "192.0.2.77 is on no blocklist.":
             raise Failed(f"haprion-blocklist-check did not say the address is on no list:\n{said}")
 
+    def blocklist_journals(self) -> None:
+        """What the timer and the nodes' certificate pull logged, printed when a step failed.
+
+        The timer's own unit on the manager; on each node the pull arrives as
+        an ssh forced command run through sudo, so sshd's and sudo's lines are
+        the record of it (the node scripts write only to stderr).
+        """
+
+        asked = [
+            (
+                "mgr",
+                "journalctl -u haprion-blocklist-refresh --no-pager -o cat | tail -60",
+                "haprion-blocklist-refresh",
+            ),
+            *(
+                (
+                    role,
+                    "journalctl --no-pager -o cat -t sudo -t sshd -t sshd-session | tail -40",
+                    "certificate pull (sshd, sudo)",
+                )
+                for role in NODES
+            ),
+        ]
+        for role, command, what in asked:
+            _, log = self.on(role, command, check=False)
+            print(f"--- {role}: {what} ---\n{log.rstrip()}", file=sys.stderr)
+
     def blocklist_chain(self) -> None:
         """B496, 13; B500: a blocklist from its source to a refusal on the virtual address.
 
@@ -1244,6 +1271,9 @@ class Run:
                 lambda: status_on_the_vip() == "200",
             )
             until("the poller did not write what the timer fetched", recorded)
+        except Exception:
+            self.blocklist_journals()
+            raise
         finally:
             self.on(
                 "mgr", "cat > /root/install/objects/shop.yaml", stdin=OBJECT.format(backend=mgr)

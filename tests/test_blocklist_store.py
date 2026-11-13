@@ -7,6 +7,7 @@ import stat
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 from haprion import blocklist_store, blocklists, dns_profile_keys
 from haprion.blocklist_store import ListState, Stored, StoreError
@@ -27,38 +28,100 @@ def _stored(revision: int = 1, **fields: object) -> Stored:
     return Stored(definition=item, secret=SECRET, revision=revision)
 
 
+def _item(**fields: Any) -> blocklists.Definition:
+    return _stored(**fields).definition
+
+
 class TheSecretIsBoundToItsList(unittest.TestCase):
     def setUp(self) -> None:
         self.private, self.public = dns_profile_keys.generate()
 
+    def seal(self, revision: int = 3, **fields: Any) -> bytes:
+        return blocklist_store.seal_secret(
+            self.public, definition=_item(**fields), revision=revision, secret=SECRET
+        )
+
     def test_it_opens_for_its_own_list(self) -> None:
-        box = blocklist_store.seal_secret(self.public, name="crowdsec", revision=3, secret=SECRET)
         self.assertEqual(
-            blocklist_store.open_secret(self.private, box, name="crowdsec", revision=3), (SECRET, 3)
+            blocklist_store.open_secret(self.private, self.seal(), definition=_item(), revision=3),
+            SECRET,
         )
 
     def test_a_box_sealed_for_another_list_is_refused(self) -> None:
-        box = blocklist_store.seal_secret(self.public, name="other", revision=3, secret=SECRET)
         with self.assertRaisesRegex(StoreError, "another blocklist"):
-            blocklist_store.open_secret(self.private, box, name="crowdsec", revision=3)
+            blocklist_store.open_secret(
+                self.private, self.seal(name="other"), definition=_item(), revision=3
+            )
+
+    def test_a_box_sealed_for_another_source_is_refused(self) -> None:
+        box = self.seal()
+        for fields in (
+            {"url": "https://attacker.example.net/list.txt"},
+            {"authorization": "bearer", "username": ""},
+            {"username": "other"},
+        ):
+            with (
+                self.subTest(fields=fields),
+                self.assertRaisesRegex(StoreError, "type it again"),
+            ):
+                blocklist_store.open_secret(
+                    self.private, box, definition=_item(**fields), revision=3
+                )
+
+    def test_a_changed_exception_or_interval_is_the_same_source(self) -> None:
+        self.assertEqual(
+            blocklist_store.open_secret(
+                self.private,
+                self.seal(),
+                definition=_item(excepts=["198.51.100.7"], every_hours=6),
+                revision=3,
+            ),
+            SECRET,
+        )
 
     def test_an_older_revision_is_refused_and_a_newer_one_opens(self) -> None:
-        box = blocklist_store.seal_secret(self.public, name="crowdsec", revision=2, secret=SECRET)
+        box = self.seal(revision=2)
         with self.assertRaisesRegex(StoreError, "older revision"):
-            blocklist_store.open_secret(self.private, box, name="crowdsec", revision=3)
+            blocklist_store.open_secret(self.private, box, definition=_item(), revision=3)
         self.assertEqual(
-            blocklist_store.open_secret(self.private, box, name="crowdsec", revision=1)[1], 2
+            blocklist_store.open_secret(self.private, box, definition=_item(), revision=1), SECRET
         )
+
+    def test_a_box_sealed_before_it_was_bound_to_its_source_says_to_type_it_again(self) -> None:
+        old = {
+            "schema_version": 1,
+            "blocklist": "crowdsec",
+            "key_id": self.public.key_id,
+            "revision": 1,
+            "secret": SECRET,
+        }
+        box = dns_profile_keys.seal(self.public, json.dumps(old).encode())
+        with self.assertRaisesRegex(StoreError, "before it was bound to its source"):
+            blocklist_store.open_secret(self.private, box, definition=_item(), revision=1)
 
     def test_another_key_is_refused(self) -> None:
         other, _ = dns_profile_keys.generate()
-        box = blocklist_store.seal_secret(self.public, name="crowdsec", revision=1, secret=SECRET)
         with self.assertRaisesRegex(StoreError, "not sealed against key"):
-            blocklist_store.open_secret(other, box, name="crowdsec", revision=1)
+            blocklist_store.open_secret(other, self.seal(1), definition=_item(), revision=1)
 
     def test_a_line_break_is_not_sealed(self) -> None:
         with self.assertRaises(StoreError):
-            blocklist_store.seal_secret(self.public, name="crowdsec", revision=1, secret="a\nb")  # noqa: S106 - a line break, which is what is refused
+            blocklist_store.seal_secret(
+                self.public,
+                definition=_item(),
+                revision=1,
+                secret="a\nb",  # noqa: S106 - a line break, which is what is refused
+            )
+
+    def test_the_source_key_follows_what_a_fetch_depends_on(self) -> None:
+        base = blocklist_store.source_key(_item(), 1)
+        self.assertEqual(base, blocklist_store.source_key(_item(excepts=[], every_hours=6), 1))
+        for other in (
+            blocklist_store.source_key(_item(url="https://example.com/other.txt"), 1),
+            blocklist_store.source_key(_item(username="other"), 1),
+            blocklist_store.source_key(_item(), 2),
+        ):
+            self.assertNotEqual(base, other)
 
 
 class TheDefinitionIsRootOnly(unittest.TestCase):

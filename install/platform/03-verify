@@ -155,9 +155,9 @@ app_web	attention_ack	INSERT	acknowledged_by, cluster, kind, severity, subject, 
 app_web	attention_ack	SELECT	acknowledged_at, acknowledged_by, cluster, kind, severity, subject, variant
 app_web	audit_event	INSERT	action, actor, cluster, detail, request_id
 app_web	audit_event	SELECT	action, actor, at, cluster, detail, id, request_id
-app_web	blocklist	INSERT	auth, ciphertext, description, every_hours, excepts, key_id, name, revision, updated_by, url, username
+app_web	blocklist	INSERT	auth, ciphertext, description, every_hours, excepts, key_id, name, revision, secret_revision, updated_by, url, username
 app_web	blocklist	SELECT	auth, created_at, description, every_hours, excepts, key_id, name, revision, updated_at, updated_by, url, username
-app_web	blocklist	UPDATE	auth, ciphertext, description, every_hours, excepts, key_id, revision, updated_at, updated_by, url, username
+app_web	blocklist	UPDATE	auth, ciphertext, description, every_hours, excepts, key_id, revision, secret_revision, updated_at, updated_by, url, username
 app_web	blocklist_state	SELECT	attempted_at, entries, error, failed_at, fetched_at, name, seen_at, skipped
 app_web	cluster_backups	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
 app_web	cluster_certificates	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
@@ -218,7 +218,7 @@ app_web	version_diff	SELECT	cluster, commit, diff, recorded_at
 app_web	waf_finding_client	SELECT	client, cluster, field, hour, object, path, rule_id
 app_web	waf_finding_path	SELECT	cluster, field, hour, last_seen, matched, object, path, requests, rule_id
 app_worker	audit_event	INSERT	action, actor, cluster, detail, request_id
-app_worker	blocklist	SELECT	auth, ciphertext, description, every_hours, excepts, key_id, name, revision, url, username
+app_worker	blocklist	SELECT	auth, ciphertext, description, every_hours, excepts, key_id, name, revision, secret_revision, url, username
 app_worker	cluster_history	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
 app_worker	dns_provider_profile	SELECT	ciphertext, id, key_id, provider_id, revision, schema_version
 app_worker	job	SELECT	attempts, claim_token, cluster, created_at, exit_code, finished_at, held_decided_by, held_decision, held_since, id, idempotency_key, lease_until, operation, outcome, payload, payload_hash, request_id, result, started_at, state, stderr_excerpt, worker_id

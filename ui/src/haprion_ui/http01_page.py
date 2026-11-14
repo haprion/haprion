@@ -9,7 +9,7 @@ rest of the settings are kept as they are.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 from urllib.parse import quote
@@ -34,6 +34,14 @@ class ClusterRow:
     href: str
     readable: bool
     sent_to: str
+    #
+    # A change is saved and not published: `sent_to` is then the saved value.
+    #
+    saved: bool = False
+    #
+    # A publish is done and the nodes have not been deployed since.
+    #
+    waiting: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,8 +76,18 @@ def target(challenge: cluster_settings.AcmeChallenge | None) -> str:
     return f"{shown}:{challenge.port}"
 
 
-def rows(clusters: Sequence[str], readings: Iterable[Any]) -> list[ClusterRow]:
-    """One row per listed cluster, in the order the installation lists them."""
+def rows(
+    clusters: Sequence[str],
+    readings: Iterable[Any],
+    saved: Mapping[str, Any] | None = None,
+    waiting: Collection[str] = (),
+) -> list[ClusterRow]:
+    """One row per listed cluster, in the order the installation lists them.
+
+    `saved` holds each cluster's saved settings (`ClusterChange`), which are what
+    the cluster will send once they are published, so the row shows them; `waiting`
+    the clusters whose publish has not been deployed yet.
+    """
 
     by_cluster = {row.cluster: row for row in readings}
     result: list[ClusterRow] = []
@@ -77,12 +95,23 @@ def rows(clusters: Sequence[str], readings: Iterable[Any]) -> list[ClusterRow]:
         row = by_cluster.get(cluster)
         reading = row.result if row is not None and row.outcome == "done" else None
         readable = isinstance(reading, Mapping)
+        sent_to = target(challenge_of(reading)) if isinstance(reading, Mapping) else ""
+        change = (saved or {}).get(cluster) if readable else None
+        if change is not None:
+            try:
+                sent_to = target(
+                    cluster_settings.load_document(change.document.encode("utf-8")).acme_challenge
+                )
+            except ConfigError:
+                change = None
         result.append(
             ClusterRow(
                 cluster=cluster,
                 href=href(cluster),
                 readable=readable,
-                sent_to=target(challenge_of(reading)) if isinstance(reading, Mapping) else "",
+                sent_to=sent_to,
+                saved=change is not None,
+                waiting=readable and change is None and cluster in waiting,
             )
         )
     return result

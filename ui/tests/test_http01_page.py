@@ -91,6 +91,33 @@ class ThePages(SettingsClusterTestCase):
         self.assertEqual(self.client_for(role="reader").get("/http01/edge-demo").status_code, 403)
         self.assertEqual(self.client_for().get("/http01/elsewhere").status_code, 404)
 
+    def test_the_list_shows_a_saved_change_that_is_not_published_yet(self) -> None:
+        draft = mock.Mock(document="acme_challenge: {address: 192.0.2.9, port: 8080}\n", revision=1)
+        with mock.patch(
+            "haprion_ui.pages.settings.settled_changes", return_value={"settings": draft}
+        ):
+            page = self.client_for().get("/http01").text
+
+        self.assertIn("<code>192.0.2.9:8080</code>", page)
+        self.assertIn("Saved · not published", page)
+        self.assertNotIn("<code>192.0.2.5:80</code>", page)
+
+    def test_the_list_says_a_published_change_waits_for_the_deploy(self) -> None:
+        with mock.patch(
+            "haprion_ui.pages.settings.network.awaiting_deploy",
+            return_value=frozenset({"edge-demo"}),
+        ):
+            page = self.client_for().get("/http01").text
+
+        self.assertEqual(page.count("Reconfigured · deploy to activate"), 1)
+        self.assertNotIn("Saved · not published", page)
+
+    def test_the_list_says_nothing_extra_when_nothing_is_saved_or_waiting(self) -> None:
+        page = self.client_for().get("/http01").text
+
+        self.assertNotIn("Saved · not published", page)
+        self.assertNotIn("deploy to activate", page)
+
     def test_the_form_shows_the_clusters_address(self) -> None:
         page = self.client_for().get("/http01/edge-demo").text
         self.assertIn('value="192.0.2.5"', page)

@@ -752,13 +752,34 @@ def build_router(config: Config) -> APIRouter:
         if not isinstance(gate, AuthenticatedSession):
             return gate
         clusters, readings = read_source(request, config, SETTINGS_SOURCE)
+        readings = list(readings)
+        #
+        # What the next publish will send, and what is published and not yet
+        # deployed: the Logs & metrics card says both, so this list does too.
+        #
+        saved: dict[str, db.ClusterChange] = {}
+        with request.app.state.pool.connection() as connection:
+            recent = db.recent_jobs(connection)
+            for reading in readings:
+                if reading.outcome != "done":
+                    continue
+                change = settled_changes(
+                    connection, reading.cluster, {"settings": reading_head(reading)}
+                ).get("settings")
+                if change is not None:
+                    saved[reading.cluster] = change
         return TEMPLATES.TemplateResponse(
             request,
             "http01.html",
             _http01_context(
                 request,
                 gate,
-                rows=http01_page.rows(clusters, readings),
+                rows=http01_page.rows(
+                    clusters,
+                    readings,
+                    saved,
+                    network.awaiting_deploy(recent, part="settings"),
+                ),
                 can_change=config.management_writes and gate.role == "admin",
             ),
         )

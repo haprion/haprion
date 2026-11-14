@@ -1,6 +1,7 @@
 {% extends "layout.html" %}
 {% from "_back.html" import back_button %}
 {% block title %}HTTP-01 — Haprion{% endblock %}
+{% macro state_badge(row) %}{% if row.saved %} <span class="status-badge status-badge-info">Saved · not published</span>{% elif row.waiting %} <span class="status-badge status-badge-warning">Reconfigured · deploy to activate</span>{% endif %}{% endmacro %}
 {% block content %}
 {#
   Where each cluster sends Let's Encrypt's challenge (PL17): one line per cluster, and the cluster's own
@@ -20,8 +21,8 @@
       <tr{% if can_change and row.readable %} data-href="{{ row.href }}"{% endif %}>
         <td data-label="Cluster"><strong>{{ row.cluster }}</strong></td>
         {% if not row.readable %}<td data-label="Challenges go to"><span class="optional">Not read yet</span></td>
-        {% elif row.sent_to.startswith('Not sent') %}<td data-label="Challenges go to"><span class="optional">{{ row.sent_to }}</span></td>
-        {% else %}<td data-label="Challenges go to"><code>{{ row.sent_to }}</code></td>{% endif %}
+        {% elif row.sent_to.startswith('Not sent') %}<td data-label="Challenges go to"><span class="optional">{{ row.sent_to }}</span>{{ state_badge(row) }}</td>
+        {% else %}<td data-label="Challenges go to"><code>{{ row.sent_to }}</code>{{ state_badge(row) }}</td>{% endif %}
         {% if can_change %}<td data-label="" class="settings-actions">{% if row.readable %}<a class="secondary-button settings-edit" href="{{ row.href }}">Edit</a>{% endif %}</td>{% endif %}
       </tr>
       {% else %}

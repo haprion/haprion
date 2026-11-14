@@ -26,6 +26,7 @@ import time
 import unittest
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 from haprion import dnsdist_config
 from haprion.config import Vip
@@ -35,6 +36,8 @@ from haprion.proxy_model import load_proxy
 from tests.test_node_dns_metrics import parse_dns_metrics
 
 DNSDIST = shutil.which("dnsdist")
+# Starts of dnsdist before a lost port is a failure (see setUp).
+STARTS = 5
 
 
 def free_port() -> int:
@@ -165,6 +168,27 @@ class GeneratedConfigurationInDnsdist(unittest.TestCase):
         for server in self.servers:
             server.start()
             self.addCleanup(server.stop)
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory)
+        #
+        # A port free_port() found is free only until it is let go: another
+        # test process can take it before dnsdist binds it. dnsdist then stops
+        # at once - `Fatal error ... Address already in use`, measured
+        # 26-11-14 - and the test used to wait out its deadline and say only
+        # that nothing answered (a pre-push gate, 26-11-14). A start that lost
+        # its port is made again on new ones; any other stop fails with what
+        # dnsdist said.
+        #
+        for attempt in range(1, STARTS + 1):
+            said = self._start(directory)
+            if said is None:
+                return
+            if "Address already in use" not in said or attempt == STARTS:
+                self.fail(f"dnsdist stopped on start {attempt}:\n{said}")
+
+    def _start(self, directory: Path) -> str | None:
+        """dnsdist on two new ports, answering; or what it said when it stopped instead."""
+
         self.open_port, self.closed_port = free_port(), free_port()
         objects = [
             load_proxy(
@@ -176,8 +200,6 @@ class GeneratedConfigurationInDnsdist(unittest.TestCase):
             ),
         ]
         layer = generate(objects, vips={"main": Vip("main", "127.0.0.1")}, default_vip="main")
-        directory = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, directory)
         config = directory / dnsdist_config.FILE
         config.write_text(layer.dns_files[dnsdist_config.FILE])
         checked = subprocess.run(  # the installed dnsdist, our own file
@@ -189,28 +211,36 @@ class GeneratedConfigurationInDnsdist(unittest.TestCase):
         )
         self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
         self.assertNotIn('prio="Warning"', checked.stdout + checked.stderr)
-        self.process = subprocess.Popen(  # the installed dnsdist, our own file
-            [str(DNSDIST), "--supervised", "--disable-syslog", "-C", str(config)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        self.addCleanup(self._stop)
-        self._wait_until_answering()
-
-    def _stop(self) -> None:
-        self.process.terminate()
-        self.process.wait(timeout=10)
-
-    def _wait_until_answering(self) -> None:
+        output = directory / "dnsdist.out"
+        with output.open("wb") as written:
+            process = subprocess.Popen(  # the installed dnsdist, our own file
+                [str(DNSDIST), "--supervised", "--disable-syslog", "-C", str(config)],
+                stdout=written,
+                stderr=subprocess.STDOUT,
+            )
+        self.addCleanup(self._stop, process)
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
+            if process.poll() is not None:
+                return (
+                    output.read_text(errors="replace") or f"exit {process.returncode}, nothing said"
+                )
             try:
                 if ask(self.open_port)[0] == 0:
-                    return
+                    return None
             except OSError:
                 pass
             time.sleep(0.2)
-        self.fail("dnsdist did not answer on the generated listener")
+        self.fail(
+            "dnsdist did not answer on the generated listener:\n"
+            + output.read_text(errors="replace")
+        )
+
+    @staticmethod
+    def _stop(process: subprocess.Popen[bytes]) -> None:
+        if process.poll() is None:
+            process.terminate()
+        process.wait(timeout=10)
 
     def test_an_allowed_client_is_answered_by_the_pool_in_turn(self) -> None:
         answers = {ask(self.open_port)[1] for _ in range(6)}
@@ -348,6 +378,34 @@ backends:
                     self.assertNotIn('prio="Error"', output)
                     checked += 1
         self.assertGreater(checked, 0)
+
+
+@unittest.skipUnless(DNSDIST, "dnsdist is not installed here")
+class AStartThatLostItsPort(unittest.TestCase):
+    def test_is_made_again_on_new_ports(self) -> None:
+        """The race of 26-11-14, made on purpose: the listener's port is held when dnsdist starts."""
+
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as held:
+            held.bind(("127.0.0.1", 0))
+            taken = int(held.getsockname()[1])
+            ports = iter([taken, free_port(), free_port(), free_port()])
+            starts: list[list[str]] = []
+            popen = subprocess.Popen
+
+            def counted(arguments: list[str], **options: object) -> subprocess.Popen[bytes]:
+                if "--supervised" in arguments:
+                    starts.append(list(arguments))
+                return popen(arguments, **options)  # type: ignore[call-overload,no-any-return]
+
+            case = GeneratedConfigurationInDnsdist("test_a_client_outside_allow_from_is_refused")
+            result = unittest.TestResult()
+            with (
+                mock.patch(f"{__name__}.free_port", side_effect=lambda: next(ports)),
+                mock.patch.object(subprocess, "Popen", side_effect=counted),
+            ):
+                case.run(result)
+        self.assertEqual(result.failures + result.errors, [])
+        self.assertEqual(len(starts), 2, "the first start, on the held port, should have been lost")
 
 
 if __name__ == "__main__":

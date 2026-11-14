@@ -86,6 +86,7 @@ READER_REFUSED_PAGES = {
     "/settings/api-tokens/{name}/extend",
     "/settings/api-tokens/{name}/revoke",
     "/settings/blocklists/new",
+    "/settings/blocklists/{name}/add-to-proxies",
     "/settings/blocklists/{name}/edit",
     "/settings/blocklists/{name}/remove",
     "/settings/clusters/{cluster}",

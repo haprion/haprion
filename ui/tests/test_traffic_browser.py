@@ -31,6 +31,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
 from unittest import mock
+from urllib.parse import urlsplit
 
 from haprion_ui.app import create_app
 from tests import browser_policy, live_server
@@ -217,6 +218,66 @@ class MarkingARange(TheChartInABrowser):
             self.assertTrue(self.stayed(page), "choosing one cluster reloaded the page")
             self.assertEqual(len(asked), 1, asked)
             self.assertIn("the last 7 days", page.text_content(".page-lede"))
+
+    def test_the_last_choice_is_the_one_drawn_however_the_answers_arrive(self) -> None:
+        """PL10: All, then one cluster; the slower answer for All was drawn after the cluster's."""
+
+        held: list[Any] = []
+
+        def slow_all(route: Any) -> None:
+            if urlsplit(route.request.url).path == "/metrics":
+                held.append(route)
+            else:
+                route.continue_()
+
+        with self.signed_in() as page:
+            page.route("**/metrics?*", slow_all)
+            page.click(".metrics-clusters a:has-text('All')")
+            page.wait_for_function("() => true")
+            self.assertEqual(len(held), 1)
+            page.click(".metrics-clusters a:has-text('service-demo')")
+            page.wait_for_function(
+                "() => window.location.pathname === '/clusters/service-demo/metrics'"
+            )
+            page.wait_for_function(
+                "() => document.querySelectorAll('[data-traffic-region]').length === 1"
+            )
+            for route in held:
+                with contextlib.suppress(Exception):  # aborted by the later choice
+                    route.continue_()
+            page.wait_for_timeout(700)
+
+            self.assertEqual(
+                page.evaluate("window.location.pathname"), "/clusters/service-demo/metrics"
+            )
+            self.assertEqual(
+                page.evaluate("document.querySelectorAll('[data-traffic-region]').length"), 1
+            )
+            self.assertIn(
+                "service-demo",
+                page.text_content(".metrics-clusters a.is-current") or "",
+            )
+
+    def test_a_choice_made_with_the_keyboard_keeps_the_focus_on_the_choice(self) -> None:
+        """PL12: the strip was replaced, and focus fell to the page's top."""
+
+        with self.signed_in() as page:
+            page.focus(".metrics-clusters a:has-text('All')")
+            page.keyboard.press("Enter")
+            page.wait_for_function("() => window.location.pathname === '/metrics'")
+            page.wait_for_function(
+                "() => document.querySelectorAll('[data-traffic-region]').length === 2"
+            )
+            page.wait_for_function("() => document.activeElement !== document.body")
+
+            focused = page.evaluate(
+                """() => ({
+                    current: document.activeElement.getAttribute('aria-current'),
+                    text: document.activeElement.textContent.trim(),
+                })"""
+            )
+            self.assertEqual(focused["current"], "true")
+            self.assertTrue(focused["text"].startswith("All"), focused)
 
     def test_the_scale_and_the_axis_are_placed_without_inline_style(self) -> None:
         # Review 26-10-13, S2: positions travel as data and page.js places them,

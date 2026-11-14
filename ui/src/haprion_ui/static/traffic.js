@@ -201,10 +201,27 @@
   //
   const address = (link) => link.getAttribute("href");
 
+  //
+  // The answers do not come back in the order they were asked for: All reads
+  // every cluster's cards and a single cluster one's. Only the last choice is
+  // drawn - an earlier one still on its way is cancelled, and one that arrives
+  // anyway is dropped - so the page, the address and the history all say what
+  // the reader chose last.
+  //
+  let latest = 0;
+  let pending = null;
+
   const swap = async (href, push) => {
-    const answer = await fetch(href, { credentials: "same-origin" });
+    const mine = ++latest;
+    if (pending) pending.abort();
+    const controller = new AbortController();
+    pending = controller;
+    const answer = await fetch(href, { credentials: "same-origin", signal: controller.signal });
+    if (mine !== latest) return;
     if (!answer.ok) throw new Error(String(answer.status));
-    const parsed = new DOMParser().parseFromString(await answer.text(), "text/html");
+    const text = await answer.text();
+    if (mine !== latest) return;
+    const parsed = new DOMParser().parseFromString(text, "text/html");
     const fresh = parsed.querySelectorAll(REGION);
     const here = document.querySelectorAll(REGION);
     //
@@ -232,10 +249,30 @@
     //
     // The strip marks what is chosen; on Metrics the heading names the range.
     //
+    //
+    // The link the reader chose may hold the focus, and a replaced element
+    // leaves it on the page's top: the same link in the new strip takes it
+    // back, so a choice made with the keyboard is followed by the next Tab
+    // from where it was made.
+    //
+    const focused = document.activeElement;
+    const focusedIn = focused && focused.closest ? focused.closest(".page-ranges-sticky") : null;
+    const focusedHref = focusedIn ? focused.getAttribute("href") : null;
+    const focusedNav = focusedIn && focused.closest("nav") ? focused.closest("nav").getAttribute("aria-label") : null;
     for (const selector of metrics ? [".page-ranges-sticky", ".page-heading"] : [".page-ranges-sticky"]) {
       const freshPart = parsed.querySelector(selector);
       const herePart = document.querySelector(selector);
       if (freshPart && herePart) herePart.replaceWith(freshPart);
+    }
+    if (focusedIn) {
+      const strip = document.querySelector(".page-ranges-sticky");
+      const links = strip ? Array.from(strip.querySelectorAll("a")) : [];
+      const same = links.find((link) => link.getAttribute("href") === focusedHref);
+      const current = links.find(
+        (link) => link.hasAttribute("aria-current") && link.closest("nav")?.getAttribute("aria-label") === focusedNav
+      );
+      const target = same || current;
+      if (target) target.focus({ preventScroll: true });
     }
     if (parsed.title) document.title = parsed.title;
     if (push) history.pushState({ traffic: true }, "", href);
@@ -243,7 +280,8 @@
   };
 
   const follow = (href) => {
-    swap(href, true).catch(() => {
+    swap(href, true).catch((error) => {
+      if (error && error.name === "AbortError") return; // a later choice took over
       //
       // Anything unexpected - offline, a redirect to a login page, a shape
       // that no longer matches - falls back to the navigation this replaced.
@@ -287,7 +325,9 @@
   // still as going forward.
   //
   window.addEventListener("popstate", () => {
-    swap(window.location.href, false).catch(() => window.location.reload());
+    swap(window.location.href, false).catch((error) => {
+      if (!error || error.name !== "AbortError") window.location.reload();
+    });
   });
 
   //

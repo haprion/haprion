@@ -116,6 +116,28 @@
   };
 
   //
+  // Nothing chosen under Reachable from is open to everyone (B513), which a
+  // click on the last group's name gets to without a word: said under the
+  // field while it is so. A dns listener has its own, more exact sentence above.
+  //
+  const wireOpenEverywhere = () => {
+    const protocol = document.querySelector("select[name='protocol']");
+    const groups = document.querySelector("select[name='allow_from']");
+    const ranges = document.querySelector("textarea[name='allow_ranges']");
+    const note = document.querySelector("[data-open-note]");
+    if (!groups || !ranges || !note) return;
+    const apply = () => {
+      const narrowed =
+        Array.from(groups.selectedOptions).some((option) => option.value) ||
+        ranges.value.trim() !== "";
+      note.hidden = narrowed || (protocol !== null && protocol.value === "dns");
+    };
+    for (const field of [protocol, groups]) if (field) field.addEventListener("change", apply);
+    ranges.addEventListener("input", apply);
+    apply();
+  };
+
+  //
   // The balancing key has nothing to name unless the algorithm hashes
   // something: `hdr` takes a header, `url_param` a query parameter, and the
   // engine refuses a key beside any other algorithm rather than ignoring it.
@@ -558,7 +580,9 @@
   // blocklists the lists grew, and Ctrl+click was the only way to choose more
   // than one. The empty choice (Everywhere, Nobody) stands for none: choosing
   // it lets every group go, and letting the last group go chooses it again,
-  // unless addresses are written beside it. Keys still move as a listbox's do.
+  // unless addresses are written beside it. Keys still move as a listbox's do,
+  // and the same rule holds for what they leave chosen (B513): the empty choice
+  // never stands beside a group.
   //
   const wireToggledChoices = () => {
     for (const [groupsName, rangesName] of EMPTY_CHOICES) {
@@ -566,6 +590,22 @@
       if (!groups) continue;
       const ranges = document.querySelector(`textarea[name='${rangesName}']`);
       const empty = groups.querySelector("option[value='']");
+      let wasEmpty = empty !== null && empty.selected;
+      groups.addEventListener("change", () => {
+        if (!empty) return;
+        const chosen = Array.from(groups.options).some((o) => o !== empty && o.selected);
+        if (empty.selected && chosen) {
+          //
+          // Both: the empty choice was just chosen over groups, or a group over it.
+          //
+          if (wasEmpty) {
+            empty.selected = false;
+          } else {
+            for (const other of groups.options) other.selected = other === empty;
+          }
+        }
+        wasEmpty = empty.selected;
+      });
       groups.addEventListener("mousedown", (event) => {
         const option = event.target.closest("option");
         if (!option || option.disabled || event.button !== 0) return;
@@ -625,6 +665,7 @@
     wireBackendTlsPolicy();
     wireProxyProtocol();
     wireOpenDns();
+    wireOpenEverywhere();
     wireListenTlsPolicy();
     wireRedirectStatus();
     keepPosition();

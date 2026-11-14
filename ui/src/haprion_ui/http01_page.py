@@ -18,7 +18,12 @@ from haprion import cluster_settings
 from haprion.config import ConfigError
 from haprion.digits import is_digits
 
-from haprion_ui.cluster_settings_page import FormProblem, sentence
+from haprion_ui.cluster_settings_page import (
+    FormProblem,
+    form_from_result,
+    sentence,
+    settings_from_form,
+)
 
 NOT_SENT = "Not sent — HTTP-01 cannot be used"
 
@@ -107,6 +112,21 @@ def challenge_from(form: Http01Form) -> cluster_settings.AcmeChallenge | None:
         return cluster_settings.load_mapping({"acme_challenge": entry}).acme_challenge
     except ConfigError as exc:
         raise FormProblem(sentence(str(exc))) from exc
+
+
+def settings_in_effect(
+    result: Mapping[str, Any], saved_document: str | None
+) -> cluster_settings.ClusterSettings:
+    """The settings as they stand: the saved draft, else the published reading.
+
+    Raises `ConfigError` or `FormProblem` when what is held cannot be read.
+    The one answer for every page that has to judge something against the
+    cluster's settings, so none of them reads another copy.
+    """
+
+    if saved_document is not None:
+        return cluster_settings.load_document(saved_document.encode("utf-8"))
+    return with_challenge(settings_from_form(form_from_result(result)), challenge_of(result))
 
 
 def with_challenge(

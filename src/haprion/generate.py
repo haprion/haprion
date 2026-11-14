@@ -2267,7 +2267,8 @@ def _refuse_challenge_listener(
         ):
             raise GeneratorError(
                 f"{proxy.name} listens on {vip.name} port {port}, which the HTTP-01 challenge "
-                "needs on a cluster that sends it to the manager"
+                "needs on a cluster that sends it to the manager. Choose another port, or turn "
+                "the cluster's HTTP-01 address off on the HTTP-01 page"
             )
     if reservations.claims(vip.address, port):
         raise GeneratorError(

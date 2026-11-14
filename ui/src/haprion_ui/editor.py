@@ -25,6 +25,8 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Annotated
 
+from haprion.cluster_settings import NOTHING as NO_SETTINGS
+from haprion.cluster_settings import ClusterSettings
 from haprion.config import AbuseProtection, UnknownHost, Vip
 from haprion.digits import is_digits
 from haprion.generate import GeneratorError, generate
@@ -108,6 +110,12 @@ class EditorCluster:
     # gets every list.
     #
     blocklists: tuple[str, ...] = ()
+    #
+    # The cluster's settings as they stand (the saved draft, else the published
+    # reading): the HTTP-01 challenge takes port 80 on its addresses, which an
+    # object is refused for at the publish. None when they cannot be read.
+    #
+    settings: ClusterSettings = NO_SETTINGS
 
     @property
     def group_names(self) -> tuple[str, ...]:
@@ -151,6 +159,7 @@ def editor_cluster(
     certificates: CertificateClusterView | None,
     reservations: Reservations = NOTHING_RESERVED,
     blocklists: Iterable[str] = (),
+    settings: ClusterSettings = NO_SETTINGS,
 ) -> EditorCluster:
     """Assemble one cluster's real choices out of the cached readings."""
 
@@ -180,6 +189,7 @@ def editor_cluster(
         authority_ids=tuple(sorted(certificates.authorities)) if certificates else (),
         reservations=reservations,
         blocklists=tuple(sorted(blocklists)),
+        settings=settings,
     )
 
 
@@ -279,6 +289,7 @@ def check_document(
             countries=unchecked_countries([edited, *neighbours]),
             reservations=cluster.reservations,
             blocklists=cluster.blocklists,
+            settings=cluster.settings,
         ).configuration
     except GeneratorError as exc:
         return Preview(document=document, problem=str(exc))

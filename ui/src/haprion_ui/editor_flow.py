@@ -8,6 +8,7 @@ second tab's newer work is kept rather than written away.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
@@ -27,7 +28,8 @@ from haprion import (
     server_names,
     status_collect,
 )
-from haprion.config import CLUSTER_ID, DEFAULT_ABUSE_WINDOW
+from haprion.cluster_settings import NOTHING as NO_SETTINGS
+from haprion.config import CLUSTER_ID, DEFAULT_ABUSE_WINDOW, ConfigError
 from haprion.digits import is_digits
 from haprion.proxy_model import (
     DEFAULT_DNS_FALL,
@@ -55,6 +57,7 @@ from haprion_ui import (
     features,
     health,
     history,
+    http01_page,
     metrics,
     network,
     objects,
@@ -65,6 +68,7 @@ from haprion_ui import preview as preview_module
 from haprion_ui import probe as probe_module
 from haprion_ui.access import current_session, forbidden_page
 from haprion_ui.cluster_identity import accent_index
+from haprion_ui.cluster_settings_page import FormProblem
 from haprion_ui.config import Config
 from haprion_ui.reading import (
     CERTIFICATE_SOURCE,
@@ -72,6 +76,7 @@ from haprion_ui.reading import (
     INVENTORY_SOURCE,
     NETWORK_SOURCE,
     OBJECTS_SOURCE,
+    SETTINGS_SOURCE,
     STATUS_SOURCE,
     read_manager_certificates,
     read_source,
@@ -80,7 +85,9 @@ from haprion_ui.refusals import refusal_page
 from haprion_ui.saved_work import (
     ObjectsReading,
     ObjectWork,
+    reading_head,
     saved_network_rows,
+    settled_changes,
     settled_draft,
     settled_work,
     unsettled_drafts,
@@ -169,12 +176,32 @@ def editor_state(request: Request, config: Config, cluster: str) -> EditorState:
         request, config, NETWORK_SOURCE, cluster=cluster, clusters=clusters
     )
     #
+    # The settings the next publish will carry: the saved draft, else the
+    # published reading. The challenge takes port 80, which an object is
+    # otherwise refused for only at the publish.
+    #
+    _, settings_rows = read_source(
+        request, config, SETTINGS_SOURCE, cluster=cluster, clusters=clusters
+    )
+    settings_row = next(
+        (row for row in settings_rows if row.cluster == cluster and row.outcome == "done"), None
+    )
+    #
     # Checked against the saved network when there is one (B257): an object
     # saved for a VIP the same publish adds would otherwise be refused for it.
     #
     with request.app.state.pool.connection() as connection:
         network_rows, _saved = saved_network_rows(connection, list(network_rows))
         blocklist_names = blocklist_form.fetched_names(connection)
+        saved_settings = settled_changes(
+            connection, cluster, {"settings": reading_head(settings_row)}
+        ).get("settings")
+    settings = NO_SETTINGS
+    if settings_row is not None and isinstance(settings_row.result, Mapping):
+        with contextlib.suppress(ConfigError, FormProblem):
+            settings = http01_page.settings_in_effect(
+                settings_row.result, saved_settings.document if saved_settings else None
+            )
     described = next(
         (
             view
@@ -247,6 +274,7 @@ def editor_state(request: Request, config: Config, cluster: str) -> EditorState:
                 )
             ),
             blocklist_names,
+            settings,
         ),
         available=reading is not None and reading.outcome == "done" and not reading.poll_error,
     )

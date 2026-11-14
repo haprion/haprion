@@ -126,7 +126,15 @@ class EditorTestCase(LoginTestCase):
         self.others: list[ProxyDraft] = []
         self.conflict = False
         self.order: list[str] = []
+        self.saved_settings: db.ClusterChange | None = None
         for target, side_effect in (
+            (
+                "cluster_changes",
+                lambda _c, _cluster: (
+                    {"settings": self.saved_settings} if self.saved_settings else {}
+                ),
+            ),
+            ("change_publishes", lambda _c, **_kw: []),
             (
                 "cluster_drafts",
                 lambda _c, _cluster: [*([self.draft] if self.draft else []), *self.others],
@@ -284,7 +292,7 @@ class EditorTestCase(LoginTestCase):
 
 
 class ReachingTheEditor(EditorTestCase):
-    def test_editor_reads_the_cluster_list_once_and_only_its_four_sources(self) -> None:
+    def test_editor_reads_the_cluster_list_once_and_only_its_five_sources(self) -> None:
         request = mock.Mock()
         request.app.state.pool = self.pool
         with (
@@ -293,15 +301,23 @@ class ReachingTheEditor(EditorTestCase):
             mock.patch("haprion_ui.db.cluster_networks", return_value=[NETWORK]) as networks_read,
             mock.patch("haprion_ui.db.cluster_certificates", return_value=[]) as certificates_read,
             mock.patch("haprion_ui.db.cluster_histories", return_value=[]) as histories_read,
+            mock.patch("haprion_ui.db.cluster_settings", return_value=[SETTINGS]) as settings_read,
         ):
             state = editor_flow.editor_state(request, writing_configuration(), "alpha")
         self.assertEqual(state.commit, COMMIT)
         self.assertEqual([obj.name for obj in state.stored], ["shop"])
         self.assertEqual(listed.call_count, 1)
-        for reader in (objects_read, networks_read, certificates_read, histories_read):
+        for reader in (
+            objects_read,
+            networks_read,
+            certificates_read,
+            histories_read,
+        ):
             # The fixture's manager reading is drawn from every cluster's listing.
             per_cluster = [call.kwargs for call in reader.call_args_list if call.kwargs]
             self.assertEqual(per_cluster, [{"cluster": "alpha"}])
+        # The settings reading has no per-cluster form; it is one read of the cached rows.
+        self.assertEqual(settings_read.call_count, 1)
 
     def test_only_a_blocklist_that_was_fetched_is_offered_under_denied(self) -> None:
         # The publish knows the lists the timer has written; a list never fetched is not one.
@@ -471,6 +487,47 @@ class SavingADraft(EditorTestCase):
 
         self.assertIn("reserved in manual/reservations.yaml", answer.text)
         self.assertNotIn("<strong>Valid", answer.text)
+
+    def _challenge_the_editor_is_given(self, settings: ClusterSettingsRow = SETTINGS) -> Any:
+        request = mock.Mock()
+        request.app.state.pool = self.pool
+        with (
+            mock.patch("haprion_ui.db.cluster_list", return_value=("alpha",)),
+            mock.patch("haprion_ui.db.cluster_settings", return_value=[settings]),
+        ):
+            return editor_flow.editor_state(
+                request, writing_configuration(), "alpha"
+            ).choices.settings.acme_challenge
+
+    def test_the_editor_checks_against_the_published_challenge(self) -> None:
+        sent = replace(
+            SETTINGS,
+            result={
+                **(SETTINGS.result or {}),
+                "acme_challenge": {"address": "192.0.2.5", "port": 80},
+            },
+        )
+        challenge = self._challenge_the_editor_is_given(sent)
+
+        self.assertEqual((challenge.address, challenge.port), ("192.0.2.5", 80))
+
+    def test_the_saved_settings_decide_where_the_published_ones_say_otherwise(self) -> None:
+        self.saved_settings = db.ClusterChange(
+            cluster="alpha",
+            kind="settings",
+            document="acme_challenge: {address: 192.0.2.6, port: 8080}\n",
+            base_hash=COMMIT,
+            revision=1,
+            updated_by="admin",
+            updated_at=OBSERVED,
+            id=uuid4(),
+        )
+        challenge = self._challenge_the_editor_is_given()
+
+        self.assertEqual((challenge.address, challenge.port), ("192.0.2.6", 8080))
+
+    def test_a_cluster_that_sends_nothing_gives_the_editor_no_challenge(self) -> None:
+        self.assertIsNone(self._challenge_the_editor_is_given())
 
     def test_an_object_written_on_the_command_line_with_many_names_opens_and_saves(self) -> None:
         """Review 26-10-24, 15-08: it opened, and Save refused it as too long."""

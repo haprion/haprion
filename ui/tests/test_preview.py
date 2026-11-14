@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import yaml
+from haprion.cluster_settings import AcmeChallenge, ClusterSettings
 from haprion.reservations import Reservations
 
 from haprion_ui import editor
@@ -69,6 +70,32 @@ def form(**overrides: object) -> dict[str, object]:
         }
         | overrides
     )
+
+
+class TheChallengeTakesPort80(unittest.TestCase):
+    """A cluster that sends HTTP-01 to the manager has port 80 on its https addresses."""
+
+    SENDING = replace(
+        PREVIEW_EDITOR, settings=ClusterSettings(acme_challenge=AcmeChallenge("192.0.2.5", 80))
+    )
+
+    def neighbour(self) -> tuple[str, str]:
+        return "app", build_document(form(name="app", redirect_http=False))
+
+    def tcp_on_80(self) -> dict[str, object]:
+        return form(name="ssh", protocol="tcp", tcp_port="80", hostnames="", certificate="")
+
+    def test_a_tcp_object_on_port_80_is_refused_by_the_check_and_told_what_to_do(self) -> None:
+        result = editor.check(self.tcp_on_80(), self.SENDING, others=[self.neighbour()])
+
+        self.assertIn("HTTP-01 challenge", str(result.problem))
+        self.assertIn("choose another port", str(result.problem).lower())
+        self.assertIn("HTTP-01 page", str(result.problem))
+
+    def test_the_same_object_passes_on_a_cluster_that_sends_nothing(self) -> None:
+        result = editor.check(self.tcp_on_80(), PREVIEW_EDITOR, others=[self.neighbour()])
+
+        self.assertIsNone(result.problem)
 
 
 class TheFormBecomesTheObjectTheEngineReads(unittest.TestCase):

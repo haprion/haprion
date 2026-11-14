@@ -850,12 +850,8 @@ def build_router(config: Config) -> APIRouter:
         #
         saved = _saved_settings(request, cluster, row)
         try:
-            current = (
-                cluster_settings_module.load_document(saved.document.encode("utf-8"))
-                if saved is not None
-                else cluster_settings_page.settings_from_form(
-                    cluster_settings_page.form_from_result(row.result)
-                )
+            current = http01_page.settings_in_effect(
+                row.result, saved.document if saved is not None else None
             )
         except (ConfigError, cluster_settings_page.FormProblem):
             return _http01_edit_page(

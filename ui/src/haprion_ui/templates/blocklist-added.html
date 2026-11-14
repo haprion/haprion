@@ -10,8 +10,9 @@
   <div class="heading-title">{{ back_button('/settings#blocklists', 'Settings') }}<h1>{{ name }} under Denied</h1></div>
 </section>
 
+<div class="cluster-list">
 {% for result in results %}
-<section class="cluster-card">
+<section class="cluster-card {{ result.cluster | cluster_accent }}">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>{{ result.cluster }}</h3><p>{% if result.added %}Added to {{ result.added | length }} prox{{ 'y' if result.added | length == 1 else 'ies' }}, saved for the next publish.{% elif not result.skipped %}Every proxy already has it.{% else %}Added to none.{% endif %}</p></div></div>
     {% if result.added %}<div class="cluster-state"><a class="secondary-button" href="/proxies?{{ {'cluster': result.cluster} | urlencode }}">Publish…</a></div>{% endif %}
   </header>
@@ -25,4 +26,5 @@
 {% else %}
 <p class="table-empty">No cluster yet.</p>
 {% endfor %}
+</div>
 {% endblock %}

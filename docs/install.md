@@ -165,7 +165,8 @@ socket is not sent to a node still on the old package. The deploy stops before i
 (`traffic_stream_not_prepared`).
 
 **What is released when.** A version with new functions (1.2, 1.3) is made by hand. A patch version (1.1.1,
-1.1.2) is made automatically and carries only updated dependencies and WAF engine, never a new function:
+1.1.2) never carries a new function. One made by hand fixes bugs; one made automatically carries only updated
+dependencies and WAF engine:
 
 - a fix for a known vulnerability in a dependency or the WAF engine is released a day after it is merged at the
   earliest, once the release's own tests have passed, which takes some hours more

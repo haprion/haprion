@@ -377,7 +377,7 @@ class AManager(unittest.TestCase):
         policy.write_text(policy.read_text() + "  webroot: /var/www/acme\n")
         challenges = self.machine.path("/var/www/acme/.well-known/acme-challenge")
         challenges.mkdir(parents=True)
-        return challenges
+        return Path(challenges)
 
     def test_an_http01_webroot_with_only_certbot_s_empty_directories_goes(self) -> None:
         """26-11-14: the steps make the webroot by default; what they made, removal takes."""

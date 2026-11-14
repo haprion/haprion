@@ -363,8 +363,15 @@ class WhatStep2WritesTheEngineReads(unittest.TestCase):
         assert policy.acme is not None
         self.assertEqual(policy.acme.webroot, Path("/var/www/acme"))
 
-    def test_without_a_webroot_answered_the_policy_names_none(self) -> None:
+    def test_without_a_webroot_answered_the_policy_names_the_default(self) -> None:
+        """26-11-14: a new installation that answered nothing offers HTTP-01 too."""
+
         policy = load_policy(self.render(), require_secure=False)
+        assert policy.acme is not None
+        self.assertEqual(policy.acme.webroot, Path("/var/www/acme"))
+
+    def test_a_webroot_answered_empty_leaves_http01_out(self) -> None:
+        policy = load_policy(self.render("ACME_WEBROOT=\n"), require_secure=False)
         assert policy.acme is not None
         self.assertIsNone(policy.acme.webroot)
 

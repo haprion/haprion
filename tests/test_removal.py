@@ -372,6 +372,32 @@ class AManager(unittest.TestCase):
         self.main("--yes")
         self.assertFalse(self.machine.path("/srv/certdist").exists())
 
+    def with_webroot(self) -> Path:
+        policy = self.machine.path("/etc/haprion/runtime-policy.yaml")
+        policy.write_text(policy.read_text() + "  webroot: /var/www/acme\n")
+        challenges = self.machine.path("/var/www/acme/.well-known/acme-challenge")
+        challenges.mkdir(parents=True)
+        return challenges
+
+    def test_an_http01_webroot_with_only_certbot_s_empty_directories_goes(self) -> None:
+        """26-11-14: the steps make the webroot by default; what they made, removal takes."""
+
+        self.with_webroot()
+        code, said = self.main("--yes")
+
+        self.assertEqual(code, 0, said)
+        self.assertIn("(HTTP-01's webroot, empty)", said)
+        self.assertFalse(self.machine.path("/var/www/acme").exists())
+        self.assertTrue(self.machine.path("/var/www").exists())
+
+    def test_an_http01_webroot_holding_a_file_stays_and_is_said(self) -> None:
+        (self.with_webroot().parent.parent / "index.html").write_text("someone's\n")
+        code, said = self.main("--yes")
+
+        self.assertEqual(code, 0, said)
+        self.assertIn("kept, it holds files (HTTP-01's webroot)", said)
+        self.assertTrue(self.machine.path("/var/www/acme/index.html").exists())
+
     def test_a_second_run_finds_nothing_to_do(self) -> None:
         self.main("--yes")
         self.machine.accounts = [a for a in self.machine.accounts if a.pw_name == "operator"]

@@ -258,6 +258,24 @@ def roots(policy: Any, clusters: Any) -> list[str]:
     return unique
 
 
+def acme_webroot(policy: Any) -> str | None:
+    """The HTTP-01 webroot the policy names (acme.webroot), when it names one."""
+
+    acme = policy.get("acme") if isinstance(policy, dict) else None
+    webroot = acme.get("webroot") if isinstance(acme, dict) else None
+    return webroot if isinstance(webroot, str) and webroot.startswith("/") else None
+
+
+def holds_only_directories(path: Path) -> bool:
+    """Whether nothing but empty directories is under PATH: what certbot leaves in a webroot."""
+
+    return (
+        path.is_dir()
+        and not path.is_symlink()
+        and all(entry.is_dir() and not entry.is_symlink() for entry in path.rglob("*"))
+    )
+
+
 def _clusters(document: Any) -> dict[str, dict[str, Any]]:
     clusters = document.get("clusters") if isinstance(document, dict) else None
     return {k: v for k, v in (clusters or {}).items() if isinstance(v, dict)}
@@ -548,8 +566,26 @@ def plan(host: Host, stamp: str) -> list[Step]:
     if restore_default:
         files.found.append(f"{default}: put back, as the steps found it")
 
+    #
+    # The HTTP-01 webroot (26-11-14): made by the steps when the policy names
+    # it, which it does by default, but it may be a directory somebody already
+    # served from. Removed only when it holds nothing but the empty directories
+    # certbot leaves; with a file in it, it stays and is said.
+    #
+    webroot_name = acme_webroot(policy)
+    webroot = host.path(webroot_name) if webroot_name else None
+    webroot_goes = webroot is not None and holds_only_directories(webroot)
+    if webroot_goes:
+        files.found.append(f"{webroot}  (HTTP-01's webroot, empty)")
+    elif webroot is not None and webroot.exists():
+        files.found.append(f"{webroot}: kept, it holds files (HTTP-01's webroot)")
+
     def remove_files() -> list[str]:
         failed = remove(paths + key_paths)
+        if webroot_goes and webroot is not None:
+            for directory in sorted(webroot.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+                directory.rmdir()
+            webroot.rmdir()
         if emptied:
             failed += remove(list(data.iterdir()))
         for parent in PARENTS:

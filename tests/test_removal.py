@@ -398,6 +398,33 @@ class AManager(unittest.TestCase):
         self.assertIn("kept, it holds files (HTTP-01's webroot)", said)
         self.assertTrue(self.machine.path("/var/www/acme/index.html").exists())
 
+    def test_a_webroot_under_a_root_that_goes_does_not_stop_the_removal(self) -> None:
+        """PL06: the root took the webroot first, and its rmdir raised FileNotFoundError."""
+
+        policy = self.machine.path("/etc/haprion/runtime-policy.yaml")
+        policy.write_text(policy.read_text() + "  webroot: /srv/certdist/haproxy/acme\n")
+        self.machine.path("/srv/certdist/haproxy/acme/.well-known/acme-challenge").mkdir(
+            parents=True
+        )
+        code, said = self.main("--yes")
+
+        self.assertEqual(code, 0, said)
+        self.assertFalse(self.machine.path("/srv/certdist/haproxy/acme").exists())
+        self.assertTrue(
+            os.path.lexists(self.machine.path("/etc/nginx/sites-enabled/default")), said
+        )
+
+    def test_a_webroot_that_is_a_link_is_said_to_be_one(self) -> None:
+        policy = self.machine.path("/etc/haprion/runtime-policy.yaml")
+        policy.write_text(policy.read_text() + "  webroot: /var/www/acme\n")
+        self.machine.path("/var/www/real").mkdir(parents=True)
+        self.machine.path("/var/www/acme").symlink_to(self.machine.path("/var/www/real"))
+        code, said = self.main("--yes")
+
+        self.assertEqual(code, 0, said)
+        self.assertIn("kept, it is a link (HTTP-01's webroot)", said)
+        self.assertNotIn("holds files", said)
+
     def test_a_second_run_finds_nothing_to_do(self) -> None:
         self.main("--yes")
         self.machine.accounts = [a for a in self.machine.accounts if a.pw_name == "operator"]

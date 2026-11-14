@@ -574,18 +574,28 @@ def plan(host: Host, stamp: str) -> list[Step]:
     #
     webroot_name = acme_webroot(policy)
     webroot = host.path(webroot_name) if webroot_name else None
+    # One under a root that goes is taken with it, and is listed under it.
+    if webroot is not None and any(webroot.is_relative_to(p) for p in paths):
+        webroot = None
     webroot_goes = webroot is not None and holds_only_directories(webroot)
     if webroot_goes:
         files.found.append(f"{webroot}  (HTTP-01's webroot, empty)")
+    elif webroot is not None and webroot.is_symlink():
+        files.found.append(f"{webroot}: kept, it is a link (HTTP-01's webroot)")
     elif webroot is not None and webroot.exists():
         files.found.append(f"{webroot}: kept, it holds files (HTTP-01's webroot)")
 
     def remove_files() -> list[str]:
         failed = remove(paths + key_paths)
         if webroot_goes and webroot is not None:
-            for directory in sorted(webroot.rglob("*"), key=lambda p: len(p.parts), reverse=True):
-                directory.rmdir()
-            webroot.rmdir()
+            try:
+                for directory in sorted(
+                    webroot.rglob("*"), key=lambda p: len(p.parts), reverse=True
+                ):
+                    directory.rmdir()
+                webroot.rmdir()
+            except OSError as exc:  # a file that arrived since the plan was made
+                failed.append(f"{webroot}: {exc}")
         if emptied:
             failed += remove(list(data.iterdir()))
         for parent in PARENTS:

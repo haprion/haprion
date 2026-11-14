@@ -344,7 +344,8 @@ lock file instead.
 
 Certificates are issued through a DNS provider (DNS-01) or over plain HTTP (HTTP-01), where Let's Encrypt fetches
 a file. For HTTP-01 the installation names a webroot, `/var/www/acme` unless `ACME_WEBROOT` says otherwise, and nginx
-on the manager serves `/.well-known/acme-challenge/` from it on port 80, for any name. One thing stays yours: a rule
+on the manager serves `/.well-known/acme-challenge/` from it on port 80, for any name as long as no other nginx site
+listens on port 80 and is read before this one (steps 05 and the updates warn when one does). One thing stays yours: a rule
 in each cluster that sends that path to the manager; *Check HTTP-01* on the new-certificate form says whether it is
 there. With `ACME_WEBROOT` set empty, HTTP-01 is left out and the interface shows it greyed. An installation made
 before 1.2.1 has no webroot: put one under `acme:` in the runtime policy and run steps 05 and 07 again.

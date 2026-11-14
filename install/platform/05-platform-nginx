@@ -140,6 +140,8 @@ else
     log "  ok       default site not enabled"
 fi
 
+warn_other_port80_sites
+
 step "Certificate"
 if [[ -f "$TLS_CERT" && -f "$TLS_KEY" ]]; then
     log "  ok       a pair is already installed"

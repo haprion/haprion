@@ -262,6 +262,7 @@ if [[ -e "$NGINX_SITE" ]]; then
     put site "$ACME_SNIPPET" 644 "$site_acme"
     put site "$NGINX_SITE" 644 \
         "$(render_site "$site_host" "$site_certificate" "$site_key" examples/haprion.nginx.example)"
+    warn_other_port80_sites
 fi
 
 #

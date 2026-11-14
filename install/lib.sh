@@ -356,6 +356,35 @@ print(policy.acme.webroot if policy.acme is not None and policy.acme.webroot is 
 }
 
 #
+# The other sites nginx has on port 80 (26-11-14): the files in the given
+# directories, but ours, with an active `listen` on port 80. The port 80 server
+# of the site is meant to answer for any name, and it does only while it is the
+# one nginx falls back to: with no default_server, that is the first server
+# read, and the files are read in name order. One of these before it takes the
+# names it does not list, and HTTP-01 then never reaches the challenge path.
+#
+other_port80_sites() {
+    local dir file
+    for dir in "$@"; do
+        for file in "$dir"/*; do
+            [[ -f "$file" ]] || continue
+            [[ "${file##*/}" == haprion || "${file##*/}" == haprion.conf ]] && continue
+            if grep -Eqs '^[[:space:]]*listen[[:space:]]+(\*:|\[::\]:|[0-9.]+:)?80([[:space:];]|$)' "$file"; then
+                echo "$file"
+            fi
+        done
+    done
+}
+
+warn_other_port80_sites() {
+    local file
+    while IFS= read -r file; do
+        log "  warning  ${file} also listens on port 80; if nginx reads it first it answers for names the site does not list, and HTTP-01 does not reach the manager"
+    done < <(other_port80_sites "${NGINX_SITES_ENABLED:-/etc/nginx/sites-enabled}" "${NGINX_CONF_D:-/etc/nginx/conf.d}")
+    return 0
+}
+
+#
 # What the site's port-80 server serves for Let's Encrypt (26-11-14): the
 # challenge path from the webroot, for any name - the packaged default site is
 # disabled, so this server answers every name on port 80 - and nothing when the

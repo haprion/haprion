@@ -1226,6 +1226,39 @@ class TheHttp01WebrootIsMadeBeforeTheUnitOpensIt(unittest.TestCase):
         self.assertIn("policy.acme.webroot", lib[start : lib.index("\n}\n", start)])
 
 
+class AnotherSiteOnPort80IsSaid(unittest.TestCase):
+    """PL09: the port 80 server answers for any name only while no site before it does."""
+
+    def sites(self, files: dict[str, str]) -> list[str]:
+        with tempfile.TemporaryDirectory() as scratch:
+            enabled = Path(scratch) / "sites-enabled"
+            confd = Path(scratch) / "conf.d"
+            enabled.mkdir()
+            confd.mkdir()
+            for name, text in files.items():
+                (enabled / name).write_text(text)
+            done = bash(
+                'source "$1"; other_port80_sites "$2" "$3"', str(LIB), str(enabled), str(confd)
+            )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return [Path(line).name for line in done.stdout.splitlines()]
+
+    def test_a_second_site_on_port_80_is_found_and_ours_is_not(self) -> None:
+        found = self.sites(
+            {
+                "haprion": "server {\n    listen 80;\n    listen [::]:80;\n}\n",
+                "acme": "server {\n    listen 0.0.0.0:80 default_server;\n}\n",
+                "other": "server {\n    listen [::]:80;\n}\n",
+                "tls-only": "server {\n    listen 443 ssl;\n    # listen 80;\n    listen 8080;\n}\n",
+            }
+        )
+        self.assertEqual(sorted(found), ["acme", "other"])
+
+    def test_both_steps_say_it(self) -> None:
+        for name in ("platform/05-platform-nginx", "platform/refresh-platform-files"):
+            self.assertIn("warn_other_port80_sites", (INSTALL / name).read_text(), name)
+
+
 class AUnitThatDoesNotStart(unittest.TestCase):
     """Reported with the journal's reason, not systemctl's 'control process exited'."""
 

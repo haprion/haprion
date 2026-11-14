@@ -6971,8 +6971,12 @@ configuration is exactly what it was.
 
 **The challenge path answers from everywhere.** The certificate authority validates from addresses nobody can
 list, so the path is open to every address, also on a proxy whose *Reachable from* names some networks only
-or that a blocklist covers. What it reaches is the manager's webroot, which holds the validation files while
-a request is running and answers 404 otherwise; nothing else of the site becomes reachable.
+or that a blocklist covers. Only a real challenge takes this way: `GET` or `HEAD` for
+`/.well-known/acme-challenge/` followed by a token of letters, digits, `-` and `_` and nothing more. A path
+with `../`, `%2e%2e`, a further `/` or no token, and any other method, is handled like any other request
+(access rules, redirect, routing). What a challenge reaches is the manager's webroot, which holds the
+validation files while a request is running and answers 404 otherwise; nothing else of the site becomes
+reachable.
 
 A cluster that sends the challenge to the manager refuses to publish when something else takes port 80
 on an address that carries it: a TCP object, or a reservation in `manual/reservations.yaml`. The message

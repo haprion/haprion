@@ -54,13 +54,15 @@ class TheChallengeIsLetThroughBeforeAnythingRefusesIt(unittest.TestCase):
                 rules = [
                     line.strip()
                     for line in frontend(text, name)
-                    if line.strip().startswith("http-request") and "set-var(txn.traffic" not in line
+                    if line.strip().startswith("http-request") and "set-var(" not in line
                 ]
                 self.assertEqual(rules[0], f"http-request allow if {CONDITION}")
                 self.assertIn(
-                    f"    acl {CONDITION} path_beg /.well-known/acme-challenge/",
+                    f"    acl {CONDITION}-shape path_reg "
+                    "^/[.]well-known/acme-challenge/[A-Za-z0-9_-]+$",
                     frontend(text, name),
                 )
+                self.assertIn(f"    acl {CONDITION}-method method GET HEAD", frontend(text, name))
 
     def test_the_redirect_leaves_the_path_alone(self) -> None:
         lines = frontend(layer(), "mgd-internal-http")

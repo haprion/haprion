@@ -159,7 +159,6 @@ METRICS_IDENTITY = "cluster-metrics"
 # name is the backend's and, inside each http frontend, the condition's.
 #
 ACME_CHALLENGE = f"{PREFIX}-acme-challenge"
-ACME_PATH = "/.well-known/acme-challenge/"
 OBJECT_BAND = "1001"
 
 #
@@ -2166,6 +2165,25 @@ def _frontend_file(
 ACME_CONDITION = f"{ACME_CHALLENGE}-path"
 
 
+def _acme_condition() -> list[str]:
+    """The condition that holds for a challenge and for nothing that only starts like one.
+
+    A token of the characters certbot makes them of (base64url) after the prefix,
+    asked for with GET or HEAD. `path` is the raw path - HAProxy decodes and
+    normalises nothing - so `../`, `%2e%2e`, a further `/` and everything else
+    under the prefix take the way any other request takes. The two tests are
+    joined in a variable because an acl's name cannot be negated as two terms.
+    """
+
+    return [
+        f"    acl {ACME_CONDITION}-shape path_reg ^/[.]well-known/acme-challenge/[A-Za-z0-9_-]+$",
+        f"    acl {ACME_CONDITION}-method method GET HEAD",
+        f"    http-request set-var(txn.acme_challenge) bool(true) "
+        f"if {ACME_CONDITION}-shape {ACME_CONDITION}-method",
+        f"    acl {ACME_CONDITION} var(txn.acme_challenge) -m bool",
+    ]
+
+
 def _acme_rules(acme: AcmeChallenge | None) -> list[str]:
     """The challenge path, let through before anything can refuse it (PL17).
 
@@ -2180,7 +2198,7 @@ def _acme_rules(acme: AcmeChallenge | None) -> list[str]:
     if acme is None:
         return []
     return [
-        f"    acl {ACME_CONDITION} path_beg {ACME_PATH}",
+        *_acme_condition(),
         f"    http-request allow if {ACME_CONDITION}",
     ]
 
@@ -2218,7 +2236,7 @@ def _challenge_frontend(vip: Vip, port: int) -> list[str]:
         "    option dontlog-normal",
         "    log stdout format raw local0",
         f"    timeout client {TIMEOUT_CLIENT}",
-        f"    acl {ACME_CONDITION} path_beg {ACME_PATH}",
+        *_acme_condition(),
         #
         # Conditioned, because every `http-request` rule runs before any
         # `use_backend`: an unconditional answer here would take the challenge too.

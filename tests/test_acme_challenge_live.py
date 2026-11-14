@@ -147,10 +147,12 @@ class _Cluster(unittest.TestCase):
             server.server_close()
         cls.directory.cleanup()
 
-    def get(self, host: str, path: str, address: str = "127.0.0.1") -> tuple[int, str, str]:
+    def get(
+        self, host: str, path: str, address: str = "127.0.0.1", method: str = "GET"
+    ) -> tuple[int, str, str]:
         connection = HTTPConnection(address, self.http, timeout=5)
         try:
-            connection.putrequest("GET", path, skip_host=True, skip_accept_encoding=True)
+            connection.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
             connection.putheader("Host", host)
             connection.endheaders()
             response = connection.getresponse()
@@ -185,6 +187,32 @@ class TheChallengeReachesTheManager(_Cluster):
             (200, f"manager {CHALLENGE}"),
         )
         self.assertEqual(self.get("secure.example.com", "/", "127.0.0.2")[0], 404)
+
+
+class OnlyARealChallengeReachesTheManager(_Cluster):
+    def test_a_path_that_only_starts_like_one_takes_the_way_any_request_takes(self) -> None:
+        prefix = "/.well-known/acme-challenge/"
+        for path in (
+            prefix + "../../etc/passwd",
+            prefix + "%2e%2e/x",
+            prefix + "a/b",
+            prefix + "%2e%2e%2fx",
+            prefix,
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(self.get("locked.example.com", path)[0], 403)
+                self.assertEqual(self.get("open.example.com", path)[0], 301)
+                self.assertEqual(self.get("secure.example.com", path, "127.0.0.2")[0], 404)
+
+    def test_only_get_and_head_are_a_challenge(self) -> None:
+        self.assertEqual(self.get("locked.example.com", CHALLENGE, method="POST")[0], 403)
+        self.assertEqual(self.get("open.example.com", CHALLENGE, method="POST")[0], 301)
+        # The stand-in manager has no HEAD; 501 is its answer, so the request got there.
+        self.assertEqual(self.get("locked.example.com", CHALLENGE, method="HEAD")[0], 501)
+
+    def test_a_token_of_the_base64url_characters_is_one(self) -> None:
+        path = "/.well-known/acme-challenge/Ab-9_zZ"
+        self.assertEqual(self.get("locked.example.com", path)[:2], (200, f"manager {path}"))
 
 
 class WithoutTheSettingTheChallengeIsRefused(_Cluster):

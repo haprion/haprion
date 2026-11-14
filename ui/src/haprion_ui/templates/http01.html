@@ -1,0 +1,33 @@
+{% extends "layout.html" %}
+{% from "_back.html" import back_button %}
+{% block title %}HTTP-01 — Haprion{% endblock %}
+{% block content %}
+{#
+  Where each cluster sends Let's Encrypt's challenge (PL17): one line per cluster, and the cluster's own
+  page to change it. The setting is the cluster's, saved like the rest of its settings.
+#}
+<section class="page-heading">
+  <div class="heading-title">{{ back_button('/certificates', 'Certificates') }}<h1>HTTP-01</h1><p class="page-lede">Where each cluster sends Let's Encrypt's challenge on port 80.</p></div>
+  <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
+</section>
+
+<section class="cluster-card">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Clusters</h3></div></div></header>
+  <div class="table-scroll"><table class="node-table">
+    <thead><tr><th scope="col">Cluster</th><th scope="col">Challenges go to</th>{% if can_change %}<th scope="col"></th>{% endif %}</tr></thead>
+    <tbody>
+      {% for row in rows %}
+      <tr{% if can_change and row.readable %} data-href="{{ row.href }}"{% endif %}>
+        <td data-label="Cluster"><strong>{{ row.cluster }}</strong></td>
+        {% if not row.readable %}<td data-label="Challenges go to"><span class="optional">Not read yet</span></td>
+        {% elif row.sent_to.startswith('Not sent') %}<td data-label="Challenges go to"><span class="optional">{{ row.sent_to }}</span></td>
+        {% else %}<td data-label="Challenges go to"><code>{{ row.sent_to }}</code></td>{% endif %}
+        {% if can_change %}<td data-label="" class="settings-actions">{% if row.readable %}<a class="secondary-button settings-edit" href="{{ row.href }}">Edit</a>{% endif %}</td>{% endif %}
+      </tr>
+      {% else %}
+      <tr><td colspan="{{ 3 if can_change else 2 }}"><span class="optional">No cluster is listed.</span></td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endblock %}

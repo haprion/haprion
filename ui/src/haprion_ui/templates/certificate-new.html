@@ -107,7 +107,7 @@
         <small data-profile-hint="csr"{% if method != 'csr' %} hidden{% endif %}>The key is made on the manager, root-only, and never shown. Choose RSA only if the CA requires it.</small>
       </div>
     </div>
-    {% if choices.http01 %}<div class="http01-check" data-http01-check{% if method != 'http-01' %} hidden{% endif %}><p class="path-answer" role="status">{% if http01_answer %}<span class="status-dot status-{{ http01_answer.tone }}"></span>{% for text, code in http01_answer.pieces %}{% if code %}<code>{{ text }}</code>{% else %}{{ text }}{% endif %}{% endfor %}{% endif %}</p></div>{% endif %}
+    {% if choices.http01 %}<div class="http01-check" data-http01-check{% if method != 'http-01' %} hidden{% endif %}><p class="path-answer" role="status">{% if http01_answer %}<span class="status-dot status-{{ http01_answer.tone }}"></span>{% for text, code in http01_answer.pieces %}{% if code %}<code>{{ text }}</code>{% else %}{{ text }}{% endif %}{% endfor %}{% endif %}</p>{% if choices.http01_unsent %}<p class="path-answer"><span class="status-dot status-warning"></span>No cluster sends the challenge to this manager yet. <a href="/http01">HTTP-01</a> sets it.</p>{% endif %}</div>{% endif %}
   </section>
 
   {#

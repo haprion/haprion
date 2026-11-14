@@ -296,6 +296,9 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
     "/settings/clusters/{cluster}": Command(
         "haprion-cluster-settings apply", "haprion-cluster-settings-apply"
     ),
+    "/http01/{cluster}": Command(
+        "haprion-cluster-settings apply", "haprion-cluster-settings-apply"
+    ),
     "/settings/nodes/{cluster}/add": Command("haprion-node add", "haprion-cluster-node"),
     "/settings/nodes/{cluster}/remove": Command("haprion-node remove", "haprion-cluster-node"),
     "/settings/nodes/{cluster}/host": Command("haprion-node host", "haprion-cluster-node"),

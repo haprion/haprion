@@ -280,7 +280,11 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
 
     def test_the_switch_stays_on_screen_while_the_page_scrolls(self) -> None:
         with self.signed_in("?view=registry") as page:
-            page.set_viewport_size({"width": 1000, "height": 300})
+            #
+            # Wide enough for the switch and all the buttons on one row, HTTP-01's
+            # included; narrower, the strip folds to two lines as it is meant to.
+            #
+            page.set_viewport_size({"width": 1060, "height": 300})
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             self.assertGreater(page.evaluate("window.scrollY"), 0)
             top = page.evaluate(

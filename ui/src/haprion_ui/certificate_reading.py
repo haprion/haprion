@@ -17,10 +17,16 @@ from haprion_ui import (
     db,
     dns_profile_form,
     features,
+    http01_page,
     ndes_profile_form,
 )
 from haprion_ui.config import Config
-from haprion_ui.reading import CERTIFICATE_SOURCE, read_manager_certificates, read_source
+from haprion_ui.reading import (
+    CERTIFICATE_SOURCE,
+    SETTINGS_SOURCE,
+    read_manager_certificates,
+    read_source,
+)
 
 
 def registry_views(
@@ -94,13 +100,20 @@ def certificate_choices(request: Request, config: Config) -> certificate_form.Is
         if overview.registry is not None and features.is_on(features.CERT_RECEIVERS)
         else ()
     )
+    http01 = certificate_form.http01_offered()
+    sent = http01 and any(
+        http01_page.challenge_of(row.result) is not None
+        for row in read_source(request, config, SETTINGS_SOURCE)[1]
+        if row.outcome == "done" and isinstance(row.result, Mapping)
+    )
     return certificate_form.IssueChoices(
         clusters=tuple(clusters),
         receivers=offered,
         dns_profiles=usable_profiles,
         profiles_required=profiles_required,
         ndes_profiles=usable_ndes,
-        http01=certificate_form.http01_offered(),
+        http01=http01,
+        http01_unsent=http01 and not sent and bool(clusters),
         receiver_transports={
             row.identifier: row.transport_label for row in overview.registry.receiver_rows
         }

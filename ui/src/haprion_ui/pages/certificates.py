@@ -115,6 +115,10 @@ def build_router(config: Config) -> APIRouter:
                 "management_writes": config.management_writes,
                 "section": "certificates",
                 "demo_fixture": config.demo_fixture,
+                #
+                # The same condition the issue form offers HTTP-01 on (PL17).
+                #
+                "http01": certificate_form.http01_offered(),
                 "certificate_sort": sort,
                 "certificate_sorts": {
                     view: certificates.TABLE.links(sort, {"view": view})

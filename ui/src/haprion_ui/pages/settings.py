@@ -35,6 +35,7 @@ from haprion_ui import (
     feature_switch,
     features,
     first_cluster,
+    http01_page,
     jobs,
     labels,
     location_data,
@@ -45,7 +46,7 @@ from haprion_ui import (
     users,
     waf,
 )
-from haprion_ui.access import admin_write_gate, forbidden_page
+from haprion_ui.access import admin_write_gate, forbidden_page, reading_gate
 from haprion_ui.accounts import (
     HASHING_BUSY,
     UNAVAILABLE_PROVIDER,
@@ -533,6 +534,19 @@ def build_router(config: Config) -> APIRouter:
             return None
         return next((row for row in rows if row.cluster == cluster and row.outcome == "done"), None)
 
+    def _current_challenge(
+        request: Request, cluster: str, row: Any
+    ) -> cluster_settings_module.AcmeChallenge | None:
+        """Where the challenge goes now: the saved draft's, else the published one."""
+
+        saved = _saved_settings(request, cluster, row)
+        if saved is not None:
+            with contextlib.suppress(ConfigError):
+                return cluster_settings_module.load_document(
+                    saved.document.encode("utf-8")
+                ).acme_challenge
+        return http01_page.challenge_of(row.result)
+
     @router.get("/settings/clusters/{cluster}", response_class=HTMLResponse)
     def cluster_settings_edit(request: Request, cluster: str) -> Response:
         gate = admin_write_gate(config, request)
@@ -594,7 +608,8 @@ def build_router(config: Config) -> APIRouter:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
             return forbidden_page(request, config)
-        if _settings_reading(request, cluster) is None:
+        reading_row = _settings_reading(request, cluster)
+        if reading_row is None:
             return PlainTextResponse("Not found", status_code=404)
         revision = int(saved_revision) if is_digits(saved_revision) else None
         page = "/settings/clusters/" + cluster
@@ -659,6 +674,13 @@ def build_router(config: Config) -> APIRouter:
                 status_code=400,
             )
         #
+        # Not a field of this form: the challenge goes on the HTTP-01 page, and
+        # saving here keeps it as it was (PL17).
+        #
+        settings = http01_page.with_challenge(
+            settings, _current_challenge(request, cluster, reading_row)
+        )
+        #
         # The document is built here, from named fields, and in the engine's
         # canonical form; the helper parses it again and is the authority.
         #
@@ -702,6 +724,190 @@ def build_router(config: Config) -> APIRouter:
                 status_code=409,
             )
         return RedirectResponse(page, status_code=303)
+
+    # - Certificates -> HTTP-01 (PL17) ----------------------------------------
+    #
+    # Where each cluster sends Let's Encrypt's challenge: the `acme_challenge`
+    # field of the cluster's settings, saved as a draft the way Logs & metrics
+    # saves its own, with everything else in the settings kept.
+    #
+
+    def _http01_context(
+        request: Request, session: AuthenticatedSession, **more: Any
+    ) -> dict[str, Any]:
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        return {
+            "username": session.username,
+            "role": session.role,
+            "csrf_token": auth.csrf_token(token),
+            "section": "certificates",
+            "management_writes": config.management_writes,
+            "demo_fixture": config.demo_fixture,
+            **more,
+        }
+
+    @router.get("/http01", response_class=HTMLResponse)
+    def http01_list(request: Request) -> Response:
+        gate = reading_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        clusters, readings = read_source(request, config, SETTINGS_SOURCE)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "http01.html",
+            _http01_context(
+                request,
+                gate,
+                rows=http01_page.rows(clusters, readings),
+                can_change=config.management_writes and gate.role == "admin",
+            ),
+        )
+
+    def _http01_edit_page(
+        request: Request,
+        session: AuthenticatedSession,
+        cluster: str,
+        *,
+        head: str,
+        form: http01_page.Http01Form,
+        saved: db.ClusterChange | None = None,
+        problem: str = "",
+        status_code: int = 200,
+    ) -> Response:
+        return TEMPLATES.TemplateResponse(
+            request,
+            "http01-cluster.html",
+            _http01_context(
+                request,
+                session,
+                cluster=cluster,
+                head=head,
+                form=form,
+                saved=saved,
+                problem=problem,
+            ),
+            status_code=status_code,
+        )
+
+    @router.get("/http01/{cluster}", response_class=HTMLResponse)
+    def http01_edit(request: Request, cluster: str) -> Response:
+        gate = admin_write_gate(config, request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        row = _settings_reading(request, cluster)
+        if row is None:
+            return PlainTextResponse("Not found", status_code=404)
+        return _http01_edit_page(
+            request,
+            gate,
+            cluster,
+            head=str(row.result.get("head", "")),
+            form=http01_page.form_from(_current_challenge(request, cluster, row)),
+            saved=_saved_settings(request, cluster, row),
+        )
+
+    @router.post("/http01/{cluster}", response_class=HTMLResponse)
+    def http01_save(
+        request: Request,
+        cluster: str,
+        acme_on: str = Form(default="", max_length=4),
+        acme_address: str = Form(default="", max_length=64),
+        acme_port: str = Form(default="", max_length=8),
+        expected_head: str = Form(default="", max_length=40),
+        saved_revision: str = Form(default="", max_length=16),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        gate = admin_write_gate(config, request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return forbidden_page(request, config)
+        row = _settings_reading(request, cluster)
+        if row is None:
+            return PlainTextResponse("Not found", status_code=404)
+        if not COMMIT_ID.fullmatch(expected_head):
+            return PlainTextResponse("Invalid operation parameters", status_code=400)
+        revision = int(saved_revision) if is_digits(saved_revision) else None
+        form = http01_page.Http01Form(on=acme_on == "on", address=acme_address, port=acme_port)
+        try:
+            challenge = http01_page.challenge_from(form)
+        except cluster_settings_page.FormProblem as problem:
+            return _http01_edit_page(
+                request,
+                gate,
+                cluster,
+                head=expected_head,
+                form=form,
+                saved=_saved_settings(request, cluster, row),
+                problem=str(problem),
+                status_code=400,
+            )
+        #
+        # The settings as they stand - the saved draft, else the published
+        # reading, read back through the Logs & metrics form's own path - with
+        # only the challenge replaced.
+        #
+        saved = _saved_settings(request, cluster, row)
+        try:
+            current = (
+                cluster_settings_module.load_document(saved.document.encode("utf-8"))
+                if saved is not None
+                else cluster_settings_page.settings_from_form(
+                    cluster_settings_page.form_from_result(row.result)
+                )
+            )
+        except (ConfigError, cluster_settings_page.FormProblem):
+            return _http01_edit_page(
+                request,
+                gate,
+                cluster,
+                head=expected_head,
+                form=form,
+                saved=saved,
+                problem="The cluster's settings cannot be read, so nothing was saved.",
+                status_code=409,
+            )
+        document = cluster_settings_module.dump_document(
+            http01_page.with_challenge(current, challenge)
+        ).decode("utf-8")
+        conflicted: str | None = None
+        with request.app.state.pool.connection() as connection:
+            try:
+                change = db.save_cluster_change(
+                    connection,
+                    cluster=cluster,
+                    kind="settings",
+                    document=document,
+                    base_hash=expected_head,
+                    updated_by=gate.username,
+                    expected_revision=revision,
+                )
+            except db.DraftConflict as conflict:
+                connection.rollback()
+                conflicted = str(conflict)
+            else:
+                db.record_audit_event(
+                    connection,
+                    actor=gate.username,
+                    action="save_change",
+                    cluster=cluster,
+                    request_id=uuid4(),
+                    detail={"kind": "settings", "revision": change.revision},
+                )
+                connection.commit()
+        if conflicted is not None:
+            return _http01_edit_page(
+                request,
+                gate,
+                cluster,
+                head=expected_head,
+                form=form,
+                saved=saved,
+                problem=conflicted,
+                status_code=409,
+            )
+        return RedirectResponse("/http01", status_code=303)
 
     # - Settings -> Nodes (Fas 16, B211) ------------------------------------
     #

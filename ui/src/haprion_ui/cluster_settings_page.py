@@ -274,7 +274,7 @@ def settings_from_form(form: SettingsForm) -> cluster_settings.ClusterSettings:
     try:
         return cluster_settings.load_mapping(document)
     except ConfigError as exc:
-        raise FormProblem(_sentence(str(exc))) from exc
+        raise FormProblem(sentence(str(exc))) from exc
 
 
 #
@@ -290,11 +290,13 @@ _FIELDS = (
     (re.compile(r"^metrics\.port\b"), "The metrics port"),
     (re.compile(r"^peers\.port\b"), "The port for shared counters"),
     (re.compile(r"^not_logged_from\b"), "Not logged from"),
+    (re.compile(r"^acme_challenge\.address\b"), "The manager address"),
+    (re.compile(r"^acme_challenge\.port\b"), "The port"),
 )
 _NOT_AN_ADDRESS = re.compile(r"^(.+?) is not an address or a network: (.+)$")
 
 
-def _sentence(message: str) -> str:
+def sentence(message: str) -> str:
     text = message.removeprefix(f"{cluster_settings.LOCATION} ")
     for field, words in _FIELDS:
         text = field.sub(words, text, count=1)

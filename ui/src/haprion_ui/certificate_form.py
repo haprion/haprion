@@ -132,6 +132,11 @@ class IssueChoices:
     #
     http01: bool = True
     #
+    # HTTP-01 offered, and no cluster sends the challenge to this manager (PL17):
+    # the form says so with the page that sets it, and does not refuse.
+    #
+    http01_unsent: bool = False
+    #
     # Each receiver's transport, for the row it gets in the list (B142). A
     # receiver without one is drawn without a badge.
     #

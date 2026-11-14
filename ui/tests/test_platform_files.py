@@ -54,6 +54,7 @@ exec /usr/bin/install "${arguments[@]}"
 STUB_PYTHON = """#!/bin/bash
 case "$3" in
     *http01_check_writable_path*) echo -/srv/example/acme ;;
+    *policy.acme.webroot*) echo /srv/example/acme ;;
     *) echo /srv/example/config /srv/example/registry ;;
 esac
 """
@@ -120,6 +121,7 @@ class ThePlatformFilesFollowAnUpdate(unittest.TestCase):
             "TLS_CONF": str(self.tls),
             "CERTBOT_HOOK_DIR": str(self.hooks),
             "HSTS_SNIPPET": str(self.site.parent.parent / "snippets/haprion-hsts.conf"),
+            "ACME_SNIPPET": str(self.site.parent.parent / "snippets/haprion-acme.conf"),
         }
         #
         # A first installation's files, as an older package wrote them: every
@@ -310,6 +312,15 @@ class ThePlatformFilesFollowAnUpdate(unittest.TestCase):
         # certbot runs every file in the directory: no copy is ever left beside it.
         self.assertEqual([path.name for path in self.hooks.iterdir()], ["50-haprion"])
 
+    def test_the_http01_challenge_is_served_from_the_policy_s_webroot(self) -> None:
+        """26-11-14: the site includes the challenge's location, so an update writes it first."""
+
+        self.assertEqual(self.refresh().returncode, 0)
+        snippet = Path(self.environment["ACME_SNIPPET"]).read_text()
+        self.assertIn("location ^~ /.well-known/acme-challenge/ {", snippet)
+        self.assertIn("    root /srv/example/acme;", snippet)
+        self.assertIn("include /etc/nginx/snippets/haprion-acme.conf;", self.site.read_text())
+
     def test_hsts_is_written_as_the_operator_chose_it_and_kept(self) -> None:
         """Review 26-10-24, 09-03: a line added to the site by hand went at every update."""
 
@@ -384,6 +395,7 @@ class TheListsAreTheSteps(unittest.TestCase):
             "examples/haprion.nginx.example"
         ),
         ("05-platform-nginx", "/etc/nginx/snippets/haprion-hsts.conf"): "HSTS_SNIPPET",
+        ("05-platform-nginx", "/etc/nginx/snippets/haprion-acme.conf"): "ACME_SNIPPET",
         ("06-platform-backup", '"/etc/systemd/system/${unit}.${kind}"'): (
             "haprion-backup haprion-restore-check"
         ),

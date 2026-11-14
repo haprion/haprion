@@ -354,6 +354,23 @@ class WhatThePageSays(ReadingACluster):
         )
         self.assertNotIn('data-traffic-region="service-demo"', one)
 
+    def test_choosing_a_cluster_keeps_the_range_that_was_marked(self) -> None:
+        """PL11: the links carried only the window, so a pasted range was lost on the next cluster."""
+
+        page = (
+            self.admin()
+            .get(  # type: ignore[attr-defined]
+                "/metrics?traffic=7d&from=1700000000&to=1700003600"
+            )
+            .text
+        )
+
+        self.assertIn(
+            '<a href="/clusters/service-demo/metrics?traffic=7d&amp;from=1700000000&amp;to=1700003600">',
+            page,
+        )
+        self.assertIn('<a href="/metrics?traffic=7d&amp;from=1700000000&amp;to=1700003600"', page)
+
     def test_the_cluster_carries_its_own_accent(self) -> None:
         """Without it a card reads as belonging to whatever came above it."""
 

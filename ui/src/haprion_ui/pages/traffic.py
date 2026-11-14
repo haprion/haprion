@@ -496,6 +496,19 @@ def build_router(config: Config) -> APIRouter:
                 }
             )
 
+        def cluster_link(cluster: str | None) -> str:
+            """One cluster's page, or all of them, with the rest of this address carried.
+
+            The range, marked or not, is something to look at on the other
+            cluster too (26-11-14): it is what was pasted to a colleague.
+            """
+
+            query = {"traffic": chosen.key} | {
+                name: value for name, value in request.query_params.items() if name != "traffic"
+            }
+            path = f"/clusters/{cluster}/metrics" if cluster else "/metrics"
+            return f"{path}?{urlencode(query)}"
+
         return TEMPLATES.TemplateResponse(
             request,
             "cluster.html",
@@ -528,6 +541,7 @@ def build_router(config: Config) -> APIRouter:
                 "traffic_windows": metrics.WINDOWS,
                 "traffic_chosen": chosen.key,
                 **traffic_marks(request, marked),
+                "traffic_cluster_link": cluster_link,
                 #
                 # Always named here, unlike the object page. Every card on this
                 # page is one of several being compared, so which series a line

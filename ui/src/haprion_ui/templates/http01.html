@@ -13,7 +13,7 @@
 
 <section class="cluster-card">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Clusters</h3></div></div></header>
-  <div class="table-scroll"><table class="node-table">
+  <div class="table-scroll"><table class="node-table settings-cluster-table">
     <thead><tr><th scope="col">Cluster</th><th scope="col">Challenges go to</th>{% if can_change %}<th scope="col"></th>{% endif %}</tr></thead>
     <tbody>
       {% for row in rows %}
@@ -30,4 +30,5 @@
     </tbody>
   </table></div>
 </section>
+<script defer src="{{ url_for('static', path='/proxy-rows.js') }}?v={{ asset_token }}"></script>
 {% endblock %}

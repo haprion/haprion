@@ -52,6 +52,7 @@ BACK_PLACES = {
     "settings": ("settings", "Settings"),
     "first-cluster": ("", "the first cluster guide"),
     "dns-profiles": ("certificates", "DNS profiles"),
+    "http01": ("certificates", "HTTP-01"),
     "ndes-profiles": ("certificates", "NDES profiles"),
     "clusters": ("metrics", "Metrics"),
     "account": ("", "Change password"),

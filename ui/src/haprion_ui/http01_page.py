@@ -16,6 +16,7 @@ from urllib.parse import quote
 
 from haprion import cluster_settings
 from haprion.config import ConfigError
+from haprion.digits import is_digits
 
 from haprion_ui.cluster_settings_page import FormProblem, sentence
 
@@ -99,7 +100,7 @@ def challenge_from(form: Http01Form) -> cluster_settings.AcmeChallenge | None:
     entry: dict[str, Any] = {"address": address}
     port = form.port.strip()
     if port:
-        if not port.isascii() or not port.isdigit():
+        if not is_digits(port):
             raise FormProblem("The port must be a number.")
         entry["port"] = int(port)
     try:

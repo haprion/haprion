@@ -40,6 +40,7 @@ CAUGHT = {
     ("pages/profiles.py", "_dns_profile_submit"): "the form is drawn again as it was typed",
     ("pages/profiles.py", "_ndes_profile_submit"): "the form is drawn again as it was typed",
     ("pages/settings.py", "cluster_settings_save"): "the form is drawn again as it was typed",
+    ("pages/settings.py", "http01_save"): "the form is drawn again as it was typed",
     ("pages/proxies.py", "proxy_servers"): "the server card says it in place",
     ("pages/proxies.py", "proxy_unblock"): "the blocked-address card says it in place",
     ("saved_work.py", "_discard_shown"): "a newer draft is kept, not refused",

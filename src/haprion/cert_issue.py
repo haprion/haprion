@@ -440,6 +440,11 @@ def certbot_invocation(
         "certonly",
         "--non-interactive",
         "--no-directory-hooks",
+        #
+        # A new installation has no ACME account. certbot uses an existing one
+        # and registers only when there is none, then without an address (B512).
+        "--agree-tos",
+        "--register-unsafely-without-email",
         "--cert-name",
         request.certificate_id,
         #

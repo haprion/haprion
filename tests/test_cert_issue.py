@@ -172,6 +172,8 @@ class WhatReachesCertbot(IssueFixture):
                 "certonly",
                 "--non-interactive",
                 "--no-directory-hooks",
+                "--agree-tos",
+                "--register-unsafely-without-email",
                 "--cert-name",
                 "example.com",
                 "--key-type",
@@ -195,6 +197,11 @@ class WhatReachesCertbot(IssueFixture):
             runtime=runtime,
         )
         self.assertIn("--webroot", certbot_arguments(http, policy))
+        # A new installation has no ACME account; without these certbot stops
+        # at "You must agree in order to register" (PL16, B512).
+        for method_arguments in (arguments, certbot_arguments(http, policy)):
+            self.assertIn("--agree-tos", method_arguments)
+            self.assertIn("--register-unsafely-without-email", method_arguments)
         self.assertIn(str(self.root / "webroot"), certbot_arguments(http, policy))
 
     def test_an_exportable_certificate_is_one_name_no_target_and_an_rsa_key(self) -> None:

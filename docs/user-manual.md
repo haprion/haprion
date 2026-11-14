@@ -2220,7 +2220,7 @@ seconds - the message says what to do with the lineage. If the publish does not 
 is issued and registered: *Needs attention* says *Certificate issued; distribution failed*, and
 *Publish now* on the certificate's row finishes it.
 
-The ACME account is the one certbot already has on this host; the command registers none. The
+The first issuance on a host registers an ACME account without an e-mail address, which accepts the CA's terms of service; later issuances use that account, or one certbot already has on the host. The
 certificate becomes an ordinary certbot lineage. It is renewed by `haprion-certbot-renew.timer`, which
 runs twice a day, and published by the deploy hook described in
 [Publishing certificates](#publishing-certificates), like every other.

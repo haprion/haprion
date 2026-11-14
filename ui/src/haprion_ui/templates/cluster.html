@@ -19,8 +19,9 @@
 {#
   One range control for the whole page, above every cluster. Two would let
   somebody compare one address's hour against another's week without noticing.
+  Beside it, which clusters (26-11-14): all, or one, each the page it already had.
 #}
-<div class="page-ranges-sticky"><nav class="traffic-ranges page-ranges" aria-label="Time range">{% for entry in traffic_windows %}<a href="?traffic={{ entry.key }}"{% if entry.key == traffic_chosen %} class="is-current" aria-current="true"{% endif %} title="{{ entry.label }}"><span>{{ entry.key }}</span><span class="segment-reserve" aria-hidden="true">{{ entry.key }}</span></a>{% endfor %}</nav></div>
+<div class="page-ranges-sticky metrics-strip"><nav class="traffic-ranges page-ranges" aria-label="Time range">{% for entry in traffic_windows %}<a href="?traffic={{ entry.key }}"{% if entry.key == traffic_chosen %} class="is-current" aria-current="true"{% endif %} title="{{ entry.label }}"><span>{{ entry.key }}</span><span class="segment-reserve" aria-hidden="true">{{ entry.key }}</span></a>{% endfor %}</nav>{% if cluster_choices | length > 1 %}<div class="metrics-clusters"><span class="strip-label">Clusters</span><nav class="traffic-ranges page-ranges" aria-label="Clusters"><a href="/metrics?traffic={{ traffic_chosen }}"{% if not one_cluster %} class="is-current" aria-current="true"{% endif %}><span>All</span><span class="segment-reserve" aria-hidden="true">All</span></a>{% for cluster in cluster_choices %}<a href="/clusters/{{ cluster }}/metrics?traffic={{ traffic_chosen }}"{% if cluster == one_cluster %} class="is-current" aria-current="true"{% endif %}><span>{{ cluster }}</span><span class="segment-reserve" aria-hidden="true">{{ cluster }}</span></a>{% endfor %}</nav></div>{% endif %}</div>
 
 <div class="cluster-list">
 {% for view in clusters %}

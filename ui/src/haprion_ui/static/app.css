@@ -2651,6 +2651,10 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
    tabs below do not move when the view changes (2026-10-03: 30 against 34 px, measured). */
 .waf-heading { min-height: 34px; }
 .waf-strip { display: flex; align-items: center; gap: 20px; margin: 0 0 18px; }
+/* Metrics: the range, then which clusters, on one strip that folds on a narrow screen (26-11-14). */
+.metrics-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 28px; }
+.metrics-clusters { display: inline-flex; align-items: center; gap: 10px; }
+.strip-label { color: var(--muted); font-size: 12px; font-weight: 620; }
 .waf-views a { padding: 7px 15px; font-size: 13.5px; }
 .waf-views b { margin-left: 7px; font-variant-numeric: tabular-nums; }
 .log-filters.waf-filters { display: flex; margin: 0; }

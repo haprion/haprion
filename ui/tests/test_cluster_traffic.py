@@ -336,6 +336,24 @@ class WhatThePageSays(ReadingACluster):
         self.assertIn("2xx", backends)
         self.assertNotIn("3xx", backends)
 
+    def test_beside_the_range_all_or_one_cluster_is_chosen(self) -> None:
+        """26-11-14: one cluster's metrics were behind every other cluster's, with nothing to choose."""
+
+        everything = self.admin().get("/metrics?traffic=7d").text  # type: ignore[attr-defined]
+        one = self.page("?traffic=7d").text  # type: ignore[attr-defined]
+
+        self.assertIn(
+            '<a href="/metrics?traffic=7d" class="is-current" aria-current="true"><span>All</span>',
+            everything,
+        )
+        self.assertIn('<a href="/clusters/service-demo/metrics?traffic=7d"><span>', everything)
+        self.assertIn('<a href="/metrics?traffic=7d"><span>All</span>', one)
+        self.assertIn(
+            '<a href="/clusters/edge-demo/metrics?traffic=7d" class="is-current" aria-current="true">',
+            one,
+        )
+        self.assertNotIn('data-traffic-region="service-demo"', one)
+
     def test_the_cluster_carries_its_own_accent(self) -> None:
         """Without it a card reads as belonging to whatever came above it."""
 

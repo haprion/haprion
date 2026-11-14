@@ -516,6 +516,12 @@ def build_router(config: Config) -> APIRouter:
                 },
                 "traffic_logs_enabled": config.traffic_logs.enabled,
                 "one_cluster": only,
+                #
+                # Every cluster, for the choice beside the range (26-11-14): with
+                # a few of them on one page, somebody looking at one scrolled past
+                # the rest. The page per cluster was there; nothing led to it.
+                #
+                "cluster_choices": list(clusters),
                 "traffic_window": chosen.label,
                 "traffic_bucket": chosen.bucket_label,
                 "traffic_rate_unit": chosen.rate_unit,

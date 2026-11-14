@@ -326,7 +326,7 @@ class TheFormPage(CertificateFormRouteTestCase):
         self.assertNotIn("Asks the ACME account", page)
         self.assertNotIn("cluster-accent-", page)
 
-    def test_the_profile_field_is_greyed_under_http_01_and_the_page_wires_it(self) -> None:
+    def test_the_profile_field_gives_way_under_http_01_and_the_page_wires_it(self) -> None:
         client = self.writing_client()
         page = client.get("/certificates/new").text
         self.assertIn("certificate-form.js", page)
@@ -344,21 +344,20 @@ class TheFormPage(CertificateFormRouteTestCase):
             page,
         )
         self.assertIn('<small data-profile-hint="dns-01">Required for DNS-01.', page)
-        self.assertIn(
-            '<small data-profile-hint="http-01" hidden>Not used with HTTP-01.</small>', page
-        )
+        self.assertNotIn("Not used with HTTP-01", page)
         self.assertEqual(page.count("DNS profile</span>"), 1)
 
         #
         # A refused HTTP-01 form is redrawn with the choice kept, so the
-        # server draws the field the way the script would have: disabled.
+        # server draws the field the way the script would have: the profile
+        # gone, as under NDES and CSR (26-11-14), the field titled for the check.
         #
         page = self.post(client, domain="*.example.com", method="http-01").text
         self.assertIn(
-            '<select name="dns_profile" class="dns-only" aria-labelledby="profile-field-title" disabled>',
+            '<select name="dns_profile" class="dns-only" aria-labelledby="profile-field-title" disabled hidden>',
             page,
         )
-        self.assertIn('<small data-profile-hint="http-01">Not used with HTTP-01.</small>', page)
+        self.assertIn(">Challenge path</span>", page)
         self.assertIn('<small data-profile-hint="dns-01" hidden>', page)
 
     def test_a_registry_that_could_not_be_read_is_said_on_the_page_and_in_attention(self) -> None:
@@ -946,7 +945,7 @@ class SendingTheFormAsACsr(CertificateFormRouteTestCase):
         )
         self.assertIn('<option value="rsa-4096" selected>', page)
         self.assertIn(
-            'id="profile-field-title" data-profile-title="DNS profile" data-ndes-title="NDES profile" data-key-title="Key type">Key type<',
+            'id="profile-field-title" data-profile-title="DNS profile" data-http01-title="Challenge path" data-ndes-title="NDES profile" data-key-title="Key type">Key type<',
             page,
         )
         self.assertEqual(self.queued, [])

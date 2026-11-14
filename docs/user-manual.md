@@ -2184,8 +2184,8 @@ page ([Registering a receiver](#registering-a-receiver)). The form refuses a wil
 before anything is queued, and a target it did not offer. The other two things HTTP-01 needs are in
 [ACME configuration and challenge routing](#acme-configuration-and-challenge-routing).
 
-**Check HTTP-01.** With *HTTP-01* chosen, the *DNS profile* field is not used, and *Check HTTP-01* takes its
-place there. It asks whether Let's Encrypt's challenge path would reach this manager for the name in
+**Check HTTP-01.** With *HTTP-01* chosen, the *DNS profile* field gives way to *Challenge path*, which holds
+*Check HTTP-01*. It asks whether Let's Encrypt's challenge path would reach this manager for the name in
 *Domain*. The manager writes a test file in the webroot, fetches it over `http://<name>/`, and removes it.
 Nothing is queued and nothing is kept. The answer appears on the row under the fields, and the form stays
 as it was. The check runs from this manager, not from the internet. The answer is one of four:

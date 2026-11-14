@@ -353,7 +353,7 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
                 page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), True
             )
 
-    def test_choosing_http_01_greys_the_profile_field_and_dns_01_gives_it_back(self) -> None:
+    def test_choosing_http_01_hides_the_profile_and_dns_01_gives_it_back(self) -> None:
         with self.signed_in(path="/certificates/new") as page:
             profile = page.locator("select[name='dns_profile']")
             self.assertFalse(profile.is_disabled())
@@ -363,12 +363,13 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
 
             page.check("input[name='method'][value='http-01']")
             self.assertTrue(profile.is_disabled())
-            self.assertTrue(profile.is_visible())
-            self.assertLess(
+            # Gone, as under NDES and CSR (26-11-14): the field holds the check.
+            self.assertFalse(profile.is_visible())
+            self.assertEqual(page.text_content("#profile-field-title"), "Challenge path")
+            self.assertEqual(
                 page.evaluate("getComputedStyle(document.querySelector('.profile-field')).opacity"),
                 "1",
             )
-            self.assertTrue(page.locator("small[data-profile-hint='http-01']").is_visible())
 
             page.check("input[name='method'][value='dns-01']")
             self.assertFalse(profile.is_disabled())

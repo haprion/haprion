@@ -35,7 +35,8 @@
       const chosen = methods.find((method) => method.checked);
       const method = chosen ? chosen.value : "dns-01";
       profile.disabled = method !== "dns-01";
-      profile.hidden = method === "ndes" || method === "csr";
+      // HTTP-01 has no profile either: Check HTTP-01 takes the field (26-11-14).
+      profile.hidden = method !== "dns-01";
       if (ndesProfile) {
         ndesProfile.disabled = method !== "ndes";
         ndesProfile.hidden = method !== "ndes";
@@ -48,6 +49,7 @@
         title.textContent =
           method === "csr" ? title.dataset.keyTitle
             : method === "ndes" ? title.dataset.ndesTitle
+            : method === "http-01" ? title.dataset.http01Title
             : title.dataset.profileTitle;
       }
       hints.forEach((hint) => {

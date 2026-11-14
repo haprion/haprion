@@ -12,6 +12,7 @@ product does not run on.
 from __future__ import annotations
 
 import base64
+import contextlib
 import re
 import shutil
 import socket
@@ -19,8 +20,10 @@ import subprocess
 import tempfile
 import time
 import unittest
+from collections.abc import Callable, Iterator
 from http.client import HTTPConnection
 from pathlib import Path
+from unittest import mock
 
 from haprion import cert_receiver
 
@@ -44,6 +47,52 @@ def free_port() -> int:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         return int(probe.getsockname()[1])
+
+
+# Starts of nginx before a lost port is a failure (see `serving`).
+STARTS = 5
+
+
+@contextlib.contextmanager
+def serving(test: unittest.TestCase, root: Path, config: Callable[[int], str]) -> Iterator[int]:
+    """A running nginx on a port of its own, given `config(port)` as its nginx.conf.
+
+    A port free_port() found is free only until it is let go, and another test
+    process can take it first. nginx then tries to bind for 2.5 s and stops
+    with `Address already in use` (measured 26-11-14) - and in those seconds
+    whoever took the port answers the test's requests. Its pid file is written
+    only once it listens, so that is the sign it is up; a start that lost its
+    port is made again on a new one, and any other stop fails with what nginx
+    said. The configuration must name `{root}/nginx.pid` as its pid file.
+    """
+
+    said = ""
+    for _ in range(STARTS):
+        port = free_port()
+        (root / "nginx.conf").write_text(config(port))
+        pid = root / "nginx.pid"
+        pid.unlink(missing_ok=True)
+        with (root / "nginx.out").open("wb") as written:
+            server = subprocess.Popen(  # fixed binary, a file made by the test
+                [NGINX, "-p", str(root), "-c", str(root / "nginx.conf"), "-g", "daemon off;"],
+                stdout=subprocess.DEVNULL,
+                stderr=written,
+            )
+        try:
+            deadline = time.monotonic() + 15
+            while not pid.exists() and server.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.05)
+            if pid.exists() and server.poll() is None:
+                yield port
+                return
+        finally:
+            if server.poll() is None:
+                server.terminate()
+            server.wait(timeout=5)
+        said = (root / "nginx.out").read_text(errors="replace")
+        if "Address already in use" not in said:
+            break
+    test.fail(f"nginx did not start:\n{said}")
 
 
 class TheSiteParses(unittest.TestCase):
@@ -186,27 +235,22 @@ class TheSignInLimitCountsAnIpv6SourceAsItsPrefix(unittest.TestCase):
     def limited(self, addresses: tuple[str, ...]) -> list[bool]:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            port = free_port()
-            (root / "nginx.conf").write_text(
-                f"pid {root}/nginx.pid;\nerror_log {root}/error.log;\nevents {{}}\n"
-                f"http {{\n  access_log off;\n{self.directives()}"
-                "  set_real_ip_from 127.0.0.1;\n  real_ip_header X-Forwarded-For;\n"
-                f"  server {{\n    listen 127.0.0.1:{port};\n"
-                "    location = /login {\n"
-                "      limit_req zone=haprion_sign_in;\n"
-                f"      limit_req_status 429;\n      root {root};\n    }}\n  }}\n}}\n"
-            )
-            server = subprocess.Popen(  # fixed binary, a file made above
-                [NGINX, "-p", raw, "-c", str(root / "nginx.conf"), "-g", "daemon off;"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            try:
+            directives = self.directives()
+
+            def config(port: int) -> str:
+                return (
+                    f"pid {root}/nginx.pid;\nerror_log {root}/error.log;\nevents {{}}\n"
+                    f"http {{\n  access_log off;\n{directives}"
+                    "  set_real_ip_from 127.0.0.1;\n  real_ip_header X-Forwarded-For;\n"
+                    f"  server {{\n    listen 127.0.0.1:{port};\n"
+                    "    location = /login {\n"
+                    "      limit_req zone=haprion_sign_in;\n"
+                    f"      limit_req_status 429;\n      root {root};\n    }}\n  }}\n}}\n"
+                )
+
+            with serving(self, root, config) as port:
                 # Not 429 is let through: the file is not there, so nginx says 404.
                 return [self.post(port, address) == 429 for address in addresses]
-            finally:
-                server.terminate()
-                server.wait(timeout=5)
 
     def post(self, port: int, address: str) -> int:
         for _ in range(50):
@@ -219,6 +263,39 @@ class TheSignInLimitCountsAnIpv6SourceAsItsPrefix(unittest.TestCase):
             except ConnectionRefusedError:
                 time.sleep(0.1)
         self.fail("nginx did not listen")
+
+
+class AStartThatLostItsPort(unittest.TestCase):
+    def setUp(self) -> None:
+        if not Path(NGINX).exists():
+            self.skipTest("nginx is not installed here")
+
+    def test_is_made_again_on_a_new_port(self) -> None:
+        """The race `serving` answers, made on purpose: the first port is held by another listener."""
+
+        with tempfile.TemporaryDirectory() as raw, socket.socket() as held:
+            root = Path(raw)
+            held.bind(("127.0.0.1", 0))
+            held.listen()
+            taken = int(held.getsockname()[1])
+            ports = iter([taken, free_port()])
+
+            def config(port: int) -> str:
+                return (
+                    f"pid {root}/nginx.pid;\nerror_log {root}/error.log;\nevents {{}}\n"
+                    f"http {{\n  access_log off;\n  server {{\n    listen 127.0.0.1:{port};\n"
+                    "    location = /up { return 204; }\n  }\n}\n"
+                )
+
+            with (
+                mock.patch(f"{__name__}.free_port", side_effect=lambda: next(ports)),
+                serving(self, root, config) as port,
+            ):
+                self.assertNotEqual(port, taken)
+                connection = HTTPConnection("127.0.0.1", port, timeout=5)
+                connection.request("GET", "/up")
+                self.assertEqual(connection.getresponse().status, 204)
+                connection.close()
 
 
 class AReceiversSecretIsWhatNginxChecks(unittest.TestCase):
@@ -236,25 +313,19 @@ class AReceiversSecretIsWhatNginxChecks(unittest.TestCase):
             (root / "files" / "fullchain.pem").write_text("material\n")
             hashed = cert_receiver.secret_hash("receiver password")
             (root / "receiver.htpasswd").write_text(f"192.0.2.9:{hashed}\n")
-            port = free_port()
-            (root / "nginx.conf").write_text(
-                f"pid {root}/nginx.pid;\nerror_log {root}/error.log;\nevents {{}}\n"
-                f"http {{\n  access_log off;\n  server {{\n    listen 127.0.0.1:{port};\n"
-                f"    location /r/ {{\n      alias {root}/files/;\n"
-                '      auth_basic "192.0.2.9";\n'
-                f"      auth_basic_user_file {root}/receiver.htpasswd;\n    }}\n  }}\n}}\n"
-            )
-            server = subprocess.Popen(  # fixed binary, a file made above
-                [NGINX, "-p", raw, "-c", str(root / "nginx.conf"), "-g", "daemon off;"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            try:
+
+            def config(port: int) -> str:
+                return (
+                    f"pid {root}/nginx.pid;\nerror_log {root}/error.log;\nevents {{}}\n"
+                    f"http {{\n  access_log off;\n  server {{\n    listen 127.0.0.1:{port};\n"
+                    f"    location /r/ {{\n      alias {root}/files/;\n"
+                    '      auth_basic "192.0.2.9";\n'
+                    f"      auth_basic_user_file {root}/receiver.htpasswd;\n    }}\n  }}\n}}\n"
+                )
+
+            with serving(self, root, config) as port:
                 self.assertEqual(self.fetch(port, "receiver password"), 200)
                 self.assertEqual(self.fetch(port, "not the password"), 401)
-            finally:
-                server.terminate()
-                server.wait(timeout=5)
 
     def fetch(self, port: int, password: str) -> int:
         token = base64.b64encode(f"192.0.2.9:{password}".encode()).decode()
@@ -296,32 +367,27 @@ class AReceiversFetchIsLoggedForTheManagerToRead(unittest.TestCase):
             (root / "manager-ui.pem").write_text("public\n")
             hashed = cert_receiver.secret_hash("receiver password")
             (root / "receiver.htpasswd").write_text(f"192.0.2.9:{hashed}\n")
-            port = free_port()
             access = (logged.group(1) if logged else "").replace("/var/log/nginx/", f"{root}/")
-            (root / "nginx.conf").write_text(
-                f"pid {root}/nginx.pid;\nerror_log {root}/error.log;\nevents {{}}\n"
-                f"http {{\n{mapped.group(0) if mapped else ''}\n"
-                f"  server {{\n    listen 127.0.0.1:{port};\n    {access}\n"
-                f"    location {cert_receiver.HTTPS_PREFIX}/192.0.2.9/ {{\n      alias {root}/files/;\n"
-                '      auth_basic "192.0.2.9";\n'
-                f"      auth_basic_user_file {root}/receiver.htpasswd;\n    }}\n"
-                f"    location = {cert_receiver.HTTPS_PREFIX}/manager-ui.pem {{\n"
-                f"      alias {root}/manager-ui.pem;\n    }}\n  }}\n}}\n"
-            )
-            server = subprocess.Popen(  # fixed binary, a file made above
-                [NGINX, "-p", raw, "-c", str(root / "nginx.conf"), "-g", "daemon off;"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            try:
+
+            def config(port: int) -> str:
+                return (
+                    f"pid {root}/nginx.pid;\nerror_log {root}/error.log;\nevents {{}}\n"
+                    f"http {{\n{mapped.group(0) if mapped else ''}\n"
+                    f"  server {{\n    listen 127.0.0.1:{port};\n    {access}\n"
+                    f"    location {cert_receiver.HTTPS_PREFIX}/192.0.2.9/ {{\n"
+                    f"      alias {root}/files/;\n"
+                    '      auth_basic "192.0.2.9";\n'
+                    f"      auth_basic_user_file {root}/receiver.htpasswd;\n    }}\n"
+                    f"    location = {cert_receiver.HTTPS_PREFIX}/manager-ui.pem {{\n"
+                    f"      alias {root}/manager-ui.pem;\n    }}\n  }}\n}}\n"
+                )
+
+            with serving(self, root, config) as port:
                 self.assertEqual(self.get(port, "/certdist/192.0.2.9/fullchain.pem", "wrong"), 401)
                 self.assertEqual(self.get(port, "/certdist/manager-ui.pem", None), 200)
                 self.assertEqual(
                     self.get(port, "/certdist/192.0.2.9/fullchain.pem", "receiver password"), 200
                 )
-            finally:
-                server.terminate()
-                server.wait(timeout=5)
             lines = receiver_fetches.log_lines(root / "haprion-receivers.access.log")
 
         self.assertEqual(len(lines), 2, lines)

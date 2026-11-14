@@ -194,9 +194,7 @@ class MarkingARange(TheChartInABrowser):
             )
             self.assertTrue(self.stayed(page), "choosing all clusters reloaded the page")
             self.assertEqual(len(asked), 1, asked)
-            self.assertEqual(
-                page.text_content(".metrics-clusters a.is-current").strip(), "AllAll"
-            )
+            self.assertEqual(page.text_content(".metrics-clusters a.is-current").strip(), "AllAll")
 
             page.evaluate(
                 "document.querySelector('.page-ranges a[title=\"the last 7 days\"]').click()"

@@ -8815,6 +8815,47 @@ class ARenamedBackendKeepsItsHistory(unittest.TestCase):
                     (cls.CLUSTER, name, at, uptime, total),
                 )
 
+    def test_each_read_reaches_its_own_backend_through_the_index(self) -> None:
+        """26-11-14: the names stood only inside an `exists`, which the read index could not use.
+
+        Every card read its whole cluster's rows for the window and kept its
+        own: 0.76 s a page for 21 backends in production, 0.05 s for 7. With
+        sequential scans off, the plan must name the backend in an index
+        condition - the raw rows' read index and the hours' key both begin
+        (cluster, backend, ...) - whatever the amount of data.
+        """
+
+        from haprion_ui.db import traffic
+
+        since = self.now - timedelta(hours=12)
+        arguments = {
+            "cluster": self.CLUSTER,
+            "member": "BACKEND",
+            "width": timedelta(minutes=10),
+            "since": since,
+            "until": self.now,
+            "after": since,
+            **traffic._history("new", [db.EarlierName("old", self.reused_at)]),
+        }
+        queries = {
+            "series": traffic._bucketed_changes("metric_backend_member", traffic.BACKEND_SCOPE),
+            "totals": traffic._backend_totals(),
+            "hours": traffic._hour_series(
+                "metric_backend_hour_delta",
+                "metric_backend_member",
+                traffic.BACKEND_HOUR_SCOPE,
+                traffic.BACKEND_SCOPE,
+            ),
+        }
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+            cursor.execute("set enable_seqscan = off")
+            for name, query in queries.items():
+                with self.subTest(name):
+                    cursor.execute(psycopg.sql.SQL("explain ") + query, arguments)
+                    plan = "\n".join(row[0] for row in cursor.fetchall())
+                    conditions = [line for line in plan.splitlines() if "Index Cond" in line]
+                    self.assertTrue(any("backend = ANY" in line for line in conditions), plan)
+
     def totals(self, backend: str, since: datetime, earlier: list[db.EarlierName]) -> int:
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             measured = db.read_backend_totals(

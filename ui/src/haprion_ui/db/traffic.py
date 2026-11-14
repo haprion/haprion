@@ -772,8 +772,15 @@ FRONTEND_HELD = sql.SQL("cluster = %(cluster)s and frontend = %(frontend)s and o
 # when the whole hour lies before the cutoff, so a name taken again within the
 # hour is never drawn into the card that renamed it.
 #
+# The names are also named outside the `exists` (26-11-14): inside it alone,
+# the planner could not reach the read index (cluster, backend, member,
+# observed_at) by backend, and every card's query read the whole cluster's
+# rows for its window - a cluster with 21 backends took 0.76 s a page, one
+# with 7 took 0.05 s, measured in production. `backend = any(...)` is the same
+# set of names, in the shape the index answers; the cutoffs stay in `exists`.
+#
 _HISTORY = (
-    "cluster = %(cluster)s and member = %(member)s and exists ("
+    "cluster = %(cluster)s and member = %(member)s and backend = any(%(backends)s::text[]) and exists ("
     "    select 1 from unnest(%(backends)s::text[], %(cutoffs)s::timestamptz[]) as h(name, cutoff)"
     "     where h.name = backend and {before} coalesce(h.cutoff, 'infinity'))"
 )

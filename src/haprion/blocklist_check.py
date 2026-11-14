@@ -220,7 +220,7 @@ class Listed:
     clusters: tuple[str, ...]
     """Every cluster the list goes to, so 'excepted everywhere' can be told from 'on some'."""
 
-    def sentence(self, address: str) -> str:
+    def sentence(self, address: str, unread: Sequence[str] = ()) -> str:
         """Where the address is listed, and what the proxies do with it (said plainly 26-11-14).
 
         "It is not excepted" left the reader to work out the consequence. A
@@ -234,6 +234,12 @@ class Listed:
         if not self.excepted_on:
             return f"{said} {acting[0].upper()}{acting[1:]}"
         if set(self.excepted_on) == set(self.clusters):
+            if unread:
+                # A cluster that could not be read may carry an older file with it.
+                return (
+                    f"{said} Every cluster read excepts it, so no proxy there refuses it "
+                    f"for {self.name}."
+                )
             return f"{said} Every cluster excepts it, so no proxy refuses it for {self.name}."
         return f"{said} {_names(self.excepted_on)} {'excepts' if len(self.excepted_on) == 1 else 'except'} it; elsewhere {acting}"
 
@@ -288,7 +294,7 @@ class AddressCheck:
         )
 
     def sentence(self) -> str:
-        said = [item.sentence(self.address) for item in self.lists]
+        said = [item.sentence(self.address, self.unread) for item in self.lists]
         if not said:
             said.append(f"{self.address} is on no blocklist.")
         if self.unfetched:

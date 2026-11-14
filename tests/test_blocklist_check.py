@@ -159,6 +159,24 @@ class CheckingAnAddress(unittest.TestCase):
             )
         )
 
+    def test_a_cluster_that_could_not_be_read_is_not_counted_among_the_excepting(self) -> None:
+        """PL05: the unread cluster may carry an older file with the address, so "no proxy" was a promise."""
+
+        groups = {"alpha": {"partners": ["198.51.100.7"]}}
+        found = blocklist_check.check_address(
+            "198.51.100.7",
+            self.definitions,
+            self.states,
+            groups,
+            kept=self.kept.get,
+            unread=("beta",),
+        )
+
+        said = found.sentence()
+        self.assertNotIn("no proxy refuses it", said)
+        self.assertIn("Every cluster read excepts it", said)
+        self.assertIn("The network of beta could not be read", said)
+
     def test_on_no_list(self) -> None:
         self.definitions = self.definitions[:2]
 

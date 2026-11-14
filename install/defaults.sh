@@ -36,6 +36,8 @@ apply_default_answers() {
     #
     : "${CERTIFICATE_ROOT=/srv/certdist/haproxy}"
     : "${RECEIVER_ROOT=/srv/certdist/receivers}"
+    # Issuing with HTTP-01 is off until a webroot is named.
+    : "${ACME_WEBROOT=}"
 
     # Accounts on the machines; none until somebody names them.
     : "${OPERATOR_ACCOUNTS=}"

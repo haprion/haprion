@@ -122,10 +122,7 @@ ensure_worker_directories() {
     # stays as it is.
     #
     local webroot
-    webroot="$("${UI_ROOT}/current/venv/bin/python" -I -c 'from haprion.config import load_policy
-policy = load_policy()
-print(policy.acme.webroot if policy.acme is not None and policy.acme.webroot is not None else "")')" \
-        || die "cannot read the runtime policy's HTTP-01 webroot"
+    webroot="$(policy_acme_webroot)" || die "cannot read the runtime policy's HTTP-01 webroot"
     if [[ -n "$webroot" ]]; then
         if [[ -d "$webroot" ]]; then
             log "  ok       ${webroot}"
@@ -345,6 +342,40 @@ render_example() {
         -e "s|DUMP_DIR|${DUMP_DIR}|g" \
         -e "s|@POLICY_PATHS@|${policy_paths:-}|g" \
         "$1"
+}
+
+#
+# The runtime policy's HTTP-01 webroot (acme.webroot), or nothing when it names
+# none. The one reading of it the steps share: step 07 opens it for the units,
+# step 05 and every update serve it on port 80.
+#
+policy_acme_webroot() {
+    "${1:-${UI_ROOT}/current/venv/bin/python}" -I -c 'from haprion.config import load_policy
+policy = load_policy()
+print(policy.acme.webroot if policy.acme is not None and policy.acme.webroot is not None else "")'
+}
+
+#
+# What the site's port-80 server serves for Let's Encrypt (26-11-14): the
+# challenge path from the webroot, for any name - the packaged default site is
+# disabled, so this server answers every name on port 80 - and nothing when the
+# policy names no webroot. A file of its own the site includes, as HSTS is:
+# written by step 05 and by every update, never by hand.
+#
+acme_snippet() {
+    local webroot="${1:-}"
+    echo "# Written from acme.webroot in the runtime policy by platform step 05 and every update."
+    [[ -n "$webroot" ]] || return 0
+    if ! valid_abs_path "$webroot" || ! [[ "$webroot" =~ ^/[A-Za-z0-9._/-]+$ ]]; then
+        echo "acme.webroot must be an absolute path of letters, digits, '.', '_', '-' and '/', not ${webroot}" >&2
+        return 1
+    fi
+    printf '%s\n' \
+        "location ^~ /.well-known/acme-challenge/ {" \
+        "    root ${webroot};" \
+        "    default_type text/plain;" \
+        "    try_files \$uri =404;" \
+        "}"
 }
 
 #
@@ -605,6 +636,11 @@ receiver_root: ${RECEIVER_ROOT}"
 # Issuing certificates from the interface.
 acme:
   certbot: /opt/haprion-certbot/current/venv/bin/certbot"
+        if [[ -n "${ACME_WEBROOT:-}" ]]; then
+            valid_abs_path "$ACME_WEBROOT" || { echo "ACME_WEBROOT must be an absolute path" >&2; return 1; }
+            policy+="
+  webroot: ${ACME_WEBROOT}"
+        fi
         if (( ${#dns_keys[@]} > 0 )); then
             policy+="
   dns_profiles:

@@ -123,6 +123,7 @@ FIXED_PATHS = (
     "/etc/nginx/snippets/haprion-receivers.conf",
     "/etc/nginx/snippets/haprion-real-ip.conf",
     "/etc/nginx/snippets/haprion-hsts.conf",
+    "/etc/nginx/snippets/haprion-acme.conf",
     "/etc/nginx/haprion-receivers",
     "/var/log/nginx/haprion.access.log",
     "/var/log/nginx/haprion.error.log",

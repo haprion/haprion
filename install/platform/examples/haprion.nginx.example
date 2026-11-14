@@ -75,9 +75,17 @@ server {
     listen [::]:80;
     server_name SERVER_NAME;
 
-    # Nothing is served over plain HTTP: the session cookie is Secure, so it
-    # would never be sent here anyway.
-    return 301 https://$host$request_uri;
+    # Let's Encrypt's HTTP-01 challenge, from the policy's webroot, when there is
+    # one; empty otherwise. This server is the only one on port 80, so it answers
+    # every name a cluster sends here.
+    include /etc/nginx/snippets/haprion-acme.conf;
+
+    # Nothing else is served over plain HTTP: the session cookie is Secure, so it
+    # would never be sent here anyway. In a location, not at the server's level,
+    # where it would answer before the challenge's location is chosen.
+    location / {
+        return 301 https://$host$request_uri;
+    }
 }
 
 server {

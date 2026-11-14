@@ -992,14 +992,16 @@ class Run:
     def http01_checked(self) -> None:
         """B496, B499: Check HTTP-01 through the web's socket and the command, in the helper's own unit.
 
-        A webroot is added to the policy and step 07 run again, as an
-        administrator would; nginx serves the challenge path from it on port 80
-        for one name, as the manual asks. The file comes back and is gone after;
-        a name nginx sends on to https without the rule is another service.
-        The policy, the units and the webroot are put back after.
+        A webroot is added to the policy and steps 05 and 07 run again, as the
+        manual tells an administrator to (26-11-14): step 07 opens it for the
+        units, step 05 has the interface's own site serve the challenge path on
+        port 80 - for any name, which is what a cluster's rule sends on. Two
+        names come back with the file, and it is gone after each. The policy,
+        the units, the site and the webroot are put back after.
         """
 
         webroot = "/var/www/acme"
+        step05 = "/usr/share/haprion-ui/install/platform/05-platform-nginx"
         step07 = "/usr/share/haprion-ui/install/platform/07-platform-services"
         policy = "/etc/haprion/runtime-policy.yaml"
         edit = (
@@ -1009,26 +1011,22 @@ class Run:
             "if '\\nacme:\\n' in t else t + '\\nacme:\\n' + line + '\\n'; "
             "p.write_text(t)"
         )
-        site = (
-            "server {\n    listen 80;\n    server_name http01.example.com;\n"
-            f"    location /.well-known/acme-challenge/ {{ root {webroot}; }}\n"
-            "    location / { return 404; }\n}\n"
-        )
         self.on("mgr", f"cp -p {policy} /root/runtime-policy.before-http01")
         try:
             self.on(
                 "mgr",
                 f"install -d -m 755 {webroot} && "
-                f"python3 -c {shlex.quote(edit)} {policy} {webroot} && {step07} >/dev/null",
+                f"python3 -c {shlex.quote(edit)} {policy} {webroot} && "
+                f"{step05} >/dev/null && {step07} >/dev/null",
             )
             _, unit = self.on("mgr", "cat /etc/systemd/system/haprion-http01-check-helper@.service")
             if f"\nReadWritePaths=-{webroot}\n" not in unit:
                 raise Failed(f"step 07 did not open the webroot for the check helper:\n{unit}")
+            _, snippet = self.on("mgr", "cat /etc/nginx/snippets/haprion-acme.conf")
+            if f"root {webroot};" not in snippet:
+                raise Failed(f"step 05 did not serve the webroot on port 80:\n{snippet}")
             self.on(
-                "mgr",
-                f"printf %s {shlex.quote(site)} > /etc/nginx/sites-enabled/install-test-acme && "
-                "printf '127.0.0.1 http01.example.com other.example.com\\n' >> /etc/hosts && "
-                "nginx -t 2>/dev/null && systemctl reload nginx",
+                "mgr", "printf '127.0.0.1 http01.example.com other.example.com\\n' >> /etc/hosts"
             )
             ask = (
                 "import socket, sys; s = socket.socket(socket.AF_UNIX); "
@@ -1038,7 +1036,7 @@ class Run:
             )
             for name, expected in (
                 ("http01.example.com", "reached"),
-                ("other.example.com", "other"),
+                ("other.example.com", "reached"),
             ):
                 request = json.dumps(
                     {
@@ -1071,11 +1069,9 @@ class Run:
         finally:
             self.on(
                 "mgr",
-                "rm -f /etc/nginx/sites-enabled/install-test-acme; "
                 "sed -i '/ http01.example.com other.example.com$/d' /etc/hosts; "
-                "systemctl reload nginx; "
                 f"cp -p /root/runtime-policy.before-http01 {policy} && "
-                f"rm /root/runtime-policy.before-http01 && {step07} >/dev/null; "
+                f"rm /root/runtime-policy.before-http01 && {step05} >/dev/null && {step07} >/dev/null; "
                 f"rm -rf {webroot}",
                 check=False,
             )

@@ -119,7 +119,12 @@ class TheSiteParses(unittest.TestCase):
         # The paths outside the site that a check opens, moved under the
         # throwaway root: nginx -t opens every log and include it names.
         #
-        for snippet in ("haprion-real-ip.conf", "haprion-receivers.conf", "haprion-hsts.conf"):
+        for snippet in (
+            "haprion-real-ip.conf",
+            "haprion-receivers.conf",
+            "haprion-hsts.conf",
+            "haprion-acme.conf",
+        ):
             (root / snippet).write_text("")
             site = site.replace(f"/etc/nginx/snippets/{snippet}", str(root / snippet))
         # HSTS on, as `haprion-tls hsts on` writes it: the header parses where it is included.
@@ -263,6 +268,97 @@ class TheSignInLimitCountsAnIpv6SourceAsItsPrefix(unittest.TestCase):
             except ConnectionRefusedError:
                 time.sleep(0.1)
         self.fail("nginx did not listen")
+
+
+LIB = Path(__file__).resolve().parents[1] / "install" / "lib.sh"
+
+
+def acme_snippet(webroot: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # bash, the installation's own function
+        [
+            "/bin/bash",
+            "-c",
+            'set -Eeuo pipefail; source "$1"; acme_snippet "$2"',
+            "_",
+            str(LIB),
+            webroot,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+class HttpChallengesAreServedOnPort80(unittest.TestCase):
+    """26-11-14: the site's port-80 server serves the policy's webroot to Let's Encrypt, for any name.
+
+    The port-80 server as the site has it, with the snippet step 05 and every
+    update write, asked of a running nginx with another name than the
+    manager's - the name a certificate is for, sent on by a cluster's rule.
+    """
+
+    def setUp(self) -> None:
+        if not Path(NGINX).exists():
+            self.skipTest("nginx is not installed here")
+
+    def ask(self, snippet: str, path: str) -> tuple[int, str, str]:
+        site = (TEMPLATE / "haprion.nginx.example").read_text()
+        found = re.search(r"^server \{\n    listen 80;.*?^\}\n", site, re.M | re.S)
+        assert found is not None
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "acme.conf").write_text(snippet.replace("WEBROOT", str(root / "webroot")))
+            challenges = root / "webroot" / ".well-known" / "acme-challenge"
+            challenges.mkdir(parents=True)
+            (challenges / "token-1").write_text("proof\n")
+            server = (
+                found.group(0)
+                .replace("    listen [::]:80;\n", "")
+                .replace("/etc/nginx/snippets/haprion-acme.conf", str(root / "acme.conf"))
+                .replace("SERVER_NAME", "mgr.example.com")
+            )
+
+            def config(port: int) -> str:
+                return (
+                    f"pid {root}/nginx.pid;\nerror_log {root}/error.log;\nevents {{}}\n"
+                    f"http {{\n  access_log off;\n"
+                    f"{server.replace('listen 80;', f'listen 127.0.0.1:{port};')}}}\n"
+                )
+
+            with serving(self, root, config) as port:
+                connection = HTTPConnection("127.0.0.1", port, timeout=5)
+                connection.request("GET", path, headers={"Host": "www.example.org"})
+                answer = connection.getresponse()
+                result = (answer.status, answer.getheader("Location") or "", answer.read().decode())
+                connection.close()
+        return result
+
+    def test_a_challenge_is_served_for_any_name_and_the_rest_goes_to_https(self) -> None:
+        made = acme_snippet("/srv/acme-root")
+        self.assertEqual(made.returncode, 0, made.stderr)
+        snippet = made.stdout.replace("/srv/acme-root", "WEBROOT")
+
+        self.assertEqual(
+            self.ask(snippet, "/.well-known/acme-challenge/token-1")[::2], (200, "proof\n")
+        )
+        self.assertEqual(self.ask(snippet, "/login")[:2], (301, "https://www.example.org/login"))
+        self.assertEqual(self.ask(snippet, "/.well-known/acme-challenge/none")[0], 404)
+
+    def test_without_a_webroot_the_challenge_goes_to_https_as_everything_does(self) -> None:
+        made = acme_snippet("")
+        self.assertEqual(made.returncode, 0, made.stderr)
+        self.assertNotIn("location", made.stdout)
+        self.assertEqual(self.ask(made.stdout, "/.well-known/acme-challenge/token-1")[0], 301)
+
+    def test_a_webroot_that_is_not_a_plain_path_is_refused(self) -> None:
+        for webroot in (
+            "relative/acme",
+            "/var/www/acme; return 200",
+            "/var/../etc",
+            "/var/www/a b",
+        ):
+            with self.subTest(webroot=webroot):
+                self.assertNotEqual(acme_snippet(webroot).returncode, 0)
 
 
 class AStartThatLostItsPort(unittest.TestCase):

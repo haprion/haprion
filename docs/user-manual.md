@@ -6934,13 +6934,14 @@ which also covers `example.net`) needs `dns-01`, and is refused with `http-01`. 
 routes, change the published configuration or check that the name resolves.
 
 **`http-01` needs more than the webroot setting.** Port 80 for a proxied name ends at the cluster's VIP,
-not at the manager. Three things must be in place, all of them yours to set up:
+not at the manager. Three things must be in place:
 
-1. the webroot directory named in the policy. Added after the installation, run platform step 07 again
-   (`/usr/share/haprion-ui/install/platform/07-platform-services`): the worker's sandbox and the check's
-   open the webroot the policy names when the step writes their units
-2. something on the manager that serves that directory over plain HTTP - a port-80 `server` block in nginx
-   that exposes only `/.well-known/acme-challenge/` from the webroot
+1. the webroot directory named in the policy. `ACME_WEBROOT` in the answers writes it at installation. Added
+   later, run platform steps 05 and 07 again (`/usr/share/haprion-ui/install/platform/`): step 07 opens the
+   webroot for the worker's sandbox and the check's, step 05 serves it
+2. nginx on the manager serving that directory over plain HTTP. The interface's site does it once the policy
+   names a webroot: its port-80 server answers `/.well-known/acme-challenge/` from the webroot for any name, and
+   sends everything else to https
 3. a rule in each cluster that sends that path to the manager, written once into `core/` or `manual/`,
    never generated:
 

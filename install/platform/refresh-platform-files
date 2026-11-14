@@ -40,6 +40,7 @@ NGINX_SITE="${NGINX_SITE:-/etc/nginx/sites-available/haprion}"
 TLS_CONF="${TLS_CONF:-/etc/haprion/ui-tls.conf}"
 CERTBOT_HOOK_DIR="${CERTBOT_HOOK_DIR:-/etc/letsencrypt/renewal-hooks/deploy}"
 HSTS_SNIPPET="${HSTS_SNIPPET:-/etc/nginx/snippets/haprion-hsts.conf}"
+ACME_SNIPPET="${ACME_SNIPPET:-/etc/nginx/snippets/haprion-acme.conf}"
 
 #
 # The helper sockets step 07 always installs, and those an answer or a later
@@ -252,6 +253,13 @@ if [[ -e "$NGINX_SITE" ]]; then
     site_hsts="$(admin_value "$TLS_CONF" HSTS)"
     site_hsts="$(hsts_snippet "$site_hsts")" || die "HSTS in ${TLS_CONF} must be yes or no"
     put site "$HSTS_SNIPPET" 644 "$site_hsts"
+    #
+    # The HTTP-01 challenge path, from the policy's webroot (26-11-14): a file
+    # the site includes, so the site an update writes always finds it.
+    #
+    site_acme="$(acme_snippet "$(policy_acme_webroot "$release_python")")" \
+        || die "the runtime policy's acme.webroot cannot be served"
+    put site "$ACME_SNIPPET" 644 "$site_acme"
     put site "$NGINX_SITE" 644 \
         "$(render_site "$site_host" "$site_certificate" "$site_key" examples/haprion.nginx.example)"
 fi

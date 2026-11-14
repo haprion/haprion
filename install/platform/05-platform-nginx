@@ -107,6 +107,16 @@ step "HSTS"
 hsts_line="$(hsts_snippet "$hsts")" || die "HSTS in /etc/haprion/ui-tls.conf must be yes or no"
 install_file /etc/nginx/snippets/haprion-hsts.conf root:root 644 "$hsts_line"
 
+step "HTTP-01"
+acme_webroot="$(policy_acme_webroot)" || die "cannot read the runtime policy's HTTP-01 webroot"
+acme_line="$(acme_snippet "$acme_webroot")" || die "the runtime policy's acme.webroot cannot be served"
+install_file /etc/nginx/snippets/haprion-acme.conf root:root 644 "$acme_line"
+if [[ -n "$acme_webroot" ]]; then
+    log "  serves   /.well-known/acme-challenge/ from ${acme_webroot}"
+else
+    log "  none; the runtime policy names no acme.webroot"
+fi
+
 step "Site"
 rendered="$(render_site "$SERVER_NAME" "$TLS_CERT" "$TLS_KEY" examples/haprion.nginx.example)"
 install_file /etc/nginx/sites-available/haprion root:root 644 "$rendered"

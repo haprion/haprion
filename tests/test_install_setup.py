@@ -356,6 +356,30 @@ class WhatStep2WritesTheEngineReads(unittest.TestCase):
         registry = load_registry(policy.certificate_registry, require_secure=False)
         self.assertEqual((registry.receivers, registry.certificates), ({}, {}))
 
+    def test_a_webroot_answered_is_the_policy_s_http01_webroot(self) -> None:
+        """26-11-14: ACME_WEBROOT sets up HTTP-01 at installation; without it, there is none."""
+
+        policy = load_policy(self.render("ACME_WEBROOT=/var/www/acme\n"), require_secure=False)
+        assert policy.acme is not None
+        self.assertEqual(policy.acme.webroot, Path("/var/www/acme"))
+
+    def test_without_a_webroot_answered_the_policy_names_none(self) -> None:
+        policy = load_policy(self.render(), require_secure=False)
+        assert policy.acme is not None
+        self.assertIsNone(policy.acme.webroot)
+
+    def test_a_relative_webroot_is_refused(self) -> None:
+        with self.answers.open("a") as handle:
+            handle.write("ACME_WEBROOT=var/www/acme\n")
+        done = bash(
+            'set -Eeuo pipefail; source "$1"; load_answers "$2"; render_policy',
+            str(LIB),
+            str(self.answers),
+            env=dict(os.environ, DNS_PROFILE_KEYS=str(self.keys)),
+        )
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("ACME_WEBROOT must be an absolute path", done.stderr)
+
     def test_the_keys_step_15_made_are_named_for_the_dns_profiles(self) -> None:
         for name in ("b2.key", "a1.key"):
             (self.keys / name).write_text("key\n")
@@ -1158,8 +1182,11 @@ class TheHttp01WebrootIsMadeBeforeTheUnitOpensIt(unittest.TestCase):
         lib = (INSTALL / "lib.sh").read_text()
         start = lib.index("ensure_worker_directories() {")
         step = lib[start : lib.index("\n}\n", start)]
-        self.assertIn("acme.webroot", step)
+        self.assertIn('webroot="$(policy_acme_webroot)"', step)
         self.assertIn('install -d -o root -g root -m 755 "$webroot"', step)
+        # One reader of the webroot, shared with what serves it (step 05, the update).
+        start = lib.index("policy_acme_webroot() {")
+        self.assertIn("policy.acme.webroot", lib[start : lib.index("\n}\n", start)])
 
 
 class AUnitThatDoesNotStart(unittest.TestCase):

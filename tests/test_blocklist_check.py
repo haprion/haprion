@@ -128,14 +128,21 @@ class CheckingAnAddress(unittest.TestCase):
         self.assertEqual(found.lists[0].excepted_on, ("beta",))
         self.assertEqual(found.unfetched, ("fresh",))
         self.assertIn("203.0.113.7 is on community (203.0.113.0/24), fetched ", found.sentence())
-        self.assertIn(". It is excepted on beta. fresh has not been fetched yet.", found.sentence())
+        self.assertIn(
+            ". beta excepts it; elsewhere proxies that use community refuse it, or log it where Denied"
+            " is log only. fresh has not been fetched yet.",
+            found.sentence(),
+        )
 
     def test_an_address_the_list_holds_bare_is_not_repeated(self) -> None:
         found = self.check("198.51.100.7", {"alpha": {}})
 
         self.assertEqual(found.lists[0].network, "198.51.100.7")
         self.assertIn("198.51.100.7 is on community, fetched", found.sentence())
-        self.assertIn("It is not excepted.", found.sentence())
+        self.assertIn(
+            "Proxies that use community refuse it, or log it where Denied is log only.",
+            found.sentence(),
+        )
 
     def test_excepted_in_every_cluster_is_excepted(self) -> None:
         groups = {
@@ -146,7 +153,10 @@ class CheckingAnAddress(unittest.TestCase):
         self.assertTrue(
             self.check("198.51.100.7", groups)
             .sentence()
-            .endswith("It is excepted. fresh has not been fetched yet.")
+            .endswith(
+                "Every cluster excepts it, so no proxy refuses it for community."
+                " fresh has not been fetched yet."
+            )
         )
 
     def test_on_no_list(self) -> None:
@@ -381,7 +391,7 @@ class TheHelperAndTheCommand(Fixture):
 
         self.assertEqual(code, exit_codes.OK)
         self.assertIn("198.51.100.20 is on community (198.51.100.0/24), fetched ", out)
-        self.assertTrue(out.endswith("It is not excepted.\n"))
+        self.assertTrue(out.endswith("refuse it, or log it where Denied is log only.\n"))
 
     def test_a_failed_fetch_exits_the_same_with_and_without_json(self) -> None:
         def refused(item: blocklists.Definition, secret: str) -> bytes:

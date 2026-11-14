@@ -221,13 +221,21 @@ class Listed:
     """Every cluster the list goes to, so 'excepted everywhere' can be told from 'on some'."""
 
     def sentence(self, address: str) -> str:
+        """Where the address is listed, and what the proxies do with it (said plainly 26-11-14).
+
+        "It is not excepted" left the reader to work out the consequence. A
+        proxy only acts on the list where it names it under Denied, and there
+        its Denied mode decides: refused, or logged and served.
+        """
+
         where = "" if self.network == address else f" ({self.network})"
         said = f"{address} is on {self.name}{where}, fetched {_moment(self.fetched_at)}."
+        acting = f"proxies that use {self.name} refuse it, or log it where Denied is log only."
         if not self.excepted_on:
-            return f"{said} It is not excepted."
+            return f"{said} {acting[0].upper()}{acting[1:]}"
         if set(self.excepted_on) == set(self.clusters):
-            return f"{said} It is excepted."
-        return f"{said} It is excepted on {_names(self.excepted_on)}."
+            return f"{said} Every cluster excepts it, so no proxy refuses it for {self.name}."
+        return f"{said} {_names(self.excepted_on)} {'excepts' if len(self.excepted_on) == 1 else 'except'} it; elsewhere {acting}"
 
 
 @dataclass(frozen=True)

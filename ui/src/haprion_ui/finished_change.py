@@ -11,6 +11,7 @@ are held while it is written, as the editor's own save does.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
@@ -24,6 +25,14 @@ from haprion_ui.editor_flow import EditorState, carried_base, hold_cluster_chang
 from haprion_ui.saved_work import settled_work
 
 
+@dataclass(frozen=True)
+class Applied:
+    """What `apply` did: the problem that stopped it, and whether it saved anything."""
+
+    problem: str | None
+    changed: bool
+
+
 def save(
     request: Request,
     session: AuthenticatedSession,
@@ -35,25 +44,39 @@ def save(
 ) -> str | None:
     """Apply one change to the object's saved change or stored document; the problem, or None."""
 
+    return apply(request, session, state, name=name, change=change, detail=detail).problem
+
+
+def apply(
+    request: Request,
+    session: AuthenticatedSession,
+    state: EditorState,
+    *,
+    name: str,
+    change: Callable[[str], str],
+    detail: dict[str, Any],
+) -> Applied:
+    """`save`, and whether it changed anything: a change the object already has saves nothing."""
+
     cluster = state.cluster
     stored = next((view for view in state.stored if view.name == name), None)
     with request.app.state.pool.connection() as connection:
         work = settled_work(connection, cluster, name, state_reading(state))
     if work.draft is not None:
-        return f"{name} has a draft. Save or discard it in the editor first."
+        return Applied(f"{name} has a draft. Save or discard it in the editor first.", False)
     draft = work.saved
     if draft is not None and draft.deleted:
-        return f"The saved changes remove {name}."
+        return Applied(f"The saved changes remove {name}.", False)
     base = draft.yaml if draft is not None else (stored.document if stored is not None else "")
     if not base or state.commit is None:
-        return "The stored proxies have not been read yet."
+        return Applied("The stored proxies have not been read yet.", False)
     try:
         document = change(base)
         load_written(name, document.encode())
     except (ValueError, ModelError) as exc:
-        return str(exc)
+        return Applied(str(exc), False)
     if editor_module.unchanged(document, base):
-        return None
+        return Applied(None, False)
     with request.app.state.pool.connection() as connection:
         try:
             hold_cluster_changes(
@@ -79,7 +102,7 @@ def save(
             )
         except db.DraftConflict as conflict:
             connection.rollback()
-            return f"{conflict}. Reload the page and try again."
+            return Applied(f"{conflict}. Reload the page and try again.", False)
         db.record_audit_event(
             connection,
             actor=session.username,
@@ -89,4 +112,4 @@ def save(
             detail={"object": name, "revision": saved.revision, **detail},
         )
         connection.commit()
-    return None
+    return Applied(None, True)

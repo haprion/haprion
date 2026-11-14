@@ -31,7 +31,7 @@
       </div>
     </div>
     <div class="editor-actions editor-submit">
-      <div class="form-buttons"><a class="secondary-button" href="/settings#blocklists">Cancel</a><button type="submit" class="secondary-button deploy-button">Add</button></div>
+      <div class="form-buttons"><a class="secondary-button" href="/settings#blocklists">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if refused %} disabled{% endif %}>Add</button></div>
     </div>
   </section>
 </form>

@@ -333,6 +333,15 @@ def build_router(config: Config) -> APIRouter:
         _await(request, job.id)
         return RedirectResponse(CARD, status_code=303)
 
+    def _not_fetched(request: Request, name: str) -> str:
+        """Why the list cannot be added yet, or "" when it has been fetched."""
+
+        with request.app.state.pool.connection() as connection:
+            fetched = blocklist_form.fetched_names(connection)
+        if name in fetched:
+            return ""
+        return f"{name} has not been fetched yet. Add it to the proxies once it has been."
+
     def _add_page(
         request: Request,
         gate: AuthenticatedSession,
@@ -343,6 +352,7 @@ def build_router(config: Config) -> APIRouter:
         status_code: int = 200,
     ) -> Response:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
+        refused = _not_fetched(request, name)
         with request.app.state.pool.connection() as connection:
             reach = blocklist_form.reach(connection, name)
         return TEMPLATES.TemplateResponse(
@@ -359,7 +369,8 @@ def build_router(config: Config) -> APIRouter:
                     (cluster, reach.get(cluster)) for cluster in listed_clusters(request, config)
                 ],
                 "chosen": chosen,
-                "problem": problem,
+                "problem": problem or refused,
+                "refused": bool(refused),
             },
             status_code=status_code,
         )
@@ -399,13 +410,12 @@ def build_router(config: Config) -> APIRouter:
             return forbidden_page(request, config)
         if _existing(request, name) is None:
             return PlainTextResponse("Not found", status_code=404)
-        with request.app.state.pool.connection() as connection:
-            fetched = blocklist_form.fetched_names(connection)
-        if name not in fetched:
+        not_fetched = _not_fetched(request, name)
+        if not_fetched:
             return refusal_page(
                 request,
                 config,
-                f"{name} has not been fetched yet. Add it to the proxies once it has been.",
+                not_fetched,
                 back=CARD,
                 status_code=409,
             )
@@ -419,11 +429,12 @@ def build_router(config: Config) -> APIRouter:
         for cluster in chosen:
             state = editor_state(request, config, cluster)
             added: list[str] = []
+            already: list[str] = []
             skipped: list[tuple[str, str]] = []
             for view in state.stored:
                 if view.protocol not in blocklist_form.DENIED_PROTOCOLS:
                     continue
-                problem = finished_change.save(
+                applied = finished_change.apply(
                     request,
                     gate,
                     state,
@@ -431,11 +442,15 @@ def build_router(config: Config) -> APIRouter:
                     change=partial(blocklist_form.with_list, name, view.name),
                     detail={"blocklist_added": name},
                 )
-                if problem:
-                    skipped.append((view.name, problem))
-                else:
+                if applied.problem:
+                    skipped.append((view.name, applied.problem))
+                elif applied.changed:
                     added.append(view.name)
-            results.append(blocklist_form.Added(cluster, tuple(added), tuple(skipped)))
+                else:
+                    already.append(view.name)
+            results.append(
+                blocklist_form.Added(cluster, tuple(added), tuple(already), tuple(skipped))
+            )
         return TEMPLATES.TemplateResponse(
             request,
             "blocklist-added.html",

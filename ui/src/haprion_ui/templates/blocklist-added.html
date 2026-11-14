@@ -13,7 +13,7 @@
 <div class="cluster-list">
 {% for result in results %}
 <section class="cluster-card {{ result.cluster | cluster_accent }}">
-  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>{{ result.cluster }}</h3><p>{% if result.added %}Added to {{ result.added | length }} prox{{ 'y' if result.added | length == 1 else 'ies' }}, saved for the next publish.{% elif not result.skipped %}Every proxy already has it.{% else %}Added to none.{% endif %}</p></div></div>
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>{{ result.cluster }}</h3><p>{% if result.added %}Added to {{ result.added | length }} prox{{ 'y' if result.added | length == 1 else 'ies' }}, saved for the next publish.{% if result.already %} {{ result.already | length }} already had it.{% endif %}{% elif result.already and result.skipped %}{{ result.already | length }} already had it.{% elif result.already %}Every proxy already has it.{% elif result.skipped %}Added to none.{% else %}No http, https or tcp proxy.{% endif %}</p></div></div>
     {% if result.added %}<div class="cluster-state"><a class="secondary-button" href="/proxies?{{ {'cluster': result.cluster} | urlencode }}">Publish…</a></div>{% endif %}
   </header>
   {% if result.skipped %}

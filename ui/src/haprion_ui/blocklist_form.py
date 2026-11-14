@@ -455,6 +455,8 @@ class Added:
 
     cluster: str
     added: tuple[str, ...]
+    already: tuple[str, ...]
+    """The objects that already had the list: nothing was saved for them."""
     skipped: tuple[tuple[str, str], ...]
     """`(object, why)` for each object the list could not be added to."""
 

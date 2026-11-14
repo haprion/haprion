@@ -30,7 +30,17 @@ from haprion import blocklist_store, blocklists
 from haprion.blocklist_check import AddressCheck, CheckError, Listed, Tested
 from haprion.dns_profile_keys import generate, render_public_key
 
-from haprion_ui import attention, auth, blocklist_apply, blocklist_form, db, editor, poller, preview
+from haprion_ui import (
+    attention,
+    auth,
+    blocklist_apply,
+    blocklist_form,
+    db,
+    editor,
+    finished_change,
+    poller,
+    preview,
+)
 from haprion_ui.templates import STATIC_DIRECTORY
 from tests.test_login import LoginTestCase, configuration
 from tests.test_poller import document
@@ -893,6 +903,32 @@ class AddingToEveryObject(unittest.TestCase):
         self.assertEqual(blocklist_form.with_list("community", "app", dns), dns)
 
 
+class AChangeTheObjectAlreadyHasSavesNothing(unittest.TestCase):
+    def test_apply_says_unchanged_and_writes_nothing(self) -> None:
+        stored = mock.Mock(document="name: shop\n")
+        stored.name = "shop"
+        state = mock.Mock(stored=[stored], commit="abc", cluster="alpha")
+        request = mock.MagicMock()
+        work = mock.Mock(draft=None, saved=None)
+        with (
+            mock.patch("haprion_ui.finished_change.settled_work", return_value=work),
+            mock.patch("haprion_ui.finished_change.state_reading"),
+            mock.patch("haprion_ui.finished_change.load_written"),
+            mock.patch("haprion_ui.finished_change.db.save_change") as written,
+        ):
+            applied = finished_change.apply(
+                request,
+                mock.Mock(username="admin"),
+                state,
+                name="shop",
+                change=lambda document: document,
+                detail={},
+            )
+
+        self.assertEqual(applied, finished_change.Applied(None, False))
+        written.assert_not_called()
+
+
 class AddToAllObjectsRoute(BlocklistRouteTestCase):
     def test_each_object_is_a_saved_change_and_a_draft_is_said(self) -> None:
         self.blocklists = [blocklist_row()]
@@ -905,13 +941,18 @@ class AddToAllObjectsRoute(BlocklistRouteTestCase):
         for view, name in zip(views, ("shop", "resolver", "ssh"), strict=True):
             view.name = name
         state = mock.Mock(stored=views, cluster="alpha")
-        answers = {"shop": None, "ssh": "ssh has a draft. Save or discard it in the editor first."}
+        answers = {
+            "shop": finished_change.Applied(None, True),
+            "ssh": finished_change.Applied(
+                "ssh has a draft. Save or discard it in the editor first.", False
+            ),
+        }
         client = self.admin()
         with (
             mock.patch("haprion_ui.pages.blocklists.listed_clusters", return_value=("alpha",)),
             mock.patch("haprion_ui.pages.blocklists.editor_state", return_value=state),
             mock.patch(
-                "haprion_ui.finished_change.save",
+                "haprion_ui.finished_change.apply",
                 side_effect=lambda *_a, name, **_k: answers[name],
             ) as saved,
         ):
@@ -929,13 +970,67 @@ class AddToAllObjectsRoute(BlocklistRouteTestCase):
         self.assertIn("ssh has a draft", page)
         self.assertIn('href="/proxies?cluster=alpha"', page)
 
+    def test_an_object_that_already_has_the_list_is_not_counted_as_added(self) -> None:
+        """PL03: it said "Added to N proxies" and offered Publish for a change that saved nothing."""
+
+        self.blocklists = [blocklist_row()]
+        self.blocklist_states = [state_row()]
+        views = [mock.Mock(protocol="http"), mock.Mock(protocol="tcp")]
+        for view, name in zip(views, ("shop", "ssh"), strict=True):
+            view.name = name
+        client = self.admin()
+        with (
+            mock.patch("haprion_ui.pages.blocklists.listed_clusters", return_value=("alpha",)),
+            mock.patch(
+                "haprion_ui.pages.blocklists.editor_state",
+                return_value=mock.Mock(stored=views, cluster="alpha"),
+            ),
+            mock.patch(
+                "haprion_ui.finished_change.apply",
+                return_value=finished_change.Applied(None, False),
+            ),
+        ):
+            page = client.post(
+                "/settings/blocklists/community/add-to-proxies",
+                data={
+                    auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE]),
+                    "clusters": "alpha",
+                },
+            ).text
+
+        self.assertIn("Every proxy already has it.", page)
+        self.assertNotIn("Added to", page)
+        self.assertNotIn("Publish", page)
+
+    def test_a_cluster_without_a_proxy_that_can_hold_it_says_so(self) -> None:
+        self.blocklists = [blocklist_row()]
+        self.blocklist_states = [state_row()]
+        client = self.admin()
+        with (
+            mock.patch("haprion_ui.pages.blocklists.listed_clusters", return_value=("alpha",)),
+            mock.patch(
+                "haprion_ui.pages.blocklists.editor_state",
+                return_value=mock.Mock(stored=[], cluster="alpha"),
+            ),
+        ):
+            page = client.post(
+                "/settings/blocklists/community/add-to-proxies",
+                data={
+                    auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE]),
+                    "clusters": "alpha",
+                },
+            ).text
+
+        self.assertIn("No http, https or tcp proxy.", page)
+        self.assertNotIn("Every proxy already has it.", page)
+
     def test_a_list_never_fetched_is_not_added(self) -> None:
         self.blocklists = [blocklist_row()]
         self.blocklist_states = [state_row(fetched_at=None, attempted_at=None)]
         client = self.admin()
         with (
             mock.patch("haprion_ui.pages.blocklists.listed_clusters", return_value=("alpha",)),
-            mock.patch("haprion_ui.finished_change.save") as saved,
+            mock.patch("haprion_ui.finished_change.apply") as saved,
         ):
             response = client.post(
                 "/settings/blocklists/community/add-to-proxies",
@@ -965,7 +1060,10 @@ class AddToAllObjectsRoute(BlocklistRouteTestCase):
                 "haprion_ui.pages.blocklists.editor_state",
                 side_effect=lambda _r, _c, cluster: mock.Mock(stored=[view], cluster=cluster),
             ) as read,
-            mock.patch("haprion_ui.finished_change.save", return_value=None) as saved,
+            mock.patch(
+                "haprion_ui.finished_change.apply",
+                return_value=finished_change.Applied(None, True),
+            ) as saved,
         ):
             page = client.post(
                 "/settings/blocklists/community/add-to-proxies",
@@ -986,7 +1084,7 @@ class AddToAllObjectsRoute(BlocklistRouteTestCase):
         client = self.admin()
         with (
             mock.patch("haprion_ui.pages.blocklists.listed_clusters", return_value=("alpha",)),
-            mock.patch("haprion_ui.finished_change.save") as saved,
+            mock.patch("haprion_ui.finished_change.apply") as saved,
         ):
             response = client.post(
                 "/settings/blocklists/community/add-to-proxies",
@@ -997,6 +1095,18 @@ class AddToAllObjectsRoute(BlocklistRouteTestCase):
         self.assertIn("Choose at least one cluster.", response.text)
         self.assertIn('name="clusters" value="alpha"', response.text)
         saved.assert_not_called()
+
+    def test_a_list_never_fetched_is_refused_when_the_page_opens(self) -> None:
+        """PL04: the refusal came only after the clusters were chosen and Add pressed."""
+
+        self.blocklists = [blocklist_row()]
+        self.blocklist_states = [state_row(fetched_at=None, attempted_at=None)]
+        client = self.admin()
+        with mock.patch("haprion_ui.pages.blocklists.listed_clusters", return_value=("alpha",)):
+            page = client.get("/settings/blocklists/community/add-to-proxies").text
+
+        self.assertIn("community has not been fetched yet", page)
+        self.assertRegex(page, r'<button type="submit"[^>]* disabled>Add</button>')
 
     def test_the_page_offers_each_cluster_unchosen_with_what_it_holds(self) -> None:
         self.blocklists = [blocklist_row()]

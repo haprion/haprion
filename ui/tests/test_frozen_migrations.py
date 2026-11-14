@@ -26,6 +26,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -125,6 +126,36 @@ class RunMigrationsStayAsTheyRan(unittest.TestCase):
             unfrozen(released, present, set(frozen())),
             [],
             "add these to migrations/frozen.sha256 - a release has carried them",
+        )
+
+    def test_a_version_not_yet_tagged_has_every_migration_frozen(self) -> None:
+        """A tree whose version has no tag yet is the release about to be tagged (26-11-14).
+
+        The test above reads the tags, so it failed only once `v1.1.0` stood
+        on the release commit - in the tag's own pre-push gate, after the
+        release had been proved. Between releases the version is the last
+        release's, which is tagged; from the version commit on, every migration
+        the tree holds is one the coming tag will carry.
+        """
+
+        released = shipped(MIGRATIONS.parents[1])
+        if released is None:
+            self.skipTest("no v* tags in this clone (a shallow checkout): the release is not known")
+        project = tomllib.loads((MIGRATIONS.parent / "pyproject.toml").read_text())
+        tag = f"v{project['project']['version']}"
+        tags = subprocess.run(  # noqa: S603 - git, fixed arguments
+            ["git", "-C", str(MIGRATIONS.parents[1]), "tag", "--list", tag],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        if tag in tags:
+            self.skipTest(f"{tag} is tagged: the tree is past that release, not about to be it")
+        present = {f"versions/{file.name}" for file in (MIGRATIONS / "versions").glob("[0-9]*.py")}
+        self.assertEqual(
+            sorted(present - set(frozen())),
+            [],
+            f"add these to migrations/frozen.sha256 - {tag} is about to carry them",
         )
 
     def test_a_tag_that_cannot_be_read_fails_and_one_that_can_is_read(self) -> None:

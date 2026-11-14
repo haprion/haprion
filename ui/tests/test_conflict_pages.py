@@ -45,7 +45,7 @@ CAUGHT = {
     ("saved_work.py", "_discard_shown"): "a newer draft is kept, not refused",
     ("saved_work.py", "settled_changes"): "a newer saved change is kept, not refused",
     ("editor_flow.py", "advanced_submit"): "the dialog answers in its own document",
-    ("finished_change.py", "save"): "the WAF dialog and Add to all proxies say it per object",
+    ("finished_change.py", "save"): "the WAF dialog and Add to proxies say it per object",
     (
         "blocklist_form.py",
         "save",

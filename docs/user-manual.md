@@ -1731,11 +1731,14 @@ list: an entry that overlaps one keeps only its public part. An entry shorter th
 (IPv6) is skipped, so one broken line cannot close half the internet. *Test* and the *Addresses* column
 on *Settings → Blocklists* count these with the lines that were not addresses.
 
-**Using one.** A new object has every blocklist chosen under *Denied — groups*. *Denied — mode* decides
-what happens: *log only* records the match and serves the request, *deny* refuses it. For the objects
-that exist, *Add to all proxies* on the list's row adds it to every http, https and tcp object, as saved
-changes. Each cluster's changes go out with its next publish. An object with a draft is left as it is,
-and the page says which.
+**Using one.** A new object has every blocklist chosen under *Denied — groups*, where the lists stand
+under their own heading apart from the network groups. *Denied — mode* decides what happens: *log only*
+records the match and serves the request, *deny* refuses it. With *Access* closed, its line names the
+lists the object uses. For the objects that exist, *Add to proxies…* on the list's row asks which
+clusters, and adds the list to every http, https and tcp object in those, as saved changes. Nothing is
+chosen until you choose: a cluster whose clients all come from private networks gains nothing from a
+list. Each cluster's changes go out with its next publish. An object with a draft is left as it is, and
+the page says which.
 
 A list is offered under *Denied* only. Under *Reachable from* or a rule's *Source* it would let in, or
 match, whoever a stranger decides.

@@ -71,3 +71,17 @@ class TheAccessGroupSaysWhatItsRulesDo(unittest.TestCase):
 
     def test_an_object_without_rules_shows_no_badge(self) -> None:
         self.assertEqual(form_groups({})["access"].badges, ())
+
+    def test_the_blocklists_under_denied_are_named_on_access_s_line(self) -> None:
+        # 26-11-14: a list chosen under Denied was not to be found with the group closed.
+        lists = ("spamhaus-drop", "firehol-level1", "community")
+        one = form_groups(form(deny_from=["office", "spamhaus-drop"]), blocklists=lists)
+        self.assertEqual(
+            one["access"].summary, "From everywhere · no rate limit · blocklist spamhaus-drop"
+        )
+        two = form_groups(form(deny_from=["spamhaus-drop", "community"]), blocklists=lists)
+        self.assertTrue(two["access"].summary.endswith("blocklists spamhaus-drop, community"), two)
+        three = form_groups(form(deny_from=list(lists)), blocklists=lists)
+        self.assertTrue(three["access"].summary.endswith(" · 3 blocklists"), three)
+        none = form_groups(form(deny_from=["office"]), blocklists=lists)
+        self.assertNotIn("blocklist", none["access"].summary)

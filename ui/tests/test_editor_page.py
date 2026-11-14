@@ -318,6 +318,21 @@ class ReachingTheEditor(EditorTestCase):
             state = editor_flow.editor_state(request, writing_configuration(), "alpha")
         self.assertEqual(state.choices.blocklists, ("fetched",))
 
+    def test_blocklists_are_headed_apart_from_the_network_groups_under_denied(self) -> None:
+        # 26-11-14: one sorted list of names did not say which was a blocklist.
+        from tests.test_blocklist_view import blocklist_row, state_row
+
+        self.blocklists = [blocklist_row(name="spamhaus-drop")]
+        self.blocklist_states = [state_row(name="spamhaus-drop")]
+        page = self.editor().get("/proxies/alpha/new").text
+        denied = page.split('<select name="deny_from"', 1)[1].split("</select>", 1)[0]
+
+        groups, lists = denied.split('<optgroup label="Blocklists">', 1)
+        self.assertIn('<optgroup label="Network groups">', groups)
+        self.assertNotIn("spamhaus-drop", groups)
+        # A new object has every list chosen (the manual's *Using one*).
+        self.assertIn('<option value="spamhaus-drop" selected>spamhaus-drop</option>', lists)
+
     def test_the_ca_certificates_of_the_cluster_are_offered(self) -> None:
         # The registry is the manager's reading (B304); without it no CA could be chosen.
         request = mock.Mock()

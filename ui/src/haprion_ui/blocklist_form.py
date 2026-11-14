@@ -388,7 +388,7 @@ def remove(
     return job
 
 
-# - Add to all proxies -------------------------------------------------------
+# - Add to proxies -----------------------------------------------------------
 
 #
 # The objects HAProxy serves: a dns or syslog object refuses no sender by
@@ -421,8 +421,37 @@ def with_list(list_name: str, name: str, document: str) -> str:
 
 
 @dataclass(frozen=True)
+class Reach:
+    """One cluster on *Add to proxies*: the proxies a list can stand in, and how many name it."""
+
+    cluster: str
+    proxies: int
+    named: int
+    """Published, in saved changes or in a draft - those *Add* leaves as they are."""
+
+
+def reach(connection: Any, name: str) -> dict[str, Reach]:
+    """Each cluster read, with its http, https and tcp proxies and those already naming the list."""
+
+    named = users(connection, name)
+    found: dict[str, Reach] = {}
+    for reading in db.cluster_objects(connection):
+        if reading.outcome != "done" or reading.poll_error:
+            continue
+        proxies = {
+            view.name
+            for view in objects.cluster_object_views(reading)
+            if view.protocol in DENIED_PROTOCOLS
+        }
+        found[reading.cluster] = Reach(
+            reading.cluster, len(proxies), len(proxies & set(named.get(reading.cluster, ())))
+        )
+    return found
+
+
+@dataclass(frozen=True)
 class Added:
-    """What *Add to all proxies* did in one cluster."""
+    """What *Add to proxies* did in one chosen cluster."""
 
     cluster: str
     added: tuple[str, ...]

@@ -16,7 +16,7 @@ always shown - so a field cannot be added and forgotten in neither.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -417,11 +417,16 @@ ALWAYS_SHOWN = (
 CARRIED = ("advanced", "handwritten_pool", "waf_exceptions")
 
 
-def form_groups(form: Mapping[str, Any], blocked: int = 0) -> dict[str, GroupState]:
+def form_groups(
+    form: Mapping[str, Any], blocked: int = 0, blocklists: Collection[str] = ()
+) -> dict[str, GroupState]:
     """Each group's title and the line it shows while closed.
 
     `blocked` is how many addresses the object's dynamic blocking holds on the
-    nodes now (B271), said at the end of that group's line.
+    nodes now (B271), said at the end of that group's line. `blocklists` are
+    the names that are blocklists rather than network groups: those chosen
+    under Denied are named on Access's line (26-11-14), where somebody looking
+    for a list finds it closed - one or two by name, more as a count.
     """
 
     states = {
@@ -431,4 +436,13 @@ def form_groups(form: Mapping[str, Any], blocked: int = 0) -> dict[str, GroupSta
     if blocked:
         state = states["blocking"]
         states["blocking"] = replace(state, summary=f"{state.summary} · {blocked} blocked")
+    chosen = [str(name) for name in form.get("deny_from", ()) or () if str(name) in blocklists]
+    if chosen:
+        said = (
+            f"blocklist{'s' if len(chosen) > 1 else ''} {', '.join(chosen)}"
+            if len(chosen) <= 2
+            else f"{len(chosen)} blocklists"
+        )
+        state = states["access"]
+        states["access"] = replace(state, summary=_joined([state.summary, said], said))
     return states

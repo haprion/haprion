@@ -31,6 +31,7 @@ from haprion.blocklist_check import AddressCheck, CheckError, Listed, Tested
 from haprion.dns_profile_keys import generate, render_public_key
 
 from haprion_ui import attention, auth, blocklist_apply, blocklist_form, db, editor, poller, preview
+from haprion_ui.templates import STATIC_DIRECTORY
 from tests.test_login import LoginTestCase, configuration
 from tests.test_poller import document
 from tests.test_queue_route import queued
@@ -916,7 +917,10 @@ class AddToAllObjectsRoute(BlocklistRouteTestCase):
         ):
             page = client.post(
                 "/settings/blocklists/community/add-to-proxies",
-                data={auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE])},
+                data={
+                    auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE]),
+                    "clusters": "alpha",
+                },
             ).text
 
         self.assertEqual([call.kwargs["name"] for call in saved.call_args_list], ["shop", "ssh"])
@@ -935,12 +939,88 @@ class AddToAllObjectsRoute(BlocklistRouteTestCase):
         ):
             response = client.post(
                 "/settings/blocklists/community/add-to-proxies",
-                data={auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE])},
+                data={
+                    auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE]),
+                    "clusters": "alpha",
+                },
             )
 
         self.assertEqual(response.status_code, 409)
         self.assertIn("community has not been fetched yet", response.text)
         saved.assert_not_called()
+
+    def test_only_the_chosen_clusters_are_changed(self) -> None:
+        """26-11-14: a list of public addresses is of no use on a cluster of private clients."""
+
+        self.blocklists = [blocklist_row()]
+        self.blocklist_states = [state_row()]
+        view = mock.Mock(protocol="http")
+        view.name = "shop"
+        client = self.admin()
+        with (
+            mock.patch(
+                "haprion_ui.pages.blocklists.listed_clusters", return_value=("alpha", "beta")
+            ),
+            mock.patch(
+                "haprion_ui.pages.blocklists.editor_state",
+                side_effect=lambda _r, _c, cluster: mock.Mock(stored=[view], cluster=cluster),
+            ) as read,
+            mock.patch("haprion_ui.finished_change.save", return_value=None) as saved,
+        ):
+            page = client.post(
+                "/settings/blocklists/community/add-to-proxies",
+                data={
+                    auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE]),
+                    "clusters": ["beta", "gamma"],
+                },
+            ).text
+
+        self.assertEqual([call.args[2] for call in read.call_args_list], ["beta"])
+        self.assertEqual(saved.call_count, 1)
+        self.assertIn('href="/proxies?cluster=beta"', page)
+        self.assertNotIn('href="/proxies?cluster=alpha"', page)
+
+    def test_nothing_chosen_changes_nothing_and_asks_again(self) -> None:
+        self.blocklists = [blocklist_row()]
+        self.blocklist_states = [state_row()]
+        client = self.admin()
+        with (
+            mock.patch("haprion_ui.pages.blocklists.listed_clusters", return_value=("alpha",)),
+            mock.patch("haprion_ui.finished_change.save") as saved,
+        ):
+            response = client.post(
+                "/settings/blocklists/community/add-to-proxies",
+                data={auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE])},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Choose at least one cluster.", response.text)
+        self.assertIn('name="clusters" value="alpha"', response.text)
+        saved.assert_not_called()
+
+    def test_the_page_offers_each_cluster_unchosen_with_what_it_holds(self) -> None:
+        self.blocklists = [blocklist_row()]
+        self.blocklist_states = [state_row()]
+        reach = {"alpha": blocklist_form.Reach("alpha", 17, 17)}
+        client = self.admin()
+        with (
+            mock.patch(
+                "haprion_ui.pages.blocklists.listed_clusters", return_value=("alpha", "beta")
+            ),
+            mock.patch("haprion_ui.blocklist_form.reach", return_value=reach),
+        ):
+            page = client.get("/settings/blocklists/community/add-to-proxies").text
+
+        self.assertIn('<input type="checkbox" name="clusters" value="alpha">', page)
+        self.assertIn("<strong>alpha</strong> — 17 proxies, all have it", page)
+        self.assertIn("<strong>beta</strong> — not read yet", page)
+        self.assertNotIn("checked", page.split('name="clusters"', 1)[1].split("</form>", 1)[0])
+
+    def test_the_settings_row_opens_the_page(self) -> None:
+        self.assertIn(
+            'href="/settings/blocklists/{{ row.name }}/add-to-proxies">Add to proxies…</a>',
+            (STATIC_DIRECTORY.parent / "templates" / "settings.html").read_text(),
+        )
 
 
 class NeedsAttention(unittest.TestCase):

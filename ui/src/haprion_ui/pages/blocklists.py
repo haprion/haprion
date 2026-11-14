@@ -333,16 +333,62 @@ def build_router(config: Config) -> APIRouter:
         _await(request, job.id)
         return RedirectResponse(CARD, status_code=303)
 
+    def _add_page(
+        request: Request,
+        gate: AuthenticatedSession,
+        name: str,
+        *,
+        chosen: tuple[str, ...] = (),
+        problem: str = "",
+        status_code: int = 200,
+    ) -> Response:
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        with request.app.state.pool.connection() as connection:
+            reach = blocklist_form.reach(connection, name)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "blocklist-add.html",
+            {
+                "username": gate.username,
+                "role": gate.role,
+                "csrf_token": auth.csrf_token(token),
+                "section": "settings",
+                "management_writes": config.management_writes,
+                "name": name,
+                "clusters": [
+                    (cluster, reach.get(cluster)) for cluster in listed_clusters(request, config)
+                ],
+                "chosen": chosen,
+                "problem": problem,
+            },
+            status_code=status_code,
+        )
+
+    @router.get("/settings/blocklists/{name}/add-to-proxies", response_class=HTMLResponse)
+    def blocklist_add_form(request: Request, name: str) -> Response:
+        """Which clusters' proxies get the list (26-11-14): none is chosen until somebody does."""
+
+        gate = admin_write_gate(config, request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        if _existing(request, name) is None:
+            return PlainTextResponse("Not found", status_code=404)
+        return _add_page(request, gate, name)
+
     @router.post("/settings/blocklists/{name}/add-to-proxies", response_class=HTMLResponse)
     def blocklist_add_to_proxies(
         request: Request,
         name: str,
         csrf_token: Annotated[str, Form(max_length=128)],
+        clusters: Annotated[list[str] | None, Form(max_length=64)] = None,
     ) -> Response:
-        """The list under Denied in every object HAProxy serves, as saved changes (B496, 13).
+        """The list under Denied in each proxy of the chosen clusters, as saved changes (B496, 13).
 
         Saved, not published: each cluster's changes go out with its next
-        publish, as an edit's do. An object with a draft is left as it is.
+        publish, as an edit's do. An object with a draft is left as it is. Only
+        the clusters chosen on the page are touched (26-11-14): a list that
+        only refuses public addresses is of no use on a cluster that serves
+        only private ones.
         """
 
         gate = admin_write_gate(config, request)
@@ -363,8 +409,14 @@ def build_router(config: Config) -> APIRouter:
                 back=CARD,
                 status_code=409,
             )
+        listed = listed_clusters(request, config)
+        chosen = tuple(cluster for cluster in listed if cluster in set(clusters or ()))
+        if not chosen:
+            return _add_page(
+                request, gate, name, problem="Choose at least one cluster.", status_code=400
+            )
         results: list[blocklist_form.Added] = []
-        for cluster in listed_clusters(request, config):
+        for cluster in chosen:
             state = editor_state(request, config, cluster)
             added: list[str] = []
             skipped: list[tuple[str, str]] = []

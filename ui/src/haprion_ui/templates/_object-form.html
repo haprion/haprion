@@ -14,7 +14,7 @@
 
 <script defer src="{{ url_for('static', path='/object-form.js') }}?v={{ asset_token }}"></script>
 
-{% set groups = form_groups(form, blocked_here or 0) %}
+{% set groups = form_groups(form, blocked_here or 0, choices.blocklists or ()) %}
 
 {#
   A field or group that means nothing for the shape chosen above - a TCP port on
@@ -152,7 +152,10 @@
       <label><span class="field-title">Denied — groups <span class="optional">(optional)</span></span>
         <select name="deny_from" multiple size="5">
           <option value="" {% if form.deny_ranges|trim %}hidden{% elif not form.deny_from %}selected{% endif %}>Nobody</option>
-          {% for network in (choices.networks + (choices.blocklists or []))|sort %}<option value="{{ network }}"{% if network in form.deny_from %} selected{% endif %}>{{ network }}</option>{% endfor %}
+          {# Two kinds under one field: the lists are headed apart when there are any (26-11-14). #}
+          {% set headed = choices.blocklists and choices.networks %}
+          {% if headed %}<optgroup label="Network groups">{% endif %}{% for network in choices.networks|sort %}<option value="{{ network }}"{% if network in form.deny_from %} selected{% endif %}>{{ network }}</option>{% endfor %}{% if headed %}</optgroup>{% endif %}
+          {% if choices.blocklists %}<optgroup label="Blocklists">{% for network in choices.blocklists|sort %}<option value="{{ network }}"{% if network in form.deny_from %} selected{% endif %}>{{ network }}</option>{% endfor %}</optgroup>{% endif %}
         </select>
       </label>
       <label><span class="field-title">Denied — addresses <span class="optional">(optional)</span></span><textarea name="deny_ranges" rows="5" placeholder="203.0.113.0/24">{{ form.deny_ranges }}</textarea><small>One address, range or <code>country:SE</code> per line.</small></label>

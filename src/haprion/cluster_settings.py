@@ -2,7 +2,7 @@
 
 `managed/cluster.yaml` holds what applies to a whole cluster rather than to an
 object or an address (Fas 15, B209): the external targets the traffic log is
-sent to, the sources whose answered requests it leaves out, the Prometheus exporter, and the port the nodes share their stick
+sent to, the sources whose answered requests it leaves out, the Prometheus exporter, where the HTTP-01 challenge goes, and the port the nodes share their stick
 tables over (B270). Application-owned, published through its
 own helper like `managed/network.yaml`, and this module is its one parser and
 serializer - the form, the helper and the generator all read it through here.
@@ -90,11 +90,27 @@ class Peers:
     port: int
 
 
+DEFAULT_ACME_PORT = 80
+
+
+@dataclass(frozen=True, slots=True)
+class AcmeChallenge:
+    """Where the HTTP-01 challenge path is sent: the manager's webroot (PL17).
+
+    An address and never a name: HAProxy resolves nothing without a resolvers
+    section, so a name would only fail at the nodes' next reload.
+    """
+
+    address: str
+    port: int = DEFAULT_ACME_PORT
+
+
 @dataclass(frozen=True, slots=True)
 class ClusterSettings:
     log_targets: tuple[LogTarget, ...] = ()
     metrics: Metrics | None = None
     peers: Peers | None = None
+    acme_challenge: AcmeChallenge | None = None
     #
     # Sources whose answered requests are not logged (B291): a monitor asking
     # every service once a minute. By the connection's address, never by
@@ -213,6 +229,18 @@ def _peers(raw: Any) -> Peers | None:
     return Peers(port=_port(entry.get("port"), f"{where}.port"))
 
 
+def _acme_challenge(raw: Any) -> AcmeChallenge | None:
+    if raw is None:
+        return None
+    where = f"{LOCATION} acme_challenge"
+    entry = _mapping(raw, where)
+    _only(entry, {"address", "port"}, where)
+    return AcmeChallenge(
+        address=_address(entry.get("address"), f"{where}.address"),
+        port=_port(entry.get("port", DEFAULT_ACME_PORT), f"{where}.port"),
+    )
+
+
 def _not_logged_from(raw: Any) -> tuple[str, ...]:
     if raw is None:
         return ()
@@ -231,7 +259,9 @@ def load_mapping(raw: Any) -> ClusterSettings:
     """Apply the schema to already-decoded, untrusted YAML."""
 
     document = _mapping(raw, LOCATION)
-    _only(document, {"log_targets", "not_logged_from", "metrics", "peers"}, LOCATION)
+    _only(
+        document, {"log_targets", "not_logged_from", "metrics", "peers", "acme_challenge"}, LOCATION
+    )
     targets_raw = _mapping(document.get("log_targets"), f"{LOCATION} log_targets")
     if len(targets_raw) > MAX_TARGETS:
         raise ConfigError(f"{LOCATION} names more than {MAX_TARGETS} log targets")
@@ -250,6 +280,7 @@ def load_mapping(raw: Any) -> ClusterSettings:
         log_targets=targets,
         metrics=metrics,
         peers=peers,
+        acme_challenge=_acme_challenge(document.get("acme_challenge")),
         not_logged_from=_not_logged_from(document.get("not_logged_from")),
     )
 
@@ -291,6 +322,11 @@ def dump_document(settings: ClusterSettings) -> bytes:
         }
     if settings.peers is not None:
         document["peers"] = {"port": settings.peers.port}
+    if settings.acme_challenge is not None:
+        document["acme_challenge"] = {
+            "address": settings.acme_challenge.address,
+            "port": settings.acme_challenge.port,
+        }
     return yaml.safe_dump(document, sort_keys=False, default_flow_style=False).encode("utf-8")
 
 
@@ -315,4 +351,12 @@ def document_result(settings: ClusterSettings) -> dict[str, object]:
             else {"port": settings.metrics.port, "sources": list(settings.metrics.sources)}
         ),
         "peers": None if settings.peers is None else {"port": settings.peers.port},
+        "acme_challenge": (
+            None
+            if settings.acme_challenge is None
+            else {
+                "address": settings.acme_challenge.address,
+                "port": settings.acme_challenge.port,
+            }
+        ),
     }

@@ -40,7 +40,7 @@ from haprion import advanced as advanced_config
 from haprion.certificates import AUTHORITY_DIRECTORY
 from haprion.check_policy import check_speaks_tls
 from haprion.cluster_settings import NOTHING as NO_SETTINGS
-from haprion.cluster_settings import ClusterSettings, LogTarget, Metrics
+from haprion.cluster_settings import AcmeChallenge, ClusterSettings, LogTarget, Metrics
 from haprion.config import AbuseProtection, ConfigError, UnknownHost, Vip
 from haprion.guid import (
     frontend_guid,
@@ -154,6 +154,12 @@ FRONTEND_FILE = "1000-frontends.cfg"
 CLUSTER_FILE = "1000-cluster.cfg"
 METRICS_FRONTEND = f"{PREFIX}-metrics"
 METRICS_IDENTITY = "cluster-metrics"
+#
+# The HTTP-01 challenge path, which is the manager's to answer (PL17). The one
+# name is the backend's and, inside each http frontend, the condition's.
+#
+ACME_CHALLENGE = f"{PREFIX}-acme-challenge"
+ACME_PATH = "/.well-known/acme-challenge/"
 OBJECT_BAND = "1001"
 
 #
@@ -617,6 +623,9 @@ def generate(
             settings.log_targets,
             PEERS_SECTION if peers else None,
             settings.not_logged_from,
+            settings.acme_challenge,
+            reservations,
+            held_ports or {},
         )
     }
     if settings.metrics is not None or peers:
@@ -1966,6 +1975,9 @@ def _frontend_file(
     log_targets: Sequence[LogTarget] = (),
     peers: str | None = None,
     not_logged_from: Sequence[str] = (),
+    acme: AcmeChallenge | None = None,
+    reservations: Reservations = NOTHING_RESERVED,
+    held_ports: Mapping[tuple[str, int], Sequence[tuple[str, str | None]]] | None = None,
 ) -> str:
     """Where every request is decided: one frontend per address and protocol.
 
@@ -2077,6 +2089,7 @@ def _frontend_file(
                 else ()
             ),
             f"    timeout client {TIMEOUT_CLIENT}",
+            *_acme_rules(acme if protocol == "http" else None),
             *_hsts_rules(members, protocol),
             *_forwarded_rules(protocol, trusted_proxies),
             *_not_logged_rules(not_logged_from),
@@ -2108,10 +2121,18 @@ def _frontend_file(
                 tls_names=tls_names,
                 trusted=bool(trusted_proxies),
                 taken=_taken_names(proxy, listening),
+                challenge=acme is not None and protocol == "http",
             )
             body.extend(rules)
             routed.extend(decisions)
             _record(shared, proxy.name, listener=[*envelope, *tail], routing=[*rules, *decisions])
+        #
+        # The challenge before every member's routes: `use_backend` takes the
+        # first that holds, and the members' conditions name a host, which the
+        # challenge for any of them also carries.
+        #
+        if acme is not None and protocol == "http":
+            body.append(f"    use_backend {ACME_CHALLENGE} if {ACME_CONDITION}")
         body += routed
         body += tail
     for vip, proxy in sorted(tcp, key=lambda member: member[1].name):
@@ -2122,10 +2143,127 @@ def _frontend_file(
         block = _tcp_frontend(vip, proxy, networks, abuse_protection, peers)
         body.extend(block)
         _record(shared, proxy.name, routing=block)
+    if acme is not None:
+        challenge_only = sorted(
+            {
+                members[0][0].name: members[0][0]
+                for (name, protocol), members in groups.items()
+                if protocol == "https" and (name, "http") not in groups
+            }.values(),
+            key=lambda vip: vip.name,
+        )
+        for vip in challenge_only:
+            _refuse_challenge_listener(vip, ports["http"], placed, reservations, held_ports or {})
+            body.extend(_challenge_frontend(vip, ports["http"]))
+        if challenge_only or any(protocol == "http" for _name, protocol in groups):
+            body.extend(_challenge_backend(acme))
     body.extend(fallbacks)
     if not body:
         body = ["", "# No object listens anywhere on this cluster."]
     return _lines(HEADER, body)
+
+
+ACME_CONDITION = f"{ACME_CHALLENGE}-path"
+
+
+def _acme_rules(acme: AcmeChallenge | None) -> list[str]:
+    """The challenge path, let through before anything can refuse it (PL17).
+
+    The first `http-request` rule that decides anything: the path answers from
+    every address, so no source list, blocklist, WAF verdict, dynamic block or
+    unknown host stops it - the certificate authority's validation servers are
+    not the site's clients. Only the logging variables are set before it. The
+    redirect to https is the one decision that is not an `http-request` rule,
+    and carries `!<condition>` itself.
+    """
+
+    if acme is None:
+        return []
+    return [
+        f"    acl {ACME_CONDITION} path_beg {ACME_PATH}",
+        f"    http-request allow if {ACME_CONDITION}",
+    ]
+
+
+def _challenge_backend(acme: AcmeChallenge) -> list[str]:
+    """The manager, which holds the webroot the validation file is written to.
+
+    No health check: a manager that is away answers the validation with a
+    failure, which is what it would be without one, and a check would only add
+    a connection to it every few seconds from each node.
+    """
+
+    return [
+        "",
+        f"backend {ACME_CHALLENGE}",
+        "    mode http",
+        f"    server manager {_bracketed(acme.address)}:{acme.port}",
+    ]
+
+
+def _challenge_frontend(vip: Vip, port: int) -> list[str]:
+    """Port 80 on an address that has https objects and no http one: the challenge alone.
+
+    Everything else is answered 404 and nothing is redirected: the site has
+    asked for no redirect, and this frontend exists for one path.
+    """
+
+    identity = f"{vip.name}-http"
+    return [
+        "",
+        f"frontend {_frontend_name(vip, 'http')}",
+        f"    guid {frontend_guid(identity)}",
+        f"    bind {vip.address}:{port} guid-prefix {listener_guid_prefix(identity)}",
+        "    mode http",
+        "    option dontlog-normal",
+        "    log stdout format raw local0",
+        f"    timeout client {TIMEOUT_CLIENT}",
+        f"    acl {ACME_CONDITION} path_beg {ACME_PATH}",
+        #
+        # Conditioned, because every `http-request` rule runs before any
+        # `use_backend`: an unconditional answer here would take the challenge too.
+        #
+        f"    http-request return status 404 if !{ACME_CONDITION}",
+        f"    use_backend {ACME_CHALLENGE} if {ACME_CONDITION}",
+    ]
+
+
+def _refuse_challenge_listener(
+    vip: Vip,
+    port: int,
+    placed: Sequence[tuple[Vip, Proxy]],
+    reservations: Reservations,
+    held: Mapping[tuple[str, int], Sequence[tuple[str, str | None]]],
+) -> None:
+    """The challenge frontend's address and port, which nothing else may bind (PL17).
+
+    The same refusals an http object's port 80 meets, said for the frontend
+    that exists because the cluster sends the challenge to the manager.
+    """
+
+    for other_vip, proxy in placed:
+        if (
+            other_vip.name == vip.name
+            and proxy.listen.protocol in ("tcp", "dns")
+            and proxy.listen.port == port
+        ):
+            raise GeneratorError(
+                f"{proxy.name} listens on {vip.name} port {port}, which the HTTP-01 challenge "
+                "needs on a cluster that sends it to the manager"
+            )
+    if reservations.claims(vip.address, port):
+        raise GeneratorError(
+            f"the HTTP-01 challenge listens on {vip.name} port {port}, which "
+            "manual/reservations.yaml reserves for handwritten configuration"
+        )
+    holders = held.get(("tcp", port))
+    if holders:
+        node, program = holders[0]
+        raise GeneratorError(
+            f"the HTTP-01 challenge listens on {vip.name} port {port}/tcp, which "
+            f"{program or 'another program'} holds on every address of {node}, so it cannot bind "
+            f"there. {held_port_advice(program)}"
+        )
 
 
 def _tcp_frontend(
@@ -3248,6 +3386,7 @@ def _frontend_rules(
     tls_names: Mapping[str, str] | None = None,
     trusted: bool = False,
     taken: Sequence[str] = (),
+    challenge: bool = False,
 ) -> tuple[list[str], list[str]]:
     """One object's whole contribution to the shared frontend.
 
@@ -3275,7 +3414,12 @@ def _frontend_rules(
         # arrives for one of its names is told to come back over TLS, and
         # nothing is served in cleartext, not even a path.
         #
-        return [*lines, f"    redirect scheme https code 301 if {host}"], []
+        #
+        # Not the challenge path: the certificate authority asks for it over
+        # http, and the frontend sends it to the manager (PL17).
+        #
+        exempt = f" !{ACME_CONDITION}" if challenge else ""
+        return [*lines, f"    redirect scheme https code 301 if {host}{exempt}"], []
 
     lines.extend(_tls_sni_guard(proxy, host, tls_names or {}))
 

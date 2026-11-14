@@ -345,12 +345,11 @@ lock file instead.
 Certificates are issued through a DNS provider (DNS-01) or over plain HTTP (HTTP-01), where Let's Encrypt fetches
 a file. For HTTP-01 the installation names a webroot, `/var/www/acme` unless `ACME_WEBROOT` says otherwise, and nginx
 on the manager serves `/.well-known/acme-challenge/` from it on port 80, for any name as long as no other nginx site
-listens on port 80 and is read before this one (steps 05 and the updates warn when one does). One thing stays yours: a rule
-in each cluster that sends that path to the manager; *Check HTTP-01* on the new-certificate form says whether it is
-there. With `ACME_WEBROOT` set empty, HTTP-01 is left out and the interface shows it greyed. An installation made
-before 1.2.1 has no webroot: put one under `acme:` in the runtime policy and run steps 05 and 07 again.
-[ACME configuration and challenge routing](user-manual.md#acme-configuration-and-challenge-routing) shows the cluster
-rule.
+listens on port 80 and is read before this one (steps 05 and the updates warn when one does). The clusters send
+that path to the manager from the *HTTP-01* page on *Certificates*, one address per cluster; *Check HTTP-01* on the
+new-certificate form says whether it arrives. With `ACME_WEBROOT` set empty, HTTP-01 is left out and the interface
+shows it greyed. Without a webroot in the runtime policy, put one under `acme:` and run steps 05 and 07 again.
+[ACME configuration and challenge routing](user-manual.md#acme-configuration-and-challenge-routing) describes the page.
 
 Step 16 installs the SCEP client the `haprion-scep` package carries, for certificates from Microsoft AD CS over
 NDES. The setup runs it with the bundle and digest the package names in `/usr/lib/haprion/scep/PAYLOAD`:

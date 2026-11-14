@@ -1,0 +1,22 @@
+schema: 1
+name: app
+hostnames: [app.example.com]
+listen:
+  protocol: https
+  certificate: wildcard-example-com
+  redirect_http: true
+allow_from: [office]
+deny_from:
+  mode: deny
+  sources: [203.0.113.0/24]
+routes:
+  - path: /
+    backend: app-web
+backends:
+  app-web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 198.51.100.10
+        port: 12345

@@ -152,6 +152,14 @@ def _render(result: Mapping[str, Any], cluster: str, writer: TextIO) -> None:
         writer.write("off\n")
     else:
         writer.write(f"on port {peers.get('port')}, between the nodes\n")
+    challenge = result.get("acme_challenge")
+    writer.write("\nHTTP-01 CHALLENGE\n-----------------\n")
+    if not isinstance(challenge, Mapping):
+        writer.write("not sent anywhere\n")
+    else:
+        address = str(challenge.get("address", ""))
+        shown = f"[{address}]" if ":" in address else address
+        writer.write(f"to the manager at {shown}:{challenge.get('port')}\n")
 
 
 def _read(

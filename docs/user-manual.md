@@ -2181,7 +2181,7 @@ also offers *Installed by hand*: a certificate with no targets, downloaded with 
 
 The form chooses among the receivers already registered. A new one is registered on the *Receivers*
 page ([Registering a receiver](#registering-a-receiver)). The form refuses a wildcard over HTTP-01
-before anything is queued, and a target it did not offer. The other two things HTTP-01 needs are in
+before anything is queued, and a target it did not offer. What else HTTP-01 needs, the *HTTP-01* page included, is in
 [ACME configuration and challenge routing](#acme-configuration-and-challenge-routing).
 
 **Check HTTP-01.** With *HTTP-01* chosen, the *DNS profile* field gives way to *Challenge path*, which holds
@@ -6943,24 +6943,43 @@ not at the manager. Three things must be in place:
 2. nginx on the manager serving that directory over plain HTTP. The interface's site does it once the policy
    names a webroot: its port-80 server answers `/.well-known/acme-challenge/` from the webroot for any name, and
    sends everything else to https
-3. a rule in each cluster that sends that path to the manager, written once into `core/` or `manual/`,
-   never generated:
+3. the cluster sending that path to the manager. This is a setting of the cluster, made on the *HTTP-01*
+   page and published and deployed like any other change; no rule is written by hand
 
-```text
-# core/ or manual/ - hand the ACME HTTP-01 challenge to the manager
-backend acme_challenge
-    server mgr 192.0.2.5:80
+**The *HTTP-01* page.** *Certificates* has an *HTTP-01* button beside *DNS profiles* and *NDES profiles*,
+shown when the policy names a webroot. The page lists each cluster with where its challenges go: an address
+and port, or *Not sent - HTTP-01 cannot be used*. *Edit* opens the cluster's setting: tick *Send challenges to
+the manager*, give the manager's address, as seen from the cluster's nodes, and the port (80 unless nginx
+listens elsewhere), then *Save*. The address is an IP address, not a name: HAProxy resolves no names in a
+server line. The change is saved as a draft for the next publish, like the settings under *Logs & metrics*.
+At a terminal the same setting is the `acme_challenge` section of the cluster's settings file
+(`haprion-cluster-settings`):
 
-# in the HTTP frontend, before any host routing
-acl acme_challenge path_beg /.well-known/acme-challenge/
-use_backend acme_challenge if acme_challenge
+```yaml
+acme_challenge:
+  address: 192.0.2.5
+  port: 80
 ```
 
-Here `192.0.2.5` stands for the manager's own address. Without all three, an `http-01` request fails at
-the challenge, with certbot's own explanation.
+**What the generator does with it.** In every generated port-80 frontend, both the one that serves an http
+object and the one that only redirects, the challenge path (`/.well-known/acme-challenge/`) is decided before
+anything else is. It is let through ahead of the access rules, blocklists, WAF, dynamic blocking and
+unknown-name answer, it is left out of the redirect to https, and it is routed to the manager before any
+site. An address that has https objects and no object on port 80 gets a frontend that carries the
+challenge alone and answers everything else 404. Without the setting nothing is generated and the
+configuration is exactly what it was.
 
-*Check HTTP-01* on the new-certificate form (see [Issuing a certificate](#issuing-a-certificate)) tells whether the three
-are in place before a request is made. At a terminal, `sudo haprion-http01-check <name>` does the same
+**The challenge path answers from everywhere.** The certificate authority validates from addresses nobody can
+list, so the path is open to every address, also on a proxy whose *Reachable from* names some networks only
+or that a blocklist covers. What it reaches is the manager's webroot, which holds the validation files while
+a request is running and answers 404 otherwise; nothing else of the site becomes reachable.
+
+A cluster that sends the challenge to the manager refuses to publish when something else takes port 80
+on an address that carries it: a TCP object, or a reservation in `manual/reservations.yaml`. The message
+names the object or the reservation.
+
+*Check HTTP-01* on the new-certificate form (see [Issuing a certificate](#issuing-a-certificate)) tells whether the
+path reaches this manager before a request is made. At a terminal, `sudo haprion-http01-check <name>` does the same
 and `--json` gives the answer as a document. It writes its test file in the webroot, so it needs the
 `webroot` setting above and runs as root only.
 

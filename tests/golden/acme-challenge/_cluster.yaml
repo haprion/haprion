@@ -1,0 +1,3 @@
+acme_challenge:
+  address: 192.0.2.5
+  port: 8080

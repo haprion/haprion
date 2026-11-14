@@ -1,0 +1,17 @@
+schema: 1
+name: legacy
+hostnames: [legacy.example.net]
+listen:
+  protocol: http
+  vip: plain
+routes:
+  - path: /
+    backend: legacy-web
+backends:
+  legacy-web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 198.51.100.12
+        port: 12345

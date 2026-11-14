@@ -98,6 +98,22 @@ class TheSettingsFromAFile(unittest.TestCase):
         answer = assert_contract("haprion-cluster-settings-apply", out)
         self.assertTrue(answer["result"]["deployment_required"])
 
+    def test_the_challenge_address_is_a_field_of_its_own(self) -> None:
+        wanted = SAME + "acme_challenge: {address: 192.0.2.5, port: 80}\n"
+        code, _, published = self.run_apply(wanted, "--json")
+
+        self.assertEqual(code, 0)
+        (sent,) = published
+        self.assertIn(
+            "acme_challenge:\n  address: 192.0.2.5\n  port: 80\n", sent["parameters"]["settings"]
+        )
+        STORED["acme_challenge"] = {"address": "192.0.2.5", "port": 80}
+        try:
+            self.assertEqual(self.run_apply(wanted, "--json")[2], [])
+            self.assertEqual(len(self.run_apply(SAME, "--json")[2]), 1)
+        finally:
+            del STORED["acme_challenge"]
+
     def test_check_asks_the_publish_to_write_nothing(self) -> None:
         code, out, published = self.run_apply(SAME.replace("8405", "8406"), "--check")
 
@@ -128,6 +144,13 @@ class TheSettingsAsText(unittest.TestCase):
         shown = self.render({"metrics": {"port": 8405, "sources": ["192.0.2.0/24"]}})
         self.assertIn("on port 8405, on each node's own address, for 192.0.2.0/24", shown)
         self.assertNotIn("every address", shown)
+
+    def test_the_challenge_address_is_shown(self) -> None:
+        self.assertIn("HTTP-01 CHALLENGE\n-----------------\nnot sent anywhere\n", self.render({}))
+        self.assertIn(
+            "to the manager at [2001:db8::5]:8080",
+            self.render({"acme_challenge": {"address": "2001:db8::5", "port": 8080}}),
+        )
 
     def test_shared_counters_are_shown(self) -> None:
         self.assertIn("SHARED COUNTERS\n---------------\noff\n", self.render({}))

@@ -131,7 +131,7 @@ def cluster_settings_text(reading: Mapping[str, Any]) -> str:
             target["name"]: {key: target[key] for key in ("address", "port", "disk_mib", "tls")}
             for target in targets
         }
-    for key in ("not_logged_from", "metrics", "peers"):
+    for key in ("not_logged_from", "metrics", "peers", "acme_challenge"):
         if reading.get(key):
             document[key] = reading[key]
     try:

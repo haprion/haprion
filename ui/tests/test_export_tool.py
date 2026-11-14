@@ -46,6 +46,7 @@ SETTINGS: dict[str, Any] = {
     "not_logged_from": ["198.51.100.0/24"],
     "metrics": {"port": 8405, "sources": ["192.0.2.0/24"]},
     "peers": None,
+    "acme_challenge": {"address": "192.0.2.5", "port": 8080},
 }
 
 

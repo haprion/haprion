@@ -401,7 +401,10 @@ def check_cluster_settings_semantics(document: dict[str, object], path: Path) ->
     if len(set(endpoints)) != len(endpoints):
         raise AssertionError(f"{path}: two log targets name the same address and port")
     if not result["stored"] and (
-        targets or result["metrics"] is not None or result["peers"] is not None
+        targets
+        or result["metrics"] is not None
+        or result["peers"] is not None
+        or result.get("acme_challenge") is not None
     ):
         # Nothing stored is nothing set: a reading that reports targets from a
         # file that does not exist describes a configuration nobody published.

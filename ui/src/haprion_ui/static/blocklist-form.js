@@ -27,7 +27,8 @@
     answer.hidden = false;
     answer.textContent = "Fetching…";
     try {
-      const response = await fetch(form.action, {
+      // The attribute: the buttons are named `action`, and `form.action` is them.
+      const response = await fetch(form.getAttribute("action"), {
         method: "POST",
         body,
         headers: { Accept: "application/json" },

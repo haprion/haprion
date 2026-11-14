@@ -215,7 +215,7 @@
       const form = event.target.closest?.("[data-log-filters]");
       if (!form) return;
       event.preventDefault();
-      const href = new URL(form.action, window.location.href);
+      const href = new URL(form.getAttribute("action") || "", window.location.href);
       href.search = new URLSearchParams(new FormData(form)).toString();
       follow(href.href);
     });

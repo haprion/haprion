@@ -39,7 +39,7 @@
       event.preventDefault();
       const target = event.currentTarget;
       try {
-        const response = await fetch(target.action, {
+        const response = await fetch(target.getAttribute("action"), {
           method: "POST",
           // Encoded as the form itself posts, not as multipart.
           body: new URLSearchParams(new FormData(target)),

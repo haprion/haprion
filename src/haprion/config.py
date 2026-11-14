@@ -1435,6 +1435,24 @@ def _ndes_server(entry: Mapping[str, Any], location: str) -> NdesServer:
     return NdesServer(endpoint=endpoint, issuing_ca=issuing_ca)
 
 
+# What nginx is given as `root` for the challenge path (install/lib.sh keeps the
+# same pattern as ACME_WEBROOT_PATTERN, held to this one by a test): nothing in
+# it can end the directive or open a block.
+ACME_WEBROOT_PATTERN = re.compile(r"^/[A-Za-z0-9._/-]+$")
+
+
+def _acme_webroot(entry: Mapping[str, Any], location: str) -> Path | None:
+    if entry.get("webroot") is None:
+        return None
+    raw = _required_string(entry, "webroot", location)
+    if not ACME_WEBROOT_PATTERN.fullmatch(raw) or ".." in raw:
+        raise ConfigError(
+            f"{location} must be an absolute path of letters, digits, '.', '_', '-' and '/', "
+            "without '..'"
+        )
+    return _absolute_path(raw, location)
+
+
 def _acme_policy(data: Mapping[str, Any]) -> AcmePolicy | None:
     raw = data.get("acme")
     if raw is None:
@@ -1446,7 +1464,7 @@ def _acme_policy(data: Mapping[str, Any]) -> AcmePolicy | None:
     )
     return AcmePolicy(
         dns_cloudflare_credentials=_optional_root(entry, "dns_cloudflare_credentials"),
-        webroot=_optional_root(entry, "webroot"),
+        webroot=_acme_webroot(entry, f"{location}.webroot"),
         certbot=_optional_root(entry, "certbot"),
         dns_profiles=_dns_profiles_policy(entry, f"{location}.dns_profiles"),
     )

@@ -24,10 +24,10 @@ import unittest
 from pathlib import Path
 from typing import ClassVar
 
-from haprion import traffic_collector
+from haprion import config, traffic_collector
 from haprion.cli.cluster_config import main as cluster_config_main
 from haprion.cluster_definition import sudoers_with
-from haprion.config import load_policy, load_registry, load_runtime_config
+from haprion.config import ConfigError, load_policy, load_registry, load_runtime_config
 
 INSTALL = Path(__file__).resolve().parents[1] / "install"
 LIB = INSTALL / "lib.sh"
@@ -386,6 +386,36 @@ class WhatStep2WritesTheEngineReads(unittest.TestCase):
         )
         self.assertNotEqual(done.returncode, 0)
         self.assertIn("ACME_WEBROOT must be an absolute path", done.stderr)
+
+    def test_a_webroot_nginx_could_not_serve_is_refused_at_step_02(self) -> None:
+        """PL07: step 02 wrote it, and step 05 stopped the installation on it afterwards."""
+
+        with self.answers.open("a") as handle:
+            handle.write('ACME_WEBROOT="/srv/acme web"\n')
+        done = bash(
+            'set -Eeuo pipefail; source "$1"; load_answers "$2"; render_policy',
+            str(LIB),
+            str(self.answers),
+            env=dict(os.environ, DNS_PROFILE_KEYS=str(self.keys)),
+        )
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("ACME_WEBROOT must be letters, digits", done.stderr)
+
+    def test_the_engine_refuses_the_webroot_the_shell_refuses(self) -> None:
+        """PL07: one rule for acme.webroot in the engine, the shell's check held to it."""
+
+        lib = LIB.read_text(encoding="utf-8")
+        shell = re.search(r"^ACME_WEBROOT_PATTERN='(.*)'$", lib, re.MULTILINE)
+        self.assertIsNotNone(shell)
+        self.assertEqual(shell.group(1) if shell else "", config.ACME_WEBROOT_PATTERN.pattern)
+        document = self.render("ACME_WEBROOT=/var/www/acme\n").read_text(encoding="utf-8")
+        for bad in ("/srv/acme web", "/srv/a;b", "/srv/a/../b", "/srv/{x}"):
+            broken = self.answers.with_name("broken-policy.yaml")
+            broken.write_text(
+                document.replace("webroot: /var/www/acme", f"webroot: {bad}"), encoding="utf-8"
+            )
+            with self.assertRaises(ConfigError, msg=bad):
+                load_policy(broken, require_secure=False)
 
     def test_the_keys_step_15_made_are_named_for_the_dns_profiles(self) -> None:
         for name in ("b2.key", "a1.key"):

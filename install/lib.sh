@@ -362,11 +362,15 @@ print(policy.acme.webroot if policy.acme is not None and policy.acme.webroot is 
 # policy names no webroot. A file of its own the site includes, as HSTS is:
 # written by step 05 and by every update, never by hand.
 #
+# What acme.webroot may be: the pattern of ACME_WEBROOT_PATTERN in
+# haprion/config.py, which the runtime policy is read by; a test holds the two.
+ACME_WEBROOT_PATTERN='^/[A-Za-z0-9._/-]+$'
+
 acme_snippet() {
     local webroot="${1:-}"
     echo "# Written from acme.webroot in the runtime policy by platform step 05 and every update."
     [[ -n "$webroot" ]] || return 0
-    if ! valid_abs_path "$webroot" || ! [[ "$webroot" =~ ^/[A-Za-z0-9._/-]+$ ]]; then
+    if ! valid_abs_path "$webroot" || ! [[ "$webroot" =~ $ACME_WEBROOT_PATTERN ]]; then
         echo "acme.webroot must be an absolute path of letters, digits, '.', '_', '-' and '/', not ${webroot}" >&2
         return 1
     fi
@@ -638,6 +642,10 @@ acme:
   certbot: /opt/haprion-certbot/current/venv/bin/certbot"
         if [[ -n "${ACME_WEBROOT:-}" ]]; then
             valid_abs_path "$ACME_WEBROOT" || { echo "ACME_WEBROOT must be an absolute path" >&2; return 1; }
+            [[ "$ACME_WEBROOT" =~ $ACME_WEBROOT_PATTERN ]] || {
+                echo "ACME_WEBROOT must be letters, digits, '.', '_', '-' and '/' only, not ${ACME_WEBROOT}" >&2
+                return 1
+            }
             policy+="
   webroot: ${ACME_WEBROOT}"
         fi

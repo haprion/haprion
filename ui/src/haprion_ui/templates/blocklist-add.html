@@ -23,7 +23,7 @@
         <span class="field-title">Clusters</span>
         <div class="form-checks form-checks-stacked">
           {% for cluster, reach in clusters %}
-          <label class="check"><input type="checkbox" name="clusters" value="{{ cluster }}"{% if cluster in chosen %} checked{% endif %}> <span><strong>{{ cluster }}</strong> — {% if reach is none %}not read yet{% elif reach.proxies == 0 %}no http, https or tcp proxy{% else %}{{ reach.proxies }} prox{{ 'y' if reach.proxies == 1 else 'ies' }}, {% if reach.named == 0 %}none has it{% elif reach.named == reach.proxies %}all have it{% else %}{{ reach.named }} {{ 'has' if reach.named == 1 else 'have' }} it{% endif %}{% endif %}</span></label>
+          <label class="check"><input type="checkbox" name="clusters" value="{{ cluster }}"{% if cluster in chosen %} checked{% endif %}> <span><strong>{{ cluster }}</strong> — {% if reach is none %}no current reading{% elif reach.proxies == 0 %}no http, https or tcp proxy{% else %}{{ reach.proxies }} prox{{ 'y' if reach.proxies == 1 else 'ies' }}, {% if reach.named == 0 %}none has it{% elif reach.named == reach.proxies %}all have it{% else %}{{ reach.named }} {{ 'has' if reach.named == 1 else 'have' }} it{% endif %}{% endif %}</span></label>
           {% else %}
           <p class="table-empty">No cluster yet.</p>
           {% endfor %}

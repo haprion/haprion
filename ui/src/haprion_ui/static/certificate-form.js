@@ -2,16 +2,15 @@
   "use strict";
 
   //
-  // One provider profile field on the certificate form, drawn for whichever
-  // CA is chosen: the DNS select under DNS-01, the NDES select under
-  // Microsoft AD CS, and under HTTP-01 the DNS select greyed in place, the
-  // way the object form treats the tcp port, so choosing a challenge does
-  // not change the page's height under the reader.
+  // One field on the certificate form, drawn for whichever CA is chosen: the
+  // DNS select under DNS-01, the NDES select under Microsoft AD CS, the key
+  // type under CSR, and under HTTP-01 the Check HTTP-01 button beneath the
+  // Challenge path title.
   //
-  // The browser is a convenience here and never the control. A disabled
-  // select is not submitted, and the server refuses a profile with HTTP-01
-  // and requires one with the other two, so a submission with the field
-  // re-enabled by hand is answered the same way as any other bad form.
+  // The browser is a convenience here and never the control. What is hidden is
+  // also disabled, so it is not submitted, and the server refuses a profile
+  // that does not belong to the method - a submission with a field re-enabled
+  // by hand is answered the same way as any other bad form.
   //
   const wire = () => {
     const methods = Array.from(document.querySelectorAll("input[name='method']"));

@@ -1123,7 +1123,7 @@ class AddToAllObjectsRoute(BlocklistRouteTestCase):
 
         self.assertIn('<input type="checkbox" name="clusters" value="alpha">', page)
         self.assertIn("<strong>alpha</strong> — 17 proxies, all have it", page)
-        self.assertIn("<strong>beta</strong> — not read yet", page)
+        self.assertIn("<strong>beta</strong> — no current reading", page)
         self.assertNotIn("checked", page.split('name="clusters"', 1)[1].split("</form>", 1)[0])
 
     def test_the_settings_row_opens_the_page(self) -> None:

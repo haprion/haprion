@@ -508,6 +508,19 @@ class HttpWithoutAWebroot(CertificateFormRouteTestCase):
         self.assertIn("acme.webroot", answer.text)
         self.assertEqual(self.queued, [])
 
+    def test_the_refused_form_draws_the_dns_field_not_a_path_over_nothing(self) -> None:
+        """Cosmetic, 26-11-14: with no webroot there is no Check HTTP-01 for the title to name."""
+
+        with mock.patch("haprion_ui.certificate_form.http01_offered", return_value=False):
+            page = self.post(self.writing_client(), domain="*.example.com", method="http-01").text
+
+        self.assertIn(">DNS profile</span>", page)
+        self.assertNotIn(">Challenge path</span>", page)
+        self.assertIn(
+            '<select name="dns_profile" class="dns-only" aria-labelledby="profile-field-title">',
+            page,
+        )
+
 
 class TheWebrootComesFromThePolicy(unittest.TestCase):
     def test_a_policy_without_one_and_none_at_all_offer_nothing(self) -> None:
@@ -909,6 +922,10 @@ class SendingTheFormAsACsr(CertificateFormRouteTestCase):
         self.assertIn("EC P-256 (recommended)", page)
         self.assertIn('data-profile-hint="csr" hidden', page)
         self.assertIn('data-key-title="Key type"', page)
+
+    def test_without_the_script_a_csr_does_not_say_dns_01_is_required(self) -> None:
+        page = self.writing_client().get("/certificates/new?method=csr").text
+        self.assertIn('<small data-profile-hint="dns-01" hidden>', page)
 
     def test_a_submission_queues_one_cert_request_job_with_no_cluster(self) -> None:
         response = self.post(

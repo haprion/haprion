@@ -117,7 +117,7 @@ ensure_worker_directories() {
     done
     #
     # The HTTP-01 webroot, when the policy names one: the unit opens it, and a
-    # path that is missing stops the unit. Made only when missing, readable by
+    # path that is missing is skipped by the unit. Made only when missing, readable by
     # the web server that serves it; an existing one is the operator's and
     # stays as it is.
     #
@@ -369,7 +369,7 @@ other_port80_sites() {
         for file in "$dir"/*; do
             [[ -f "$file" ]] || continue
             [[ "${file##*/}" == haprion || "${file##*/}" == haprion.conf ]] && continue
-            if grep -Eqs '^[[:space:]]*listen[[:space:]]+(\*:|\[::\]:|[0-9.]+:)?80([[:space:];]|$)' "$file"; then
+            if grep -Eqs '^[[:space:]]*listen[[:space:]]+(\*:|\[[0-9a-fA-F:]+\]:|[0-9.]+:)?80([[:space:];]|$)' "$file"; then
                 echo "$file"
             fi
         done

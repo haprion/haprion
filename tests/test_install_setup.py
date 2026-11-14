@@ -1249,10 +1249,11 @@ class AnotherSiteOnPort80IsSaid(unittest.TestCase):
                 "haprion": "server {\n    listen 80;\n    listen [::]:80;\n}\n",
                 "acme": "server {\n    listen 0.0.0.0:80 default_server;\n}\n",
                 "other": "server {\n    listen [::]:80;\n}\n",
+                "v6": "server {\n    listen [2001:db8::1]:80;\n}\n",
                 "tls-only": "server {\n    listen 443 ssl;\n    # listen 80;\n    listen 8080;\n}\n",
             }
         )
-        self.assertEqual(sorted(found), ["acme", "other"])
+        self.assertEqual(sorted(found), ["acme", "other", "v6"])
 
     def test_both_steps_say_it(self) -> None:
         for name in ("platform/05-platform-nginx", "platform/refresh-platform-files"):

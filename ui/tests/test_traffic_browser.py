@@ -171,6 +171,55 @@ class MarkingARange(TheChartInABrowser):
             self.assertTrue(self.stayed(page), "changing the window reloaded the page")
             self.assertAlmostEqual(page.evaluate("window.scrollY"), before, delta=1)
 
+    def test_choosing_a_cluster_is_one_request_and_no_reload(self) -> None:
+        """26-11-14: one cluster or all changed the number of regions; the swap gave up and navigated.
+
+        Each choice was asked for twice - the script's fetch, then the page -
+        and the page drawn whole. The list is swapped as one now, with the
+        heading, which names the range, and the strip, which marks the choice.
+        """
+
+        with self.signed_in() as page:
+            asked: list[str] = []
+            page.on(
+                "request",
+                lambda request: asked.append(request.url) if "metrics" in request.url else None,
+            )
+            self.stay(page)
+
+            page.click(".metrics-clusters a:has-text('All')")
+            page.wait_for_function("() => window.location.pathname === '/metrics'")
+            page.wait_for_function(
+                "() => document.querySelectorAll('[data-traffic-region]').length === 2"
+            )
+            self.assertTrue(self.stayed(page), "choosing all clusters reloaded the page")
+            self.assertEqual(len(asked), 1, asked)
+            self.assertEqual(
+                page.text_content(".metrics-clusters a.is-current").strip(), "AllAll"
+            )
+
+            page.evaluate(
+                "document.querySelector('.page-ranges a[title=\"the last 7 days\"]').click()"
+            )
+            page.wait_for_function("() => window.location.search.includes('traffic=7d')")
+            self.assertIn("the last 7 days", page.text_content(".page-lede"))
+            self.assertIn(
+                "traffic=7d",
+                page.get_attribute(".metrics-clusters a:has-text('service-demo')", "href"),
+            )
+
+            asked.clear()
+            page.click(".metrics-clusters a:has-text('service-demo')")
+            page.wait_for_function(
+                "() => window.location.pathname === '/clusters/service-demo/metrics'"
+            )
+            page.wait_for_function(
+                "() => document.querySelectorAll('[data-traffic-region]').length === 1"
+            )
+            self.assertTrue(self.stayed(page), "choosing one cluster reloaded the page")
+            self.assertEqual(len(asked), 1, asked)
+            self.assertIn("the last 7 days", page.text_content(".page-lede"))
+
     def test_the_scale_and_the_axis_are_placed_without_inline_style(self) -> None:
         # Review 26-10-13, S2: positions travel as data and page.js places them,
         # also on a card a window change swaps in.

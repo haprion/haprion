@@ -208,16 +208,36 @@
     const fresh = parsed.querySelectorAll(REGION);
     const here = document.querySelectorAll(REGION);
     //
-    // Refused rather than patched up. A page whose regions no longer line up
-    // is a different page - a session that expired into a login form, or a
-    // cluster that has gone - and half-replacing it would leave the reader
-    // looking at two answers at once.
+    // Refused rather than patched up. An answer with no regions is a different
+    // page - a session that expired into a login form - and the navigation it
+    // falls back to shows whatever it is.
     //
-    if (!fresh.length || fresh.length !== here.length) throw new Error("shape");
-    here.forEach((region, index) => region.replaceWith(fresh[index]));
-    const freshRanges = parsed.querySelector(".page-ranges-sticky");
-    const hereRanges = document.querySelector(".page-ranges-sticky");
-    if (freshRanges && hereRanges) hereRanges.replaceWith(freshRanges);
+    if (!fresh.length) throw new Error("shape");
+    const metrics = document.querySelector(".metrics-strip");
+    if (fresh.length === here.length) {
+      here.forEach((region, index) => region.replaceWith(fresh[index]));
+    } else {
+      //
+      // Metrics with all clusters, or one (26-11-14): the count changes, and
+      // the swap that needed it to stay gave up and navigated - the page was
+      // asked for twice and drawn whole. There the list holds nothing but the
+      // clusters, so it is swapped as one. Anywhere else a changed count is
+      // still a different page.
+      //
+      const freshList = parsed.querySelector(".cluster-list");
+      const hereList = document.querySelector(".cluster-list");
+      if (!metrics || !freshList || !hereList) throw new Error("shape");
+      hereList.replaceWith(freshList);
+    }
+    //
+    // The strip marks what is chosen; on Metrics the heading names the range.
+    //
+    for (const selector of metrics ? [".page-ranges-sticky", ".page-heading"] : [".page-ranges-sticky"]) {
+      const freshPart = parsed.querySelector(selector);
+      const herePart = document.querySelector(selector);
+      if (freshPart && herePart) herePart.replaceWith(freshPart);
+    }
+    if (parsed.title) document.title = parsed.title;
     if (push) history.pushState({ traffic: true }, "", href);
     wire(document);
   };

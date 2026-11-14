@@ -640,7 +640,7 @@ def check_worker_sandbox(
     subject = "worker sandbox"
     try:
         required = [
-            str(path)
+            path.removeprefix("-")
             for path in worker_writable_paths(
                 load_policy(policy_file, require_secure=require_secure)
             )

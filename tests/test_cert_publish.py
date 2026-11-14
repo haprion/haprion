@@ -1236,7 +1236,7 @@ class TheWorkerCanLookWhereItPublishes(unittest.TestCase):
                 "/srv/example/config",
                 "/srv/example/published",
                 "/srv/example/validation",
-                "/srv/example/acme",
+                "-/srv/example/acme",
             ],
         )
 

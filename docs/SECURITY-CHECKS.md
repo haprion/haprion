@@ -16,8 +16,8 @@ The repository has complementary gates. No single scanner replaces the others.
    editable and not published, is skipped). The interface's dependencies are audited from
    `ui/uv.lock`, and the certbot environment's from `certbot/uv.lock`, both with `uv audit --locked`,
    which needs `uv` on `PATH`.
-5. `tools/run-codeql` performs the heavier CodeQL `security-extended` analysis, Python and
-   JavaScript, before the first push and before releases.
+5. `tools/run-codeql` performs the heavier CodeQL `security-extended` analysis, Python,
+   JavaScript and the GitHub Actions workflows, before the first push and before releases.
 6. `ui/run-tests` runs the interface's own suite and type checking in the environment holding its
    dependencies, including the browser suite that drives the traffic chart in a real Chromium -
    `PLAYWRIGHT_BROWSERS_PATH` must name where the browsers are installed, and the gate refuses to
@@ -198,15 +198,17 @@ CODEQL_BIN=/path/to/codeql tools/run-codeql /path/to/new-results-directory
 
 The wrapper rejects an output directory inside the source tree - compared as resolved paths, so a
 relative path or a symbolic link into the tree is rejected too - refuses to overwrite an existing
-result directory, and fails if either SARIF file contains an alert. Source snippets are not printed
+result directory, and fails if any SARIF file contains an alert. Source snippets are not printed
 by the final gate summary.
 
-Two languages are analysed in one run: the engine and the interface in Python, and the interface's
-own scripts under `ui/src/haprion_ui/static` in JavaScript, each against its `security-extended`
-suite. Those scripts have no build step and no dependencies, but they are the only code here that
-runs inside a reader's browser, and that is where a value's reach is not something the tests answer.
-Both result files are judged in one call, because an acceptance that matches nothing is a failure -
-checked separately, every Python acceptance would go stale against the JavaScript results.
+Three languages are analysed in one run: the engine and the interface in Python, the interface's
+own scripts under `ui/src/haprion_ui/static` in JavaScript, and the workflows under
+`.github/workflows` as `actions`, each against its `security-extended` suite. Those scripts have no
+build step and no dependencies, but they are the only code here that runs inside a reader's browser,
+and that is where a value's reach is not something the tests answer. The workflows are what GitHub's
+own code scanning reads as well, and a release tag waits for its alerts. All result files are judged
+in one call, because an acceptance that matches nothing is a failure - checked separately, every
+Python acceptance would go stale against the other results.
 
 ### Recorded acceptances
 
@@ -217,7 +219,9 @@ be root-owned and group-readable by the identity that must read them, and a fetc
 directory and a timer's drop-in directory are readable as sshd and systemd expect. Tightening those
 modes would lock out the accounts the trees exist for. The others are each explained in their entry:
 the TLS versions the node's health probe allows towards a backend, a password the receiver command
-prints once to the operator who asked for it, and the credentials file a certbot DNS plugin reads.
+prints once to the operator who asked for it, the credentials file a certbot DNS plugin reads, and a
+checkout in the automatic release that the Actions analysis takes for a pull request's by the name of
+the value it checks out.
 
 Such a finding is not suppressed in the source - an inline suppression tells the next reader the
 query was wrong - but recorded in [`../tools/codeql-accepted.json`](../tools/codeql-accepted.json)

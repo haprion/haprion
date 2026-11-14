@@ -103,6 +103,14 @@
       "count": 1,
       "decided": "2026-11-13",
       "reason": "The HTTP-01 check makes its challenge directory under the webroot 0o755 and its test file 0o644 because the web server serves both to anyone over plain HTTP and reads them as its own user. Certbot's webroot plugin makes and uses the same directory with the same modes, so a tighter mode here would protect nothing and the check would fail to fetch its own file. The file holds a random token and no secret, and the check removes both again."
+    },
+    {
+      "rule": "actions/untrusted-checkout/medium",
+      "path": ".github/workflows/auto-release.yml",
+      "message": "Potential unsafe checkout of untrusted pull request on non-privileged workflow.",
+      "count": 1,
+      "decided": "2026-11-14",
+      "reason": "The build job checks out needs.plan.outputs.tag_commit, which the query takes for a pull request's head by its name alone: an output whose name holds `commit`, `sha` or `head`. No pull request's head reaches it. tools/release-plan sets it only to a merge on main's first-parent line - a pull request already merged into main, verified as GitHub merged it - or to the commit an automatic tag of the app's own stands on, which passed the same bars when it was tagged. The workflow runs on schedule and workflow_dispatch only, never on a pull request event, and the job holds a read-only token and persists no credentials. Renaming the output to slip past the name would hide the decision instead of recording it."
     }
   ]
 }

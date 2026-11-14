@@ -77,6 +77,76 @@ class RunCodeqlTests(unittest.TestCase):
                 self.assertEqual(run.returncode, 64, given)
         self.assertFalse((BASE / "codeql-out").exists())
 
+    def test_every_language_in_the_tree_is_analysed(self) -> None:
+        """GitHub's code scanning reads the workflows too; so does this (2026-11-14).
+
+        The wrapper analysed Python and JavaScript only, while GitHub's own
+        scanning also took the workflows as the language `actions`: its first
+        alert on one stopped a release tag, found by nobody before the push.
+        Each language the tree holds is created, analysed against its
+        security-extended suite, and its results judged.
+        """
+
+        held = {"python": any(BASE.glob("src/haprion/*.py"))}
+        held["javascript"] = any(BASE.glob("ui/src/haprion_ui/static/*.js"))
+        held["actions"] = any(BASE.glob(".github/workflows/*.yml"))
+        self.assertTrue(all(held.values()), held)
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            calls = root / "calls"
+            codeql = root / "codeql"
+            codeql.write_text(RECORDER.replace("@CALLS@", str(calls)), encoding="utf-8")
+            codeql.chmod(0o755)
+            subprocess.run(
+                [str(SCRIPT), str(root / "result")],
+                env={**os.environ, "CODEQL_BIN": str(codeql)},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            recorded = calls.read_text(encoding="utf-8").splitlines()
+        judged = next(
+            line
+            for line in SCRIPT.read_text(encoding="utf-8").splitlines()
+            if "check-codeql-sarif.py" in line and not line.lstrip().startswith("#")
+        )
+
+        created = next(line for line in recorded if line.startswith("database create "))
+        languages = next(word for word in created.split() if word.startswith("--language="))
+        self.assertEqual(set(languages.removeprefix("--language=").split(",")), set(held), created)
+        for language in held:
+            with self.subTest(language=language):
+                suite = f"codeql/{language}-queries:codeql-suites/{language}-security-extended.qls"
+                self.assertTrue(
+                    any(
+                        line.startswith("database analyze ") and suite in line for line in recorded
+                    ),
+                    recorded,
+                )
+                # One judgement over every result file: an acceptance that
+                # matches nothing fails, so the files are judged together.
+                self.assertIn(f'"$output/{language}.sarif"', judged)
+
+
+# Records every call and makes what the wrapper reads next: a database
+# directory per language, and an empty result file per analysis.
+RECORDER = """#!/bin/sh
+echo "$*" >> "@CALLS@"
+if [ "$1" = database ] && [ "$2" = create ]; then
+    mkdir -p "$3"
+    exit 0
+fi
+if [ "$1" = database ] && [ "$2" = analyze ]; then
+    for argument in "$@"; do
+        case "$argument" in
+        --output=*) echo '{"runs": [{"results": []}]}' > "${argument#--output=}" ;;
+        esac
+    done
+    exit 0
+fi
+exit 3
+"""
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -36,18 +36,21 @@ mkdir -p "$output"
 # Removed on every exit, the failed and the interrupted run as well.
 trap 'rm -rf -- "$output/database"' EXIT
 
-# Two languages, one run. The engine is Python and the interface ships four
+# Three languages, one run. The engine is Python and the interface ships four
 # hand-written scripts under ui/src/haprion_ui/static - no build step, no
 # dependencies, and until now nothing looking at them at all. They are the only
 # code in the repository that runs inside somebody else's browser, which is the
 # one place where "who can reach this value" is not a question the tests answer.
+# The workflows under .github/workflows are the third, `actions`: GitHub's own
+# code scanning reads them, and its first alert on one stopped a release tag
+# that nothing here had looked at (2026-11-14).
 #
 # --db-cluster writes one database per language under $output/database. The
 # suites are the extended security ones for each, so the standard is the same
-# on both halves of the same application.
+# on every part of the same repository.
 "$codeql_bin" database create "$output/database" \
     --db-cluster \
-    --language=python,javascript \
+    --language=python,javascript,actions \
     --source-root="$base" \
     --threads=0
 "$codeql_bin" database analyze "$output/database/python" \
@@ -62,8 +65,14 @@ trap 'rm -rf -- "$output/database"' EXIT
     --output="$output/javascript.sarif" \
     --sarif-add-baseline-file-info \
     --threads=0
+"$codeql_bin" database analyze "$output/database/actions" \
+    codeql/actions-queries:codeql-suites/actions-security-extended.qls \
+    --format=sarif-latest \
+    --output="$output/actions.sarif" \
+    --sarif-add-baseline-file-info \
+    --threads=0
 
-# Both results in one call, because an acceptance that matches nothing is a
+# Every result in one call, because an acceptance that matches nothing is a
 # failure: checked one file at a time, every Python acceptance would go stale
-# against the JavaScript results and the gate would fail on its own bookkeeping.
-python3 "$base/tools/check-codeql-sarif.py" "$output/python.sarif" "$output/javascript.sarif"
+# against the other results and the gate would fail on its own bookkeeping.
+python3 "$base/tools/check-codeql-sarif.py" "$output/python.sarif" "$output/javascript.sarif" "$output/actions.sarif"

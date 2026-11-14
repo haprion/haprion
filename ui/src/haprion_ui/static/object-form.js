@@ -554,6 +554,40 @@
   };
 
   //
+  // A click chooses a group and a second click lets it go (26-11-14): with
+  // blocklists the lists grew, and Ctrl+click was the only way to choose more
+  // than one. The empty choice (Everywhere, Nobody) stands for none: choosing
+  // it lets every group go, and letting the last group go chooses it again,
+  // unless addresses are written beside it. Keys still move as a listbox's do.
+  //
+  const wireToggledChoices = () => {
+    for (const [groupsName, rangesName] of EMPTY_CHOICES) {
+      const groups = document.querySelector(`select[name='${groupsName}']`);
+      if (!groups) continue;
+      const ranges = document.querySelector(`textarea[name='${rangesName}']`);
+      const empty = groups.querySelector("option[value='']");
+      groups.addEventListener("mousedown", (event) => {
+        const option = event.target.closest("option");
+        if (!option || option.disabled || event.button !== 0) return;
+        event.preventDefault();
+        const scrolled = groups.scrollTop;
+        if (option === empty) {
+          for (const other of groups.options) other.selected = other === empty;
+        } else {
+          option.selected = !option.selected;
+          const chosen = Array.from(groups.options).some((o) => o !== empty && o.selected);
+          const written = ranges && ranges.value.trim() !== "";
+          if (empty) empty.selected = !chosen && !written;
+        }
+        groups.focus();
+        groups.scrollTop = scrolled;
+        groups.dispatchEvent(new Event("input", { bubbles: true }));
+        groups.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    }
+  };
+
+  //
   // Leaving the editor after a change that was not sent asks first (B336): a
   // link, Back or a closed tab took typed work with it without a word. Sending
   // the form - Validate, Save, Save as draft - is not leaving.
@@ -580,6 +614,7 @@
   window.addEventListener("DOMContentLoaded", () => {
     wireUnsaved();
     wireEmptyChoices();
+    wireToggledChoices();
     wireRules();
     wireRecheck();
     wireShownWhen();

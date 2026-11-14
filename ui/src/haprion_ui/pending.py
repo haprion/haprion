@@ -11,14 +11,16 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from hashlib import sha256
 from typing import Any
+from urllib.parse import quote
 from uuid import UUID, uuid5
 
 from fastapi import Request
 from haprion.cli import changes_publish
+from haprion.cluster_settings import load_document as load_settings_document
 from haprion.config import ConfigError
 from haprion.managed_network import load_document as load_network_document
 from haprion.managed_network import location as network_location
@@ -36,6 +38,7 @@ from haprion_ui import (
     network,
     objects,
 )
+from haprion_ui.cluster_settings_page import FormProblem
 from haprion_ui.config import Config
 from haprion_ui.editor_flow import (
     EditorState,
@@ -45,9 +48,11 @@ from haprion_ui.editor_flow import (
     removal_bookkeeping,
     state_reading,
 )
+from haprion_ui.http01_page import settings_in_effect
 from haprion_ui.reading import (
     NETWORK_SOURCE,
     OBJECTS_SOURCE,
+    SETTINGS_SOURCE,
     read_source,
 )
 from haprion_ui.saved_work import (
@@ -281,6 +286,8 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
     ):
         change = changes.get(kind)
         if change is not None:
+            if kind == "settings":
+                label, link = _settings_label(request, config, cluster, change.document)
             if heads.get(kind) != head:
                 lagging.append(label)
             rows.append(
@@ -373,6 +380,36 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
         problem=problem,
         lagging=tuple(lagging),
     )
+
+
+def _settings_label(
+    request: Request, config: Config, cluster: str, document: str
+) -> tuple[str, str]:
+    """What a saved settings document changes, named as the pages that change it are.
+
+    Compared with the published reading, which the pages draw their forms from:
+    only the challenge address is *HTTP-01*, anything else *Logs & metrics*, and both
+    names both. A reading or a document that cannot be read is *Logs & metrics*,
+    the page every settings change used to be named after.
+    """
+
+    logs, logs_link = "Logs & metrics", f"/settings/clusters/{cluster}"
+    _, rows = read_source(request, config, SETTINGS_SOURCE)
+    row = next((row for row in rows if row.cluster == cluster and row.outcome == "done"), None)
+    if row is None or not isinstance(row.result, Mapping):
+        return logs, logs_link
+    try:
+        draft = load_settings_document(document.encode("utf-8"))
+        published = settings_in_effect(row.result, None)
+    except (ConfigError, FormProblem):
+        return logs, logs_link
+    challenge = draft.acme_challenge != published.acme_challenge
+    rest = replace(draft, acme_challenge=None) != replace(published, acme_challenge=None)
+    if challenge and not rest:
+        return "HTTP-01", f"/http01/{quote(cluster, safe='')}"
+    if challenge:
+        return f"HTTP-01 and {logs}", logs_link
+    return logs, logs_link
 
 
 def _kib(size: int, *, up: bool = False) -> str:

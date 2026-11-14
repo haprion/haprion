@@ -313,7 +313,7 @@ def parse(body: bytes) -> Parsed:
 
     if len(body) > MAX_BYTES:
         raise BlocklistError("too_large", f"the list is over {MAX_BYTES // (1024 * 1024)} MiB")
-    text = body.decode("utf-8", errors="replace")
+    text = body.decode("utf-8-sig", errors="replace")
     #
     # Kept as ranges, not as the network objects read: an object per entry
     # held for the whole list is most of what reading one cost.
@@ -323,8 +323,12 @@ def parse(body: bytes) -> Parsed:
     skipped = 0
     for line in text.splitlines():
         stripped = line.strip()
+        if stripped in ("[", "]"):
+            # The brackets of a JSON array written one object to a line.
+            continue
         if stripped.startswith("{"):
-            found = _json_entry(stripped)
+            # An array's objects end in a comma but for the last one.
+            found = _json_entry(stripped.removesuffix(","))
             if found == _METADATA:
                 continue
             if found is None:

@@ -66,6 +66,24 @@ class TheFormatIsOneAddressToALine(unittest.TestCase):
         self.assertEqual(parsed.networks, _networks("192.0.2.0/24", "198.51.100.0/25"))
         self.assertEqual(parsed.skipped, 0)
 
+    def test_a_json_array_with_an_object_to_a_line_reads_every_object(self) -> None:
+        """PL01: the commas ended every line but the last, which alone was read."""
+
+        parsed = blocklists.parse(
+            b'[\n  {"cidr": "192.0.2.0/24"},\n  {"cidr": "198.51.100.0/25"}\n]\n'
+        )
+        self.assertEqual(parsed.networks, _networks("192.0.2.0/24", "198.51.100.0/25"))
+        self.assertEqual(parsed.skipped, 0)
+
+    def test_a_byte_order_mark_does_not_cost_the_first_line(self) -> None:
+        """PL02: the mark stayed on the first line, which was then skipped."""
+
+        bom = b"\xef\xbb\xbf"
+        for body in (bom + b"192.0.2.0/24\n198.51.100.0/25\n", bom + SPAMHAUS_JSON):
+            parsed = blocklists.parse(body)
+            self.assertEqual(parsed.networks, _networks("192.0.2.0/24", "198.51.100.0/25"))
+            self.assertEqual(parsed.skipped, 0)
+
     def test_a_json_line_without_a_network_is_skipped_and_counted(self) -> None:
         parsed = blocklists.parse(
             b'{"cidr":"192.0.2.0/24"}\n{"ip":"198.51.100.1"}\n{"cidr":"not; a #network"}\n{oops\n'

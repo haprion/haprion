@@ -29,6 +29,12 @@ FIREHOL = b"""#
 2001:db8::/32
 """
 RAW = b"192.0.2.7\n198.51.100.200\n# the end\n"
+# Spamhaus's JSON lists, as drop_v4.json is written (measured 26-11-14): one
+# object to a line with the network in `cidr`, and a closing metadata object.
+SPAMHAUS_JSON = b"""{"cidr":"192.0.2.0/24","sblid":"SBL000001","rir":"ripencc"}
+{"cidr":"198.51.100.0/25","sblid":"SBL000002","rir":"apnic"}
+{"type":"metadata","timestamp":1794664604,"size":121,"records":2,"copyright":"(c) 2026"}
+"""
 
 
 def quad(*octets: int) -> str:
@@ -52,6 +58,20 @@ class TheFormatIsOneAddressToALine(unittest.TestCase):
         self.assertEqual(
             blocklists.parse(RAW).networks, _networks("192.0.2.7/32", "198.51.100.200/32")
         )
+
+    def test_spamhaus_s_json_lists_read_their_cidr_and_leave_the_metadata(self) -> None:
+        """26-11-14: Spamhaus keeps its lists as JSON; each line was 'not an address' and the list empty."""
+
+        parsed = blocklists.parse(SPAMHAUS_JSON)
+        self.assertEqual(parsed.networks, _networks("192.0.2.0/24", "198.51.100.0/25"))
+        self.assertEqual(parsed.skipped, 0)
+
+    def test_a_json_line_without_a_network_is_skipped_and_counted(self) -> None:
+        parsed = blocklists.parse(
+            b'{"cidr":"192.0.2.0/24"}\n{"ip":"198.51.100.1"}\n{"cidr":"not; a #network"}\n{oops\n'
+        )
+        self.assertEqual(parsed.networks, _networks("192.0.2.0/24"))
+        self.assertEqual(parsed.skipped, 3)
 
     def test_a_line_that_is_not_an_address_is_skipped_and_counted(self) -> None:
         parsed = blocklists.parse(b"192.0.2.1\nnot an address\n<html>\n198.51.100.1\n")

@@ -1707,7 +1707,8 @@ changes without a publish or a deploy: the nodes swap it in place.
 
 - *Name* is the group's name under *Denied — groups*: lowercase letters, digits and `-`, at most 40.
 - *URL* is where the list is, over https. The list has one address or network per line; text after `#`
-  or `;` is skipped. CrowdSec's raw IP list, Spamhaus DROP and FireHOL's lists read as they are.
+  or `;` is skipped. CrowdSec's raw IP list, Spamhaus DROP and FireHOL's lists read as they are, and so do
+  Spamhaus's JSON lists (`drop_v4.json`): one object to a line, with the network in `cidr`.
   FireHOL's `level1` holds private networks on purpose; see *Private and very broad entries* below.
 - *Authorization* is *None*, *Basic* (a *Username* and a *Password*) or *Bearer* (a *Token*). The password
   or token is sealed when it is saved and is never shown again; leave it empty to keep the one stored.

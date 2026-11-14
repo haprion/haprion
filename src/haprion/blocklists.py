@@ -13,8 +13,10 @@ environment, no redirects, a size and a time limit.
 
 The format is one address or network to a line. Text after `#` or `;` is a
 comment, which is how all three lists above annotate theirs (Spamhaus writes
-`192.0.2.0/24 ; SBL123`). A line that is not an address is skipped and counted,
-so a list that changed its format says so instead of shrinking quietly.
+`192.0.2.0/24 ; SBL123`). A line that is a JSON object is read for its `cidr`,
+as Spamhaus writes its JSON lists (`drop_v4.json`), and Spamhaus's closing
+metadata object is passed over. A line that is not an address is skipped and
+counted, so a list that changed its format says so instead of shrinking quietly.
 
 Two more rules keep a list from refusing the senders it was never meant for
 (B501). Entries shorter than /8 (IPv4) or /16 (IPv6) are skipped: one broken
@@ -28,6 +30,7 @@ from __future__ import annotations
 
 import base64
 import ipaddress
+import json
 import re
 import ssl
 import time
@@ -255,6 +258,29 @@ def _network(text: str) -> Network | None:
     return network
 
 
+#
+# What a JSON line says (26-11-14): the network it names, or that it is
+# Spamhaus's metadata - the record count and copyright closing every list it
+# keeps - which is no entry at all.
+#
+_METADATA = ""
+
+
+def _json_entry(line: str) -> str | None:
+    """The `cidr` of a JSON object line; `_METADATA` for Spamhaus's own; None for anything else."""
+
+    try:
+        found = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(found, dict):
+        return None
+    if found.get("type") == "metadata":
+        return _METADATA
+    cidr = found.get("cidr")
+    return cidr if isinstance(cidr, str) and cidr else None
+
+
 def _public(version: int, first: int, last: int) -> tuple[list[tuple[int, int]], bool]:
     """The part of a range outside the reserved networks, and whether any of it was cut."""
 
@@ -296,9 +322,19 @@ def parse(body: bytes) -> Parsed:
     read = 0
     skipped = 0
     for line in text.splitlines():
-        entry = re.split(r"[#;]", line, maxsplit=1)[0].strip()
-        if not entry:
-            continue
+        stripped = line.strip()
+        if stripped.startswith("{"):
+            found = _json_entry(stripped)
+            if found == _METADATA:
+                continue
+            if found is None:
+                skipped += 1
+                continue
+            entry = found
+        else:
+            entry = re.split(r"[#;]", line, maxsplit=1)[0].strip()
+            if not entry:
+                continue
         network = _network(entry)
         if network is None:
             skipped += 1

@@ -6984,8 +6984,12 @@ with `../`, `%2e%2e`, a further `/` or no token, and any other method, is handle
 validation files while a request is running and answers 404 otherwise; nothing else of the site becomes
 reachable.
 
+**A site behind the cluster cannot answer HTTP-01 itself.** Once the cluster sends the path to the manager,
+every challenge on its port-80 addresses goes there, for every name. A server behind a proxy that runs its own
+certbot over HTTP-01 never sees its challenge; issue its certificate here instead, or use DNS-01 for it.
+
 A cluster that sends the challenge to the manager refuses to publish when something else takes port 80
-on an address that carries it: a TCP object, or a reservation in `manual/reservations.yaml`. The message
+on an address that carries it: a TCP or DNS object, or a reservation in `manual/reservations.yaml`. The message
 names the object or the reservation.
 
 *Check HTTP-01* on the new-certificate form (see [Issuing a certificate](#issuing-a-certificate)) tells whether the

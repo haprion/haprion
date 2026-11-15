@@ -69,41 +69,26 @@ The pictures are made with invented clusters, names and addresses.
 **The dashboard.** Every cluster and node at a glance: which node holds the virtual address, how
 much traffic passes, and what needs attention.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-dashboard-dark.png">
-  <img src="docs/images/screenshot-dashboard-light.png" width="900" alt="The dashboard: two clusters with two nodes each, the node holding the virtual address marked as owner, traffic figures per cluster, and a short list of what needs attention.">
-</picture>
+<img src="docs/images/screenshot-dashboard-dark.png" width="900" alt="The dashboard: two clusters with two nodes each, the node holding the virtual address marked as owner, traffic figures per cluster, and what needs attention.">
 
 **A proxy is a form.** Hostnames, certificate, servers and health check. Haprion writes the HAProxy
 configuration from it.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-proxy-dark.png">
-  <img src="docs/images/screenshot-proxy-light.png" width="900" alt="Editing a proxy: name, hostnames, protocol, virtual address and certificate; three servers with round-robin balancing; an HTTP health check, and what each node reports for each server.">
-</picture>
+<img src="docs/images/screenshot-proxy-dark.png" width="900" alt="Editing a proxy: name, hostnames, protocol, virtual address and certificate; three servers with round-robin balancing; an HTTP health check, and what each node reports for each server.">
 
 **Certificates.** Issued or imported once, used by every cluster that needs them, with the expiry
 dates in view.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-certificates-dark.png">
-  <img src="docs/images/screenshot-certificates-light.png" width="900" alt="The certificate list: one renewed by certbot and two imported, the clusters using each, when each expires, and one expired certificate marked.">
-</picture>
+<img src="docs/images/screenshot-certificates-dark.png" width="900" alt="The certificate list: one renewed by certbot and two imported, the clusters using each, when each expires, and one expired certificate marked.">
 
 **The traffic log.** Every request from every node, searchable, with the rule that stopped it.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-traffic-log-dark.png">
-  <img src="docs/images/screenshot-traffic-log-light.png" width="900" alt="The traffic log: requests with time, node, client, host and path, status, and the server that answered; a few stopped by the WAF, by dynamic blocking and by an access rule.">
-</picture>
+<img src="docs/images/screenshot-traffic-log-dark.png" width="900" alt="The traffic log: requests with time, node, client, host and path, status, and the server that answered; a few stopped by the WAF, by dynamic blocking and by an access rule.">
 
 **Every publish is a version.** What changed in the proxy and in the configuration it produced,
 and a way back.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-version-dark.png">
-  <img src="docs/images/screenshot-version-light.png" width="900" alt="One version's changes: the proxy's health check interval shortened, and the HAProxy server line it changed.">
-</picture>
+<img src="docs/images/screenshot-version-dark.png" width="900" alt="One version's changes: the proxy's health check interval shortened, and the HAProxy server line it changed.">
 
 ## Getting started
 
@@ -133,12 +118,17 @@ the machines must reach. The [user manual](docs/user-manual.md) covers everythin
 - adding or removing a node in one step: the new membership is published and, if the cluster was up to
   date, deployed too
 - counters shared between a cluster's nodes, so a failover or a deploy does not start them again
+- a new proxy started from a stored one, and a test that tells which route, pool and server path a request
+  path takes
 
 **Access and protection**
 
 - who may reach an object - by address, range, named network or country - and who may not
 - rules on path, method and headers, a per-source rate limit per object, and a brake per cluster
   on any single source address
+- blocklists someone else keeps, such as a threat feed, fetched on a schedule and swapped in place on the
+  nodes without a deploy; private networks are never refused, and a failed fetch keeps the last good list
+- Strict SNI per virtual address: a TLS client that names no host a certificate there covers is refused
 - a WAF engine (Coraza with the OWASP Core Rule Set), in log or block mode per object, with
   exceptions made from the findings
 - an advanced configuration layer per object, behind a feature switch, for what the forms do not
@@ -148,17 +138,21 @@ the machines must reach. The [user manual](docs/user-manual.md) covers everythin
 
 - issuance from one form through ACME (Let's Encrypt), with HTTP-01 or DNS-01; DNS provider credentials
   are encrypted by the web interface and can be opened only by a root helper
+- HTTP-01 through the clusters: each cluster sends Let's Encrypt's challenge path to the manager, and the form
+  checks that the path reaches it before a certificate is requested
 - enrollment and renewal from a Microsoft CA over NDES/SCEP
 - import of a certificate issued elsewhere, a key and signing request made on the manager, and
   export of a certificate marked exportable
-- distribution to the nodes and to other hosts that fetch them, and deleting several at once – a
-  certificate still in use is refused
+- distribution to the nodes and to other hosts that fetch them, with when each host last fetched, and
+  deleting several at once – a certificate still in use is refused
 - renewal on a schedule, twice a day, for both Let's Encrypt and NDES certificates
 
 **Operations**
 
 - status, metrics and a basic traffic-log viewer (seven days), collected in the background rather than
-  asked for while you look at a page
+  asked for while you look at a page; deploys are marked on the traffic graphs, and a request's row shows
+  where its time went
+- the health check shows the certificate each TLS backend server presents, and why verification failed
 - the traffic log sent to up to four external syslog receivers, and HAProxy's Prometheus exporter
 - scheduled node-state backups, and restoring a node from its archive onto an empty VM or over
   itself, with a preview before anything is written

@@ -2,9 +2,11 @@ default_vip: internal
 vips:
   internal:
     address: 192.0.2.20
+    source: 192.0.2.25
     tls: modern
   dmz:
     address: 198.51.100.20
+    source: 198.51.100.25
     tls: modern
   plain:
     address: 203.0.113.20

@@ -72,10 +72,13 @@ class TheChallengeIsLetThroughBeforeAnythingRefusesIt(unittest.TestCase):
         )
 
     def test_the_challenge_is_routed_before_any_site(self) -> None:
-        for name in ("mgd-internal-http", "mgd-plain-http"):
-            with self.subTest(frontend=name):
-                routes = [line for line in frontend(layer(), name) if "use_backend" in line]
-                self.assertEqual(routes[0], f"    use_backend {ACME_CHALLENGE} if {CONDITION}")
+        for vip in ("internal", "plain"):
+            with self.subTest(vip=vip):
+                lines = frontend(layer(), f"mgd-{vip}-http")
+                routes = [line for line in lines if "use_backend" in line]
+                self.assertEqual(
+                    routes[0], f"    use_backend mgd-{vip}-acme-challenge if {CONDITION}"
+                )
                 self.assertEqual(len(routes) - len(set(routes)), 0)
 
     def test_https_frontends_are_not_touched(self) -> None:
@@ -83,11 +86,23 @@ class TheChallengeIsLetThroughBeforeAnythingRefusesIt(unittest.TestCase):
             with self.subTest(frontend=name):
                 self.assertNotIn("acme", "\n".join(frontend(layer(), name)))
 
-    def test_the_backend_is_the_manager_without_a_check(self) -> None:
+    def test_each_address_reaches_the_manager_from_its_source_without_a_check(self) -> None:
+        # 26-11-15, in production: one shared backend without `source` left
+        # from the node's own address, which a firewall written for the VIP's
+        # source address handed to a web filter. Each VIP's own, as its pools.
+        text = layer()
+        for vip, source in (("dmz", "198.51.100.25"), ("internal", "192.0.2.25")):
+            with self.subTest(vip=vip):
+                self.assertIn(
+                    f"\nbackend mgd-{vip}-acme-challenge\n    mode http\n"
+                    f"    source {source}\n    server manager 192.0.2.5:8080\n",
+                    text,
+                )
         self.assertIn(
-            f"\nbackend {ACME_CHALLENGE}\n    mode http\n    server manager 192.0.2.5:8080\n",
-            layer(),
+            "\nbackend mgd-plain-acme-challenge\n    mode http\n    server manager 192.0.2.5:8080\n",
+            text,
         )
+        self.assertNotIn(f"backend {ACME_CHALLENGE}\n", text)
 
     def test_an_address_with_https_only_gets_a_frontend_for_the_challenge_alone(self) -> None:
         lines = frontend(layer(), "mgd-dmz-http")
@@ -96,7 +111,7 @@ class TheChallengeIsLetThroughBeforeAnythingRefusesIt(unittest.TestCase):
             lines[-2:],
             [
                 f"    http-request return status 404 if !{CONDITION}",
-                f"    use_backend {ACME_CHALLENGE} if {CONDITION}",
+                f"    use_backend mgd-dmz-acme-challenge if {CONDITION}",
             ],
         )
         self.assertNotIn("redirect", "\n".join(lines))

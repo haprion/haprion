@@ -14,9 +14,10 @@ from __future__ import annotations
 import dataclasses
 import shutil
 import tempfile
+import threading
 import unittest
 from http.client import HTTPConnection
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from haprion.cluster_settings import AcmeChallenge, ClusterSettings
@@ -34,6 +35,33 @@ from tests.test_generate_behaviour import (
 
 CHALLENGE = "/.well-known/acme-challenge/token"
 HAPROXY = shutil.which("haproxy")
+#
+# Each VIP's source address, which the challenge has to leave from as the
+# pools do (26-11-15). The whole of 127.0.0.0/8 is this host's on Linux.
+#
+SOURCES = {"main": "127.0.0.3", "other": "127.0.0.4"}
+
+
+def manager_server(port: int, seen: list[str]) -> ThreadingHTTPServer:
+    """The manager: answers like the echo server, and notes the address each request came from."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # the name is the library's
+            seen.append(self.client_address[0])
+            body = f"manager {self.path}".encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_: object) -> None:
+            """Silence. The test's own output is the interesting one."""
+
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
 
 SITE = """
 schema: 1
@@ -65,6 +93,7 @@ class _Cluster(unittest.TestCase):
     servers: list[ThreadingHTTPServer]
     running: list[object]
     http: int
+    seen: list[str]
 
     @classmethod
     @spawned.retry_on_taken_port
@@ -72,7 +101,8 @@ class _Cluster(unittest.TestCase):
         cls.directory = tempfile.TemporaryDirectory()
         root = Path(cls.directory.name)
         manager, pool = free_port(), free_port()
-        cls.servers = [echo_server("manager", manager), echo_server("site", pool)]
+        cls.seen = []
+        cls.servers = [manager_server(manager, cls.seen), echo_server("site", pool)]
         wait_for(manager)
         wait_for(pool)
         certificates = root / "certs"
@@ -113,8 +143,8 @@ class _Cluster(unittest.TestCase):
                 ),
             ],
             vips={
-                "main": Vip(name="main", address="127.0.0.1"),
-                "other": Vip(name="other", address="127.0.0.2"),
+                "main": Vip(name="main", address="127.0.0.1", source=SOURCES["main"]),
+                "other": Vip(name="other", address="127.0.0.2", source=SOURCES["other"]),
             },
             default_vip="main",
             ports={"http": cls.http, "https": free_port()},
@@ -187,6 +217,17 @@ class TheChallengeReachesTheManager(_Cluster):
             (200, f"manager {CHALLENGE}"),
         )
         self.assertEqual(self.get("secure.example.com", "/", "127.0.0.2")[0], 404)
+
+    def test_the_challenge_leaves_from_the_vips_source_address(self) -> None:
+        # A firewall in front of the manager is written for the source address;
+        # the node's own address is never in it (26-11-15, found in production).
+        for host, address, vip in (
+            ("locked.example.com", "127.0.0.1", "main"),
+            ("secure.example.com", "127.0.0.2", "other"),
+        ):
+            with self.subTest(vip=vip):
+                self.assertEqual(self.get(host, CHALLENGE, address)[0], 200)
+                self.assertEqual(self.seen[-1], SOURCES[vip])
 
 
 class OnlyARealChallengeReachesTheManager(_Cluster):

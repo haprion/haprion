@@ -155,8 +155,9 @@ CLUSTER_FILE = "1000-cluster.cfg"
 METRICS_FRONTEND = f"{PREFIX}-metrics"
 METRICS_IDENTITY = "cluster-metrics"
 #
-# The HTTP-01 challenge path, which is the manager's to answer (PL17). The one
-# name is the backend's and, inside each http frontend, the condition's.
+# The HTTP-01 challenge path, which is the manager's to answer (PL17). The
+# condition inside each http frontend is named after it; the backend that
+# reaches the manager is one per VIP (`_challenge_backend_name`).
 #
 ACME_CHALLENGE = f"{PREFIX}-acme-challenge"
 OBJECT_BAND = "1001"
@@ -2131,7 +2132,7 @@ def _frontend_file(
         # challenge for any of them also carries.
         #
         if acme is not None and protocol == "http":
-            body.append(f"    use_backend {ACME_CHALLENGE} if {ACME_CONDITION}")
+            body.append(f"    use_backend {_challenge_backend_name(vip)} if {ACME_CONDITION}")
         body += routed
         body += tail
     for vip, proxy in sorted(tcp, key=lambda member: member[1].name):
@@ -2154,8 +2155,19 @@ def _frontend_file(
         for vip in challenge_only:
             _refuse_challenge_listener(vip, ports["http"], placed, reservations, held_ports or {})
             body.extend(_challenge_frontend(vip, ports["http"]))
-        if challenge_only or any(protocol == "http" for _name, protocol in groups):
-            body.extend(_challenge_backend(acme))
+        #
+        # One backend per address that carries the challenge, so it leaves from
+        # that address's source as every pool does: a firewall between the
+        # cluster and the manager is written against the source address, and a
+        # shared backend would leave from whatever the node's routing picks.
+        #
+        carrying = {vip.name: vip for vip in challenge_only} | {
+            members[0][0].name: members[0][0]
+            for (_name, protocol), members in groups.items()
+            if protocol == "http"
+        }
+        for name in sorted(carrying):
+            body.extend(_challenge_backend(acme, carrying[name]))
     body.extend(fallbacks)
     if not body:
         body = ["", "# No object listens anywhere on this cluster."]
@@ -2203,8 +2215,17 @@ def _acme_rules(acme: AcmeChallenge | None) -> list[str]:
     ]
 
 
-def _challenge_backend(acme: AcmeChallenge) -> list[str]:
+def _challenge_backend_name(vip: Vip) -> str:
+    return f"{PREFIX}-{vip.name}-acme-challenge"
+
+
+def _challenge_backend(acme: AcmeChallenge, vip: Vip) -> list[str]:
     """The manager, which holds the webroot the validation file is written to.
+
+    Reached from the VIP's source address, as the VIP's pools are (`source_of`):
+    without it HAProxy leaves from the node's own address, which a firewall
+    written for the source address does not let through (26-11-15, measured in
+    a cluster whose traffic to the manager passed a web filter).
 
     No health check: a manager that is away answers the validation with a
     failure, which is what it would be without one, and a check would only add
@@ -2213,8 +2234,9 @@ def _challenge_backend(acme: AcmeChallenge) -> list[str]:
 
     return [
         "",
-        f"backend {ACME_CHALLENGE}",
+        f"backend {_challenge_backend_name(vip)}",
         "    mode http",
+        *((f"    source {vip.source}",) if vip.source is not None else ()),
         f"    server manager {_bracketed(acme.address)}:{acme.port}",
     ]
 
@@ -2242,7 +2264,7 @@ def _challenge_frontend(vip: Vip, port: int) -> list[str]:
         # `use_backend`: an unconditional answer here would take the challenge too.
         #
         f"    http-request return status 404 if !{ACME_CONDITION}",
-        f"    use_backend {ACME_CHALLENGE} if {ACME_CONDITION}",
+        f"    use_backend {_challenge_backend_name(vip)} if {ACME_CONDITION}",
     ]
 
 

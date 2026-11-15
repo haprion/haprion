@@ -35,6 +35,8 @@ of itself from it, so an older tag builds with the tools it was tagged with.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import importlib.util
 import os
@@ -42,7 +44,9 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import urllib.request
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 
@@ -56,6 +60,7 @@ GO_ARCHIVES = {
 }
 DISTRIBUTIONS = ("debian13", "ubuntu26.04")
 FETCH_TIMEOUT = 120
+SCRATCH = "build"
 
 
 class BuildError(RuntimeError):
@@ -136,38 +141,94 @@ def build(
     if any(output_dir.iterdir()):
         raise BuildError(f"{output_dir} is not empty")
     cache.mkdir(parents=True, exist_ok=True)
-    #
-    # Every step's temporary files under the cache, not in /tmp: the engine and
-    # the two Python environments take gigabytes there, and /tmp is a small
-    # tmpfs on some build hosts (measured 26-10-17: 5.9 GB, mostly in use).
-    #
-    scratch = cache / "tmp"
-    shutil.rmtree(scratch, ignore_errors=True)
-    scratch.mkdir()
+    with own_scratch(cache) as scratch:
+        return _build(source, output_dir, uv, cache, podman, scratch, waf_only=waf_only)
+
+
+@contextlib.contextmanager
+def cache_lock(cache: Path) -> Iterator[None]:
+    """The cache to this build alone while it is held: the parts every build shares are filled under it."""
+
+    with (cache / ".lock").open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+
+
+@contextlib.contextmanager
+def own_scratch(cache: Path) -> Iterator[Path]:
+    """This build's temporary directory under the cache, removed afterwards.
+
+    Every step's temporary files go under the cache, not in /tmp: the engine
+    and the two Python environments take gigabytes there, and /tmp is a small
+    tmpfs on some build hosts (measured 26-10-17: 5.9 GB, mostly in use).
+
+    One directory per build, so that two builds from the same cache - the
+    release's two copies at the same time - never clear each other's files.
+    Each is held with a lock of its own for as long as the build runs; one
+    whose lock nobody holds was left by a build that died, and goes. Made and
+    swept under the cache's lock, so a new one is never taken for a dead one.
+    """
+
+    with cache_lock(cache):
+        for stale in cache.glob(f"{SCRATCH}-*.lock"):
+            with stale.open("a") as other:
+                try:
+                    fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    continue
+                shutil.rmtree(stale.with_suffix(""), ignore_errors=True)
+                stale.unlink(missing_ok=True)
+        scratch = Path(tempfile.mkdtemp(prefix=f"{SCRATCH}-", dir=cache))
+        held = scratch.with_name(scratch.name + ".lock").open("a")
+        fcntl.flock(held, fcntl.LOCK_EX)
+    try:
+        yield scratch
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+        Path(held.name).unlink(missing_ok=True)
+        held.close()
+
+
+def _build(
+    source: Path,
+    output_dir: Path,
+    uv: Path,
+    cache: Path,
+    podman: str,
+    scratch: Path,
+    *,
+    waf_only: bool,
+) -> list[Path]:
     environment = {**os.environ, "TMPDIR": str(scratch)}
     tool = engine_tool(source)
     sources = cache / "sources"
-    sources.mkdir(exist_ok=True)
-    for pinned in (tool.CORAZA, tool.CRS):
-        fetched(sources, pinned.file, pinned.url, pinned.sha256)
-    go = go_root(cache, tool.GO_VERSION)
-    bin_dir = tool.scanner_dir(cache)
-    govulncheck = bin_dir / "govulncheck"
-    if not govulncheck.exists():
-        env = {
-            **environment,
-            "GOTMPDIR": str(scratch),
-            "GOBIN": str(bin_dir),
-            "GOTOOLCHAIN": "local",
-            "GOPATH": str(cache / "gopath"),
-            "GOCACHE": str(cache / "gocache"),
-        }
-        run(
-            go / "bin" / "go",
-            "install",
-            f"golang.org/x/vuln/cmd/govulncheck@{tool.GOVULNCHECK_VERSION}",
-            env=env,
-        )
+    #
+    # The archives, the toolchain and the scanner are fetched, unpacked and
+    # built once into the cache and read by every build after: one build at a
+    # time fills them, so a second one waits and then finds them made.
+    #
+    with cache_lock(cache):
+        sources.mkdir(exist_ok=True)
+        for pinned in (tool.CORAZA, tool.CRS):
+            fetched(sources, pinned.file, pinned.url, pinned.sha256)
+        go = go_root(cache, tool.GO_VERSION)
+        bin_dir = tool.scanner_dir(cache)
+        govulncheck = bin_dir / "govulncheck"
+        if not govulncheck.exists():
+            env = {
+                **environment,
+                "GOTMPDIR": str(scratch),
+                "GOBIN": str(bin_dir),
+                "GOTOOLCHAIN": "local",
+                "GOPATH": str(cache / "gopath"),
+                "GOCACHE": str(cache / "gocache"),
+            }
+            run(
+                go / "bin" / "go",
+                "install",
+                f"golang.org/x/vuln/cmd/govulncheck@{tool.GOVULNCHECK_VERSION}",
+                env=env,
+            )
 
     def step(*command: str | Path) -> None:
         run(*command, env=environment)

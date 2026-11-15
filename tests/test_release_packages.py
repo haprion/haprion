@@ -67,19 +67,7 @@ class TheToolchainIsPinned(unittest.TestCase):
         previous = Path.cwd()
         self.addCleanup(os.chdir, previous)
         with tempfile.TemporaryDirectory() as directory:
-            tree = Path(directory) / "tree"
-            tree.mkdir()
-            git = [
-                "/usr/bin/git",
-                "-C",
-                str(tree),
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@example.org",
-            ]
-            subprocess.run([*git, "init", "-q"], check=True)  # fixed arguments
-            subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "t"], check=True)
+            self.committed_tree(Path(directory))
             os.chdir(directory)
             with (
                 unittest.mock.patch.object(
@@ -88,8 +76,112 @@ class TheToolchainIsPinned(unittest.TestCase):
                 unittest.mock.patch.object(RELEASE, "fetched", side_effect=fetched),
                 self.assertRaises(Stop),
             ):
-                RELEASE.build(tree, Path("out"), Path("uv"), Path("cache"), "podman")
+                RELEASE.build(Path("tree"), Path("out"), Path("uv"), Path("cache"), "podman")
         self.assertTrue(seen[0].is_absolute())
+
+    @staticmethod
+    def committed_tree(directory: Path) -> Path:
+        tree = directory / "tree"
+        tree.mkdir()
+        git = [
+            "/usr/bin/git",
+            "-C",
+            str(tree),
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.org",
+        ]
+        subprocess.run([*git, "init", "-q"], check=True)  # fixed arguments
+        subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "t"], check=True)
+        return tree
+
+    def test_a_second_build_from_the_cache_leaves_the_first_ones_files(self) -> None:
+        # The release's two copies are built at the same time (pass J); the
+        # second one started by clearing the cache's one scratch directory,
+        # under the first build's feet.
+        class Stop(Exception):
+            pass
+
+        with tempfile.TemporaryDirectory() as directory:
+            tree = self.committed_tree(Path(directory))
+            cache = Path(directory) / "cache"
+            marks: list[Path] = []
+            cleared: list[Path] = []
+
+            def second_build(_: Path) -> Any:
+                marks.extend(path / "first" for path in cache.iterdir() if path.is_dir())
+                for mark in marks:
+                    mark.write_text("first")
+                with (
+                    unittest.mock.patch.object(RELEASE, "engine_tool", side_effect=Stop),
+                    self.assertRaises(Stop),
+                ):
+                    RELEASE.build(tree, Path(directory) / "b", Path("uv"), cache, "podman")
+                cleared.extend(mark for mark in marks if not mark.exists())
+                raise Stop
+
+            with (
+                unittest.mock.patch.object(RELEASE, "engine_tool", side_effect=second_build),
+                self.assertRaises(Stop),
+            ):
+                RELEASE.build(tree, Path(directory) / "a", Path("uv"), cache, "podman")
+            self.assertTrue(marks)
+            self.assertEqual(cleared, [], "the second build cleared them")
+
+    def test_the_cache_is_filled_by_one_build_at_a_time(self) -> None:
+        class Stop(Exception):
+            pass
+
+        held: list[bool] = []
+
+        def fetched(sources: Path, *_: str) -> Path:
+            import fcntl
+
+            with (sources.parent / ".lock").open("a") as other:
+                try:
+                    fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    held.append(False)
+                except BlockingIOError:
+                    held.append(True)
+            raise Stop
+
+        pin = SimpleNamespace(file="x", url="https://example.org/x", sha256="0" * 64)
+        tool = SimpleNamespace(CORAZA=pin, CRS=pin, scanner_dir=lambda cache: cache / "scanner")
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            unittest.mock.patch.object(RELEASE, "engine_tool", return_value=tool),
+            unittest.mock.patch.object(RELEASE, "fetched", side_effect=fetched),
+            self.assertRaises(Stop),
+        ):
+            tree = self.committed_tree(Path(directory))
+            RELEASE.build(tree, Path(directory) / "a", Path("uv"), Path(directory) / "c", "podman")
+        self.assertEqual(held, [True])
+
+    def test_a_dead_builds_scratch_goes_and_the_builds_own_after_it(self) -> None:
+        class Stop(Exception):
+            pass
+
+        with tempfile.TemporaryDirectory() as directory:
+            tree = self.committed_tree(Path(directory))
+            cache = Path(directory) / "cache"
+            (cache / f"{RELEASE.SCRATCH}-dead").mkdir(parents=True)
+            (cache / f"{RELEASE.SCRATCH}-dead" / "left").write_text("x")
+            (cache / f"{RELEASE.SCRATCH}-dead.lock").touch()
+            seen: list[list[str]] = []
+
+            def look(_: Path) -> Any:
+                seen.append(sorted(path.name for path in cache.iterdir() if path.is_dir()))
+                raise Stop
+
+            with (
+                unittest.mock.patch.object(RELEASE, "engine_tool", side_effect=look),
+                self.assertRaises(Stop),
+            ):
+                RELEASE.build(tree, Path(directory) / "a", Path("uv"), cache, "podman")
+            self.assertEqual(len(seen[0]), 1)
+            self.assertNotEqual(seen[0][0], f"{RELEASE.SCRATCH}-dead")
+            self.assertEqual(sorted(path.name for path in cache.iterdir()), [".lock"])
 
     def test_only_https_is_fetched(self) -> None:
         with tempfile.TemporaryDirectory() as directory, self.assertRaises(RELEASE.BuildError):

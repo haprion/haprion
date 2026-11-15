@@ -71,7 +71,7 @@ and HTTP-01.
 | manager | `acme-v02.api.letsencrypt.org` | issuing and renewing ACME certificates |
 | manager | the DNS provider's API, such as `api.cloudflare.com` | issuing and renewing ACME certificates |
 | each cluster's VIP source address | the manager, HTTP on port 80 | when the cluster sends Let's Encrypt's HTTP-01 challenge to the manager; passed as it is, with no web filter answering in between |
-| Let's Encrypt, from the internet | the cluster's VIP, HTTP on port 80 | issuing and renewing over HTTP-01: the name's public address must lead there |
+| Let's Encrypt, from the internet | the cluster's VIP, HTTP on port 80 | issuing and renewing over HTTP-01: the name's public address must lead there, from any address, with no web filter or intrusion prevention reading the request in between |
 | manager | each cluster's VIP, HTTP on port 80 | *Check HTTP-01*: the manager fetches its test file over the name, so passed as it is, with no web proxy answering in between |
 | manager | `location.ipfire.org` | once a day, for countries in access rules; without it the database ages but keeps working |
 | manager | `api.github.com` | once a day, only when *Update check* is on |

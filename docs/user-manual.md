@@ -6954,7 +6954,9 @@ listens elsewhere), then *Save*. The nodes send the challenge from the VIP's sou
 moves with the VIP, not from their own addresses. A firewall between the cluster and the manager must let that
 address reach the manager on that port and pass the request as it is: a web filter that answers in the manager's
 place makes the challenge fail. Let's Encrypt in turn reaches the name over the internet, on port 80 at the
-cluster's VIP. The address is an IP address, not a name: HAProxy resolves no names in a
+cluster's VIP, from addresses it does not publish. A firewall that inspects plain HTTP on the way in must leave
+that traffic alone: one that resets the connection once it has read the request shows as *Connection reset by
+peer* in certbot's answer, though nothing on the cluster refused it. The address is an IP address, not a name: HAProxy resolves no names in a
 server line. The change is saved as a draft for the next publish, like the settings under *Logs & metrics*.
 At a terminal the same setting is the `acme_challenge` section of the cluster's settings file
 (`haprion-cluster-settings`):

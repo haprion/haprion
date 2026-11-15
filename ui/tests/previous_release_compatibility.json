@@ -7,7 +7,7 @@
     "database_revisions": [
       "0121"
     ],
-    "engine_api": 44,
+    "engine_api": 45,
     "node_api": 1,
     "poller_helpers": [
       "haprion-status-helper",

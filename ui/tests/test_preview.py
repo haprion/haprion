@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import yaml
-from haprion.cluster_settings import AcmeChallenge, ClusterSettings
+from haprion.cluster_settings import AcmeChallenge, ClusterSettings, Metrics, Peers
 from haprion.reservations import Reservations
 
 from haprion_ui import editor
@@ -96,6 +96,22 @@ class TheChallengeTakesPort80(unittest.TestCase):
         result = editor.check(self.tcp_on_80(), PREVIEW_EDITOR, others=[self.neighbour()])
 
         self.assertIsNone(result.problem)
+
+    def test_a_cluster_that_exports_metrics_and_shares_counters_still_checks(self) -> None:
+        # 26-11-15, in production on 1.2.1: with the cluster's settings came the
+        # exporter and the shared counters, which listen on the nodes' own
+        # addresses the form does not have, and every Validate on such a
+        # cluster answered that none were given.
+        settings = ClusterSettings(
+            metrics=Metrics(port=8405, sources=("192.0.2.0/24",)),
+            peers=Peers(port=10000),
+            acme_challenge=AcmeChallenge("192.0.2.5", 80),
+        )
+        busy = replace(PREVIEW_EDITOR, settings=settings)
+
+        self.assertIsNone(editor.check(form(), busy, others=[self.neighbour()]).problem)
+        refused = editor.check(self.tcp_on_80(), busy, others=[self.neighbour()])
+        self.assertIn("HTTP-01 challenge", str(refused.problem))
 
 
 class TheFormBecomesTheObjectTheEngineReads(unittest.TestCase):

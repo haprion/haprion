@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Annotated
 
 from haprion.cluster_settings import NOTHING as NO_SETTINGS
@@ -289,7 +289,14 @@ def check_document(
             countries=unchecked_countries([edited, *neighbours]),
             reservations=cluster.reservations,
             blocklists=cluster.blocklists,
-            settings=cluster.settings,
+            #
+            # The settings that bear on an object, the HTTP-01 challenge's port
+            # among them. Not the exporter and the shared counters: they listen
+            # on the nodes' own addresses, which the publish looks up and the
+            # form has no business asking DNS for - with them, every check on
+            # such a cluster failed for want of the addresses (26-11-15).
+            #
+            settings=replace(cluster.settings, metrics=None, peers=None),
         ).configuration
     except GeneratorError as exc:
         return Preview(document=document, problem=str(exc))

@@ -6950,7 +6950,11 @@ not at the manager. Three things must be in place:
 shown when the policy names a webroot. The page lists each cluster with where its challenges go: an address
 and port, or *Not sent - HTTP-01 cannot be used*. *Edit* opens the cluster's setting: tick *Send challenges to
 the manager*, give the manager's address, as seen from the cluster's nodes, and the port (80 unless nginx
-listens elsewhere), then *Save*. The address is an IP address, not a name: HAProxy resolves no names in a
+listens elsewhere), then *Save*. The nodes send the challenge from the VIP's source address (*Network*), the one that
+moves with the VIP, not from their own addresses. A firewall between the cluster and the manager must let that
+address reach the manager on that port and pass the request as it is: a web filter that answers in the manager's
+place makes the challenge fail. Let's Encrypt in turn reaches the name over the internet, on port 80 at the
+cluster's VIP. The address is an IP address, not a name: HAProxy resolves no names in a
 server line. The change is saved as a draft for the next publish, like the settings under *Logs & metrics*.
 At a terminal the same setting is the `acme_challenge` section of the cluster's settings file
 (`haprion-cluster-settings`):

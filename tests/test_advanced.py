@@ -817,6 +817,8 @@ class TheGeneratorSVariablesAreReadNotWritten(unittest.TestCase):
     def test_setting_or_clearing_one_is_refused(self) -> None:
         for line in (
             "http-request set-var(txn.rule) str(waf-engine:deny)",
+            # PL17: the challenge exemption, which skips the access rules (26-11-15).
+            "http-request set-var(txn.acme_challenge) bool(true)",
             "http-request set-var(txn.traffic_host) str(bank.example.com)",
             "http-response set-var(txn.hsts) str(max-age=0)",
             'http-request set-var-fmt(txn.client) "%[src]"',

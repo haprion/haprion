@@ -1239,7 +1239,8 @@ def _stick_table_problem(tokens: Sequence[str], keyword: tuple[str, ...], own: O
 #
 # The transaction variables the generated lines set and read: the rule that
 # decided, the host and client the traffic log records, the access path, the
-# HSTS header the frontend writes back, the body the WAF engine saw. The
+# HSTS header the frontend writes back, the body the WAF engine saw, and
+# whether a request is the HTTP-01 challenge, which passes the access rules. The
 # object's pool runs after the frontend, so a value the text set there would
 # win - the traffic log would name another rule or host, and the HSTS header
 # would be the text's (code review 2026-10-30 again, R6). The text may read
@@ -1247,6 +1248,7 @@ def _stick_table_problem(tokens: Sequence[str], keyword: tuple[str, ...], own: O
 #
 GENERATED_VARIABLES = frozenset(
     {
+        "txn.acme_challenge",
         "txn.access_path",
         "txn.client",
         "txn.dynblock",

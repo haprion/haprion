@@ -4,6 +4,7 @@
     tools/install-test --packages <dir> | --apt-repo <site> | --url <published site>
                        --distribution debian13|ubuntu26.04|all [--keep] [--logs <dir>]
                        [--upgrade-from <previous release's files> | --no-upgrade]
+                       [--in-turn]
 
 Every new installation found its faults one at a time on a lab VM (Fas 18:
 a missing dependency, a step that could not be rerun, a check that refused a
@@ -43,6 +44,11 @@ With `--packages` the update is tested too, or `--no-upgrade` says it is not:
 serving first - a cluster, an object deployed - and then updated to these
 with apt, as docs/install.md has an operator update.
 
+With `all`, the two distributions run at the same time when the host has the
+CPUs and the memory for both, each in a process of its own (the new
+installation and then the update in turn within each), and one after the other
+when it has not - or with `--in-turn`.
+
 Not here: syslog objects' IPVS (a rootless container may not load the kernel
 table; measured 26-10-15), certbot's dry-run renewal (it asks Let's Encrypt's
 staging server; with no lineage it renews nothing), and the web interface's
@@ -58,6 +64,7 @@ import functools
 import hashlib
 import json
 import math
+import os
 import re
 import secrets
 import shlex
@@ -4389,6 +4396,109 @@ def run_upgrade(
     return True
 
 
+#
+# What one distribution's release run - the new installation, then the update -
+# takes of the host at its peak: the manager and the two nodes, and the image
+# built before them. Measured 26-11-15 (pass J) on debian13, nothing else
+# running, 9 minutes: MemAvailable fell from 10 043 to 8 879 MiB at the
+# lowest (the containers' own cgroups held 3 572 MiB then, most of it page
+# cache the kernel gives back), and the one-minute load reached 2.5. Rounded
+# up, with room to spare: what each run asks of the host before both start.
+#
+RUN_CPUS = 3
+RUN_MIB = 2048
+RESULT = re.compile(r"^  (\S+(?: upgrade)?): (PASSED|FAILED)$", re.MULTILINE)
+
+
+def available_mib() -> int:
+    """The memory the host can give without swapping, as the kernel reckons it."""
+
+    for line in Path("/proc/meminfo").read_text().splitlines():
+        if line.startswith("MemAvailable:"):
+            return int(line.split()[1]) // 1024
+    return 0
+
+
+def in_turn_because(count: int) -> str:
+    """Why `count` distributions cannot run at the same time here, or "" when they can.
+
+    Read when the run starts, so a host that has shrunk, or is busy with
+    something else, runs them one after the other as before rather than
+    running out of memory halfway through both.
+    """
+
+    cpus = len(os.sched_getaffinity(0))
+    if cpus < count * RUN_CPUS:
+        return f"{cpus} CPUs, {count * RUN_CPUS} needed"
+    available = available_mib()
+    if available < count * RUN_MIB:
+        return f"{available} MiB available, {count * RUN_MIB} needed"
+    return ""
+
+
+def side_by_side(chosen: list[str], logs: Path) -> int:
+    """Each distribution in a process of its own, at the same time; their output after.
+
+    The machines, networks and addresses are each distribution's own already;
+    what two runs in one process would share is the output, whose steps are
+    written in two halves. So each run writes to a file of its own while it
+    goes, and the files are printed in the usual order when both are done.
+    """
+
+    logs.mkdir(parents=True, exist_ok=True)
+    print(
+        f"  {' and '.join(chosen)} at the same time; each one's steps in {logs}/<name>.out",
+        flush=True,
+    )
+    started = time.monotonic()
+    running: dict[str, subprocess.Popen[bytes]] = {}
+    exits: dict[str, int] = {}
+    try:
+        for name in chosen:
+            with (logs / f"{name}.out").open("wb") as out:
+                running[name] = subprocess.Popen(  # noqa: S603 - this tool, its own arguments
+                    [
+                        sys.executable,
+                        str(Path(__file__).resolve()),
+                        *sys.argv[1:],
+                        "--distribution",
+                        name,
+                        "--logs",
+                        str(logs),
+                    ],
+                    stdout=out,
+                    stderr=subprocess.STDOUT,
+                    env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                )
+        while len(exits) < len(running):
+            for name, child in running.items():
+                if name not in exits and child.poll() is not None:
+                    exits[name] = child.returncode
+                    minutes = (time.monotonic() - started) / 60
+                    print(f"  {name} done after {minutes:.0f} min", flush=True)
+            time.sleep(5)
+    finally:
+        for child in running.values():
+            if child.poll() is None:
+                child.terminate()
+                try:
+                    child.wait(60)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    child.wait()
+    results: list[tuple[str, str]] = []
+    for name in chosen:
+        output = (logs / f"{name}.out").read_text(errors="replace")
+        print(output, end="" if output.endswith("\n") else "\n")
+        said = RESULT.findall(output)
+        results += said or [(name, f"FAILED (exited {exits[name]} before its result)")]
+    print()
+    for name, outcome in results:
+        print(f"  {name}: {outcome}")
+    passed = all(outcome == "PASSED" for _, outcome in results)
+    return 0 if passed and not any(exits.values()) else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="install-test")
     source = parser.add_mutually_exclusive_group(required=True)
@@ -4427,6 +4537,11 @@ def main() -> int:
         "--upgrade-from", type=Path, help="the previous release's package files, updated from"
     )
     update.add_argument("--no-upgrade", action="store_true", help="test a new installation only")
+    parser.add_argument(
+        "--in-turn",
+        action="store_true",
+        help="the distributions one after the other, also when the host has room for both",
+    )
     args = parser.parse_args()
     if args.packages and not (args.upgrade_from or args.no_upgrade):
         parser.error("--packages needs --upgrade-from <previous release's files> or --no-upgrade")
@@ -4468,6 +4583,12 @@ def main() -> int:
         for name, passed in outcomes.items():
             print(f"  {name}: {'PASSED' if passed else 'FAILED'}")
         return 0 if all(outcomes.values()) else 1
+    if len(chosen) > 1 and not args.in_turn:
+        held_back = in_turn_because(len(chosen))
+        if held_back:
+            print(f"  one distribution at a time: {held_back}")
+        else:
+            return side_by_side(chosen, logs)
     results = {
         name: run_one(
             DISTRIBUTIONS[name],

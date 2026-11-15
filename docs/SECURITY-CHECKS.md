@@ -179,6 +179,12 @@ the web answering after each. A release that cannot be installed over the one be
 fails here, not on the operator's manager. `--no-upgrade` tests a new installation only, and has to
 be given on purpose.
 
+With `--distribution all`, the two distributions run at the same time when the host has the CPUs
+and the free memory for both, read when the run starts; each runs in a process of its own, the new
+installation and then the update in turn, and writes its steps to `<logs>/<distribution>.out` while
+it goes. Both outputs are printed when both are done. A host without room for both runs them one
+after the other, and says why; `--in-turn` does that on purpose.
+
 Not covered: syslog objects' IPVS (a rootless container may not load the kernel table), certbot's
 dry-run renewal (it needs a public ACME server) and the web pages, whose root helpers the CLI drives
 the same way. Certbot itself is installed and run.

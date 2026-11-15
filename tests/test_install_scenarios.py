@@ -1,9 +1,11 @@
-"""The install test's opt-in scenarios (B481): what can be held to without containers."""
+"""The install test's opt-in scenarios (B481) and its runs side by side: what can be held to without containers."""
 
 from __future__ import annotations
 
+import contextlib
 import importlib.machinery
 import importlib.util
+import io
 import re
 import subprocess
 import sys
@@ -19,18 +21,22 @@ from haprion.cli import objects_apply
 BASE = Path(__file__).resolve().parents[1]
 
 
+def load_install_test(case: unittest.TestCase) -> Any:
+    loader = importlib.machinery.SourceFileLoader(
+        "install_test_scenarios", str(BASE / "tools/install-test")
+    )
+    spec = importlib.util.spec_from_loader("install_test_scenarios", loader)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["install_test_scenarios"] = module
+    case.addCleanup(sys.modules.pop, "install_test_scenarios", None)
+    loader.exec_module(module)
+    return module
+
+
 class TheScenariosAreOptIn(unittest.TestCase):
     def install_test(self) -> Any:
-        loader = importlib.machinery.SourceFileLoader(
-            "install_test_scenarios", str(BASE / "tools/install-test")
-        )
-        spec = importlib.util.spec_from_loader("install_test_scenarios", loader)
-        assert spec is not None
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["install_test_scenarios"] = module
-        self.addCleanup(sys.modules.pop, "install_test_scenarios", None)
-        loader.exec_module(module)
-        return module
+        return load_install_test(self)
 
     def test_there_are_three_and_a_release_run_starts_no_machine_limited(self) -> None:
         tool = self.install_test()
@@ -315,6 +321,102 @@ class TheScenariosAreOptIn(unittest.TestCase):
         self.assertIn("12.3", lines[2])
         self.assertIn("1 (2)", lines[2])
         self.assertIn("2 (3)", lines[3])
+
+
+class TheDistributionsRunSideBySideWhenTheHostHasRoom(unittest.TestCase):
+    """Pass J (26-11-15): debian13 and ubuntu26.04 at the same time, each in its own process."""
+
+    def install_test(self) -> Any:
+        return load_install_test(self)
+
+    def test_room_for_both_is_cpus_and_memory_for_both(self) -> None:
+        tool = self.install_test()
+        cpus, mib = tool.RUN_CPUS, tool.RUN_MIB
+        self.assertGreater(cpus, 0)
+        self.assertGreater(mib, 0)
+        for have_cpus, have_mib, said in (
+            (2 * cpus, 2 * mib, ""),
+            (2 * cpus - 1, 2 * mib, f"{2 * cpus - 1} CPUs, {2 * cpus} needed"),
+            (2 * cpus, 2 * mib - 1, f"{2 * mib - 1} MiB available, {2 * mib} needed"),
+        ):
+            with (
+                self.subTest(cpus=have_cpus, mib=have_mib),
+                mock.patch.object(tool.os, "sched_getaffinity", return_value=set(range(have_cpus))),
+                mock.patch.object(tool, "available_mib", return_value=have_mib),
+            ):
+                self.assertEqual(tool.in_turn_because(2), said)
+
+    def test_the_host_s_memory_is_read_as_the_kernel_gives_it(self) -> None:
+        tool = self.install_test()
+        self.assertGreater(tool.available_mib(), 0)
+
+    def run_side_by_side(self, outputs: dict[str, tuple[str, int]]) -> tuple[int, str, list[Any]]:
+        tool = self.install_test()
+        started: list[Any] = []
+
+        class Child:
+            def __init__(self, command: list[str], *, stdout: Any, **_: Any) -> None:
+                started.append(command)
+                said, self.returncode = outputs[command[command.index("--distribution") + 1]]
+                stdout.write(said.encode())
+
+            def poll(self) -> int:
+                return self.returncode
+
+        printed = io.StringIO()
+        with (
+            tempfile.TemporaryDirectory() as raw,
+            mock.patch.object(tool.subprocess, "Popen", Child),
+            mock.patch.object(tool.time, "sleep"),
+            mock.patch.object(
+                tool.sys, "argv", ["install-test", "--packages", "p", "--no-upgrade"]
+            ),
+            contextlib.redirect_stdout(printed),
+        ):
+            code = tool.side_by_side(list(outputs), Path(raw))
+        return code, printed.getvalue(), started
+
+    def test_each_run_is_this_tool_for_one_distribution_with_the_same_logs(self) -> None:
+        code, _, started = self.run_side_by_side(
+            {
+                "debian13": ("\n  debian13: PASSED\n", 0),
+                "ubuntu26.04": ("\n  ubuntu26.04: PASSED\n", 0),
+            }
+        )
+        self.assertEqual(code, 0)
+        for command, name in zip(started, ("debian13", "ubuntu26.04"), strict=True):
+            self.assertEqual(command[2:5], ["--packages", "p", "--no-upgrade"])
+            self.assertEqual(command[5:7], ["--distribution", name])
+            self.assertEqual(command[7], "--logs")
+
+    def test_the_results_are_both_runs_and_a_run_that_said_none_failed(self) -> None:
+        code, printed, _ = self.run_side_by_side(
+            {
+                "debian13": (
+                    "  [debian13  1] a step ... ok (1 s)\n\n  debian13: PASSED\n"
+                    "  debian13 upgrade: FAILED\n",
+                    1,
+                ),
+                "ubuntu26.04": ("Traceback (most recent call last):\n", 1),
+            }
+        )
+        self.assertEqual(code, 1)
+        summary = printed[printed.rindex("\n\n") :].split("\n")
+        self.assertEqual(
+            [line for line in summary if line],
+            [
+                "  debian13: PASSED",
+                "  debian13 upgrade: FAILED",
+                "  ubuntu26.04: FAILED (exited 1 before its result)",
+            ],
+        )
+        self.assertIn("[debian13  1] a step ... ok", printed)
+
+    def test_a_run_that_exits_badly_fails_the_whole_though_it_said_passed(self) -> None:
+        code, _, _ = self.run_side_by_side(
+            {"debian13": ("  debian13: PASSED\n", 1), "ubuntu26.04": ("  ubuntu26.04: PASSED\n", 0)}
+        )
+        self.assertEqual(code, 1)
 
 
 if __name__ == "__main__":

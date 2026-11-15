@@ -278,6 +278,40 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             outside.check()
             self.assertTrue(abandon.is_disabled())
 
+    def test_request_again_wakes_at_one_failed_request_and_nothing_else_does(self) -> None:
+        """26-11-15: a failed request is no certificate; ticked, it wakes its own button alone."""
+
+        from tests.test_certificate_activity import failed_now
+
+        with (
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[failed_now()]),
+            mock.patch("haprion_ui.db.job_by_id", return_value=failed_now()),
+            self.signed_in("?view=registry") as page,
+        ):
+            again = page.get_by_role("button", name="Request again…")
+            delete = page.get_by_role("button", name="Delete selected…")
+            renew = page.get_by_role("button", name="Renew…")
+            failed = page.locator("[data-delete-pick][data-failed-request]")
+            certificate = page.locator("[data-delete-pick]:not([data-failed-request])").first
+
+            self.assertTrue(again.is_disabled())
+            certificate.check()
+            self.assertTrue(again.is_disabled())
+            self.assertFalse(delete.is_disabled())
+            self.assertFalse(renew.is_disabled())
+            certificate.uncheck()
+            failed.check()
+            self.assertFalse(again.is_disabled())
+            self.assertTrue(delete.is_disabled())
+            self.assertTrue(renew.is_disabled())
+            certificate.check()
+            self.assertTrue(again.is_disabled())
+            self.assertTrue(delete.is_disabled())
+            certificate.uncheck()
+            again.click()
+            page.wait_for_selector(".certificate-form")
+            self.assertEqual(page.input_value("input[name=domain]"), "again.example.com")
+
     def test_the_switch_stays_on_screen_while_the_page_scrolls(self) -> None:
         with self.signed_in("?view=registry") as page:
             #

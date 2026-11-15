@@ -389,6 +389,83 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
     return payload
 
 
+#
+# The jobs a new certificate is asked for with, which *Request again…* fills
+# the form back in from (26-11-15). A renewal, the interface's own certificate
+# and an abandoned enrollment are not new requests and give None.
+#
+REQUEST_OPERATIONS = ("cert_issue", "cert_scep", "cert_request")
+
+
+def form_from_payload(operation: str, payload: Mapping[str, Any]) -> IssueForm | None:
+    """The form a request's payload was made from, as `payload_from_form` made it.
+
+    Only drawn into the fields: the submission is judged again like any other,
+    so a profile or target that has gone since is refused there, beside the
+    field, as it would be for a form typed by hand.
+    """
+
+    if operation not in REQUEST_OPERATIONS:
+        return None
+    if payload.get("renew") or payload.get("interface") or payload.get("action"):
+        return None
+    clusters = _texts(payload.get("clusters"))
+    receivers = _texts(payload.get("receivers"))
+    formats = payload.get("formats")
+    fields = tuple(
+        f"{receiver}={form}"
+        for receiver, form in (formats.items() if isinstance(formats, Mapping) else ())
+        if isinstance(receiver, str) and isinstance(form, str)
+    )
+    exportable = payload.get("exportable") is True
+    if operation == "cert_issue":
+        domain, method = payload.get("domain"), payload.get("method")
+        if not isinstance(domain, str) or not isinstance(method, str):
+            return None
+        profile = payload.get("dns_profile")
+        return IssueForm(
+            domain=domain,
+            method=method,
+            clusters=clusters,
+            receivers=receivers,
+            dns_profile=profile if isinstance(profile, str) else "",
+            formats=fields,
+            exportable=exportable,
+        )
+    domains = _texts(payload.get("domains"))
+    if not domains:
+        return None
+    #
+    # The form takes one name: the wildcard when one was asked for, since it
+    # covers the base name the engine puts first (`payload_from_form`).
+    #
+    domain = next((name for name in domains if name.startswith("*.")), domains[0])
+    if operation == "cert_scep":
+        profile = payload.get("profile")
+        return IssueForm(
+            domain=domain,
+            method=NDES_METHOD,
+            clusters=clusters,
+            receivers=receivers,
+            ndes_profile=profile if isinstance(profile, str) else "",
+            formats=fields,
+            exportable=exportable,
+        )
+    key_type = payload.get("key_type")
+    return IssueForm(
+        domain=domain,
+        method=CSR_METHOD,
+        clusters=clusters,
+        receivers=receivers,
+        formats=fields,
+        key_type=key_type if isinstance(key_type, str) else "",
+    )
+
+
+def _texts(value: Any) -> tuple[str, ...]:
+    return tuple(item for item in value if isinstance(item, str)) if isinstance(value, list) else ()
+
+
 def _interface_payload(form: IssueForm, choices: IssueChoices, name: str) -> dict[str, Any]:
     """The payload for the interface's own certificate (B188): no targets, the mark set.
 

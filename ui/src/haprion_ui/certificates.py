@@ -256,10 +256,16 @@ class RegistryCertificateView:
     valid_from: str = "—"
     #
     # A row for a request the registry has not answered yet: drawn from the
-    # job's payload, not from any file, so it has no material to read, no
-    # box to tick and nothing to delete.
+    # job's payload, not from any file, so it has no material to read and
+    # nothing to delete.
     #
     placeholder: bool = False
+    #
+    # A placeholder whose request failed or was refused: the job *Request
+    # again…* fills the form back in from, and the row's box ticks for that
+    # alone (26-11-15). None on every other row.
+    #
+    retry_job: int | None = None
     #
     # The registry's own word for where the material comes from (`acme`,
     # `import`), beside `lifecycle`, which is measured against certbot's
@@ -684,6 +690,7 @@ def _placeholder_row(identifier: str, state: Any) -> RegistryCertificateView:
         state_tone=state.tone,
         state_active=state.active,
         placeholder=True,
+        retry_job=getattr(state, "retry", None),
     )
 
 

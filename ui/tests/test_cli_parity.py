@@ -238,6 +238,8 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
         "haprion-server-state unblock", "haprion-server-state"
     ),
     "/certificates/new": Command("haprion-cert-issue", "haprion-cert-issue"),
+    # The form again, filled in from a failed request (26-11-15): the same command.
+    "/certificates/request-again": Command("haprion-cert-issue", "haprion-cert-issue"),
     "/certificates/import": Command("haprion-cert-import", "haprion-cert-import"),
     "/certificates/{certificate_id}/upload": Command("haprion-cert-import", "haprion-cert-import"),
     "/certificates/{certificate_id}/resume": Command(

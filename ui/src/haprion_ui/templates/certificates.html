@@ -30,7 +30,7 @@
           (`certificates.js` ignores clicks on inputs and labels), so ticking
           one does not open the detail under it.
         #}
-        {% if selectable %}<td class="select-column" data-label="Select">{% if not certificate.placeholder %}<label class="select-box"><input type="checkbox" name="certificate" value="{{ certificate.identifier }}" form="certificate-selection" data-delete-pick{% if certificate.exportable %} data-exportable{% endif %}{% if certificate.request_pending %} data-pending{% endif %} aria-label="Select {{ certificate.identifier }}"></label>{% endif %}</td>{% endif %}
+        {% if selectable %}<td class="select-column" data-label="Select">{% if not certificate.placeholder %}<label class="select-box"><input type="checkbox" name="certificate" value="{{ certificate.identifier }}" form="certificate-selection" data-delete-pick{% if certificate.exportable %} data-exportable{% endif %}{% if certificate.request_pending %} data-pending{% endif %} aria-label="Select {{ certificate.identifier }}"></label>{% elif certificate.retry_job is not none %}<label class="select-box"><input type="checkbox" name="request" value="{{ certificate.retry_job }}" form="certificate-selection" data-delete-pick data-failed-request aria-label="Select the failed request for {{ certificate.identifier }}"></label>{% endif %}</td>{% endif %}
         <td data-label="Certificate"><a class="proxy-link" href="{{ href }}" title="{{ certificate.identifier }}" aria-expanded="{{ 'true' if open else 'false' }}"><strong class="certificate-name">{{ certificate.identifier }}</strong></a></td>
         <td data-label="Names">{% if certificate.sans %}<span class="certificate-sans">{{ certificate.sans | join(', ') }}</span>{% elif certificate.problem %}<span class="warning-text">{{ certificate.problem }}</span>{% else %}—{% endif %}</td>
         <td data-label="Source"><span class="lifecycle-badge lifecycle-{{ 'acme' if certificate.lifecycle_label == 'Certbot' else 'static' }}">{{ certificate.lifecycle_label }}</span>{% if certificate.wildcard %}<span class="certificate-issuer">wildcard</span>{% endif %}</td>
@@ -59,7 +59,7 @@
             are taken out behind *Export…*.
           #}
           {% if not certificate.exportable %}
-          <div class="registry-detail-targets"><strong>Published to</strong>
+          <div class="registry-detail-targets"><strong>{{ 'Requested for' if certificate.placeholder else 'Published to' }}</strong>
             {% for target in certificate.targets %}
             <span>{{ target.name }}{% if target.kind == 'receiver' %} <span class="target-kind">receiver</span> · {{ target.published_label }}{% if target.current is false %} <span class="warning-text">(older version)</span>{% endif %}{% if target.fetched_at %} · <span{% if target.published_at and not target.fetched_since_published %} class="warning-text" title="Before this copy was published"{% endif %}>{{ target.fetched_label }}</span>{% endif %}{% else %} <span class="target-kind">cluster</span>{% endif %}</span>
             {% else %}
@@ -167,6 +167,11 @@
       <span class="deletion-count" data-delete-count aria-live="polite">Nothing selected</span>
       <button class="secondary-button" type="submit" form="certificate-selection" formaction="/certificates/targets/add" data-delete-submit disabled>Publish to…</button>
       <button class="secondary-button" type="submit" form="certificate-selection" formaction="/certificates/targets/remove" data-delete-submit disabled>Remove from…</button>
+      {#
+        A request that failed or was refused (26-11-15): the form again, filled
+        in from the job. Wakes at exactly one box, and only on such a row.
+      #}
+      <button class="secondary-button" type="submit" form="certificate-selection" formaction="/certificates/request-again" data-retry-submit disabled>Request again…</button>
       {#
         The fourth question (C9c): the certificate again, the way its
         source makes it. One row only - the answer differs by source - so

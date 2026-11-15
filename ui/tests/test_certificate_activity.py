@@ -383,6 +383,129 @@ class TheListingFollowsTheJob(DeleteRouteTestCase):
         self.assertEqual(response.headers["location"], "/certificates?view=registry")
 
 
+class AFailedRequestCanBeAskedAgain(unittest.TestCase):
+    """*Request again…* (26-11-15): which overlays name the job to fill the form from."""
+
+    def state(self, job: Any) -> certificate_activity.DeletionState:
+        (state,) = certificate_activity.deletion_states([job], now=NOW, writes=True).values()
+        return state
+
+    def test_a_new_request_that_failed_or_was_refused_names_its_job(self) -> None:
+        for state, label in (("failed", "Request failed"), ("blocked", "Request refused")):
+            with self.subTest(state=state):
+                job = issue_job(state, id=41)
+                self.assertEqual((self.state(job).label, self.state(job).retry), (label, 41))
+
+    def test_an_enrollment_and_a_signing_request_too(self) -> None:
+        for operation, payload in (
+            (
+                "cert_scep",
+                {"id": "app.example.com", "profile": "corp", "domains": ["app.example.com"]},
+            ),
+            ("cert_request", {"id": "app.example.com", "domains": ["app.example.com"]}),
+        ):
+            with self.subTest(operation=operation):
+                job = queued(
+                    id=42,
+                    operation=operation,
+                    cluster=None,
+                    state="failed",
+                    payload={**payload, "clusters": ["alpha"], "receivers": []},
+                    finished_at=NOW - timedelta(minutes=5),
+                )
+                self.assertEqual(self.state(job).retry, 42)
+
+    def test_nothing_else_does(self) -> None:
+        for job in (
+            issue_job("running", id=43),
+            issue_job("unknown", id=43),
+            issue_job("done", id=43),
+            queued(
+                id=43,
+                operation="cert_issue",
+                cluster=None,
+                state="failed",
+                payload={"domain": "mgr.example.com", "method": "dns-01", "interface": True},
+                finished_at=NOW - timedelta(minutes=5),
+            ),
+        ):
+            with self.subTest(state=job.state, payload=job.payload):
+                self.assertIsNone(self.state(job).retry)
+
+
+def failed_now(domain: str = "again.example.com", job_id: int = 51) -> Any:
+    """A request that failed a minute ago, by the clock the page reads."""
+
+    return queued(
+        id=job_id,
+        operation="cert_issue",
+        cluster=None,
+        state="failed",
+        payload={"domain": domain, "method": "http-01", "clusters": ["alpha"], "receivers": []},
+        result={"error": {"code": "certbot_failed", "message": "Timeout during connect"}},
+        finished_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+
+
+class RequestingAgainFromTheRegistry(DeleteRouteTestCase):
+    def test_the_failed_row_has_a_box_for_its_job_and_the_bar_the_button(self) -> None:
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=[failed_now()]):
+            page = self.writing_client().get("/certificates?open=again.example.com").text
+        self.assertIn(
+            '<input type="checkbox" name="request" value="51" form="certificate-selection" '
+            'data-delete-pick data-failed-request aria-label="Select the failed request for '
+            'again.example.com">',
+            page,
+        )
+        self.assertIn(
+            'formaction="/certificates/request-again" data-retry-submit disabled>Request again…<',
+            page,
+        )
+        # Nothing has been published: the targets are what was asked for.
+        self.assertIn("<strong>Requested for</strong>", page)
+
+    def test_a_running_request_has_no_box(self) -> None:
+        running = replace(failed_now(), state="running", finished_at=None)
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=[running]):
+            page = self.writing_client().get("/certificates").text
+        self.assertNotIn('name="request"', page)
+
+    def post(self, data: dict[str, Any], job: Any) -> Any:
+        client = self.writing_client()
+        token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        with mock.patch("haprion_ui.db.job_by_id", return_value=job) as lookup:
+            response = client.post(
+                "/certificates/request-again",
+                data={**data, auth.CSRF_FIELD: token},
+                follow_redirects=False,
+            )
+        self.lookups = lookup.call_args_list
+        return response
+
+    def test_the_button_opens_the_form_filled_in_from_the_job(self) -> None:
+        response = self.post({"request": ["51"]}, failed_now())
+        self.assertEqual(response.status_code, 200)
+        page = response.text
+        self.assertIn('value="again.example.com"', page)
+        self.assertRegex(page, r'<input[^>]*name="method"[^>]*value="http-01"[^>]*checked')
+        self.assertRegex(page, r'<input[^>]*name="cluster"[^>]*value="alpha"[^>]*checked')
+        self.assertEqual(self.lookups[0].args[1], 51)
+
+    def test_anything_but_one_failed_request_is_back_on_the_registry(self) -> None:
+        for data, job in (
+            ({"request": ["51", "52"]}, failed_now()),
+            ({"request": ["51"], "certificate": ["example.com"]}, failed_now()),
+            ({"request": ["x"]}, failed_now()),
+            ({"request": ["51"]}, None),
+            ({"request": ["51"]}, replace(failed_now(), state="running")),
+            ({"request": ["51"]}, replace(failed_now(), operation="cert_import")),
+        ):
+            with self.subTest(data=data, job=job and (job.operation, job.state)):
+                response = self.post(data, job)
+                self.assertEqual(response.status_code, 303)
+                self.assertEqual(response.headers["location"], "/certificates?view=registry")
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -49,15 +49,22 @@
     const singles = Array.from(form.querySelectorAll("[data-single-submit]"));
     const exports = Array.from(form.querySelectorAll("[data-export-submit]"));
     const waiting = Array.from(form.querySelectorAll("[data-pending-submit]"));
+    const retries = Array.from(form.querySelectorAll("[data-retry-submit]"));
     const count = form.querySelector("[data-delete-count]");
     const update = () => {
       const chosen = picks.filter((pick) => pick.checked).length;
-      submits.forEach((submit) => { submit.disabled = chosen === 0; });
-      singles.forEach((submit) => { submit.disabled = chosen !== 1; });
+      //
+      // A failed request is no certificate (26-11-15): ticked, it wakes
+      // *Request again…* alone, and nothing else acts on a selection holding it.
+      //
+      const failed = picks.filter((pick) => pick.checked && pick.hasAttribute("data-failed-request")).length;
+      submits.forEach((submit) => { submit.disabled = chosen === 0 || failed > 0; });
+      singles.forEach((submit) => { submit.disabled = chosen !== 1 || failed > 0; });
       const exportable = picks.filter((pick) => pick.checked && pick.hasAttribute("data-exportable")).length;
       exports.forEach((submit) => { submit.disabled = chosen !== 1 || exportable !== 1; });
       const pending = picks.filter((pick) => pick.checked && pick.hasAttribute("data-pending")).length;
       waiting.forEach((submit) => { submit.disabled = chosen !== 1 || pending !== 1; });
+      retries.forEach((submit) => { submit.disabled = chosen !== 1 || failed !== 1; });
       if (count) count.textContent = chosen === 0 ? "Nothing selected" : `${chosen} selected`;
     };
     picks.forEach((pick) => pick.addEventListener("change", update));

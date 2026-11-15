@@ -966,3 +966,52 @@ class SendingTheFormAsACsr(CertificateFormRouteTestCase):
             page,
         )
         self.assertEqual(self.queued, [])
+
+
+class AFailedRequestFillsTheFormBackIn(unittest.TestCase):
+    """*Request again…* (26-11-15): the payload a form made gives the form back."""
+
+    choices = certificate_form.IssueChoices(
+        clusters=("alpha", "beta"),
+        receivers=("lb-01.example.net",),
+        dns_profiles=("cf-main",),
+        ndes_profiles=("corp",),
+        http01=True,
+    )
+
+    def round_trip(self, original: certificate_form.IssueForm) -> None:
+        operation = certificate_form.operation_of(original)
+        payload = certificate_form.payload_from_form(original, self.choices)
+        again = certificate_form.form_from_payload(operation, payload)
+        if again is None:
+            self.fail(f"{operation} gave no form back")
+        self.assertEqual(certificate_form.payload_from_form(again, self.choices), payload)
+
+    def test_every_new_request_comes_back_as_it_was_sent(self) -> None:
+        for original in (
+            form(method="dns-01", dns_profile="cf-main", clusters=("alpha", "beta")),
+            form(domain="*.example.com", method="dns-01", dns_profile="cf-main"),
+            form(
+                method="http-01",
+                clusters=(),
+                receivers=("lb-01.example.net",),
+                formats=("lb-01.example.net=pkcs12",),
+            ),
+            form(method="ndes", ndes_profile="corp", domain="*.corp.example.com"),
+            form(method="ndes", ndes_profile="corp", clusters=(), exportable=True),
+            form(method="csr", key_type="rsa-4096", domain="*.csr.example.com"),
+        ):
+            with self.subTest(method=original.method, domain=original.domain):
+                self.round_trip(original)
+
+    def test_what_is_not_a_new_request_gives_nothing(self) -> None:
+        for operation, payload in (
+            ("cert_issue", {"domain": "app.example.com", "renew": True}),
+            ("cert_issue", {"domain": "mgr.example.com", "method": "dns-01", "interface": True}),
+            ("cert_scep", {"id": "app.example.com", "action": "abandon"}),
+            ("cert_import", {"id": "app.example.com"}),
+            ("cert_issue", {"domain": 7}),
+            ("cert_scep", {"id": "app.example.com", "domains": []}),
+        ):
+            with self.subTest(operation=operation, payload=payload):
+                self.assertIsNone(certificate_form.form_from_payload(operation, payload))

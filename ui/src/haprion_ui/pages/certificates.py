@@ -23,6 +23,7 @@ from haprion import (
 from haprion.cert_export import FORMATS as EXPORT_FORMATS
 from haprion.cert_export import Export, ExportError
 from haprion.config import CERTIFICATE_ID
+from haprion.digits import is_digits
 from haprion.http01_check import CheckError
 
 from haprion_ui import (
@@ -1085,6 +1086,36 @@ def build_router(config: Config) -> APIRouter:
                 "demo_fixture": config.demo_fixture,
             },
         )
+
+    @router.post("/certificates/request-again", response_class=HTMLResponse)
+    def certificate_request_again(
+        request: Request,
+        failed: Sequence[str] = Form(default=(), alias="request"),
+        certificate: Sequence[str] = Form(default=()),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """The page behind *Request again…*: *New certificate*, filled in from the failed request.
+
+        One failed or refused request and nothing else ticked, as the button
+        wakes; anything else is back on the registry, where the boxes are. The
+        form is judged again when it is sent, like one typed by hand.
+        """
+
+        gate = admin_write_gate(config, request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return forbidden_page(request, config)
+        form = None
+        if len(failed) == 1 and not certificate and is_digits(failed[0]):
+            with request.app.state.pool.connection() as connection:
+                job = db.job_by_id(connection, int(failed[0]))
+            if job is not None and job.state in {"failed", "blocked"}:
+                form = certificate_form.form_from_payload(job.operation, job.payload)
+        if form is None:
+            return RedirectResponse("/certificates?view=registry", status_code=303)
+        return _certificate_form_page(request, config, form)
 
     @router.post("/certificates/renew", response_class=HTMLResponse)
     def certificate_renew_review(

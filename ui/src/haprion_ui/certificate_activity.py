@@ -25,13 +25,14 @@ states is in effect.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from haprion.cert_issue import IssueError, parse_domain
 
 from haprion_ui import jobs as queue
+from haprion_ui.certificate_form import form_from_payload
 from haprion_ui.db import Job
 from haprion_ui.diagnostics import redact
 
@@ -90,6 +91,12 @@ class DeletionState:
     #
     target_action: str | None = None
     target_names: tuple[str, ...] = ()
+    #
+    # A new certificate's request that failed or was refused: the job whose
+    # payload *Request again…* fills the form back in from (26-11-15). None
+    # for a renewal, an outcome nobody knows and everything still running.
+    #
+    retry: int | None = None
 
 
 #
@@ -239,7 +246,7 @@ def _enrollment_state_of(job: Job, now: datetime, *, writes: bool) -> DeletionSt
             placeholder,
             placeholder_only=True,
         )
-    return _verdict(job, "Enrollment", "The enrollment job failed", placeholder)
+    return _retryable(job, _verdict(job, "Enrollment", "The enrollment job failed", placeholder))
 
 
 def _abandon_state_of(job: Job, now: datetime, *, writes: bool) -> DeletionState | None:
@@ -330,7 +337,7 @@ def _request_state_of(job: Job, now: datetime, *, writes: bool) -> DeletionState
             placeholder,
             placeholder_only=True,
         )
-    return _verdict(job, "Request", "The signing request job failed", placeholder)
+    return _retryable(job, _verdict(job, "Request", "The signing request job failed", placeholder))
 
 
 def _renewal_state_of(job: Job, now: datetime, *, writes: bool) -> DeletionState | None:
@@ -382,7 +389,19 @@ def _issue_state_of(
             placeholder,
             placeholder_only=True,
         )
-    return _verdict(job, "Request", "The request job failed", placeholder)
+    return _retryable(job, _verdict(job, "Request", "The request job failed", placeholder))
+
+
+def _retryable(job: Job, state: DeletionState | None) -> DeletionState | None:
+    """A failed or refused new request, marked for *Request again…*; anything else as it was."""
+
+    if (
+        state is None
+        or job.state not in {"failed", "blocked"}
+        or form_from_payload(job.operation, job.payload) is None
+    ):
+        return state
+    return replace(state, retry=job.id)
 
 
 #

@@ -626,6 +626,11 @@ def generate(
             settings.acme_challenge,
             reservations,
             held_ports or {},
+            #
+            # dnsdist binds its port on TCP as HAProxy does (26-11-15: a dns
+            # object on the challenge's port passed the check).
+            #
+            [(vip, proxy) for vip, proxy in everything if proxy.listen.protocol == "dns"],
         )
     }
     if settings.metrics is not None or peers:
@@ -1978,8 +1983,13 @@ def _frontend_file(
     acme: AcmeChallenge | None = None,
     reservations: Reservations = NOTHING_RESERVED,
     held_ports: Mapping[tuple[str, int], Sequence[tuple[str, str | None]]] | None = None,
+    binding_elsewhere: Sequence[tuple[Vip, Proxy]] = (),
 ) -> str:
     """Where every request is decided: one frontend per address and protocol.
+
+    `binding_elsewhere` are the objects another program serves on an address -
+    dnsdist's, on UDP and TCP both - which write nothing here but take a port
+    the challenge's own frontend would need.
 
     Objects that share an address share a frontend, because an address and
     port can be bound exactly once. Objects on different addresses end up in
@@ -2153,7 +2163,9 @@ def _frontend_file(
             key=lambda vip: vip.name,
         )
         for vip in challenge_only:
-            _refuse_challenge_listener(vip, ports["http"], placed, reservations, held_ports or {})
+            _refuse_challenge_listener(
+                vip, ports["http"], [*placed, *binding_elsewhere], reservations, held_ports or {}
+            )
             body.extend(_challenge_frontend(vip, ports["http"]))
         #
         # One backend per address that carries the challenge, so it leaves from

@@ -171,6 +171,37 @@ backends:
         with self.assertRaisesRegex(GeneratorError, "ssh listens on dmz port 80"):
             generate(proxies, **options)
 
+    def test_a_dns_object_on_the_port_names_the_object(self) -> None:
+        # 26-11-15, in production: dnsdist binds its port on TCP as HAProxy
+        # binds 80, and the check passed it - dns objects are kept out of the
+        # list it read, being outside HAProxy - so the deploy would have failed.
+        options = arguments(CASE)
+        options["settings"] = SETTINGS
+        proxies = [
+            *objects(CASE),
+            load_proxy(
+                "resolver",
+                b"""schema: 1
+name: resolver
+listen:
+  protocol: dns
+  vip: dmz
+  port: 80
+backend: dns
+backends:
+  dns:
+    balance: firstAvailable
+    health:
+      type: dns
+    servers:
+      - host: 198.51.100.53
+        port: 53
+""",
+            ),
+        ]
+        with self.assertRaisesRegex(GeneratorError, "resolver listens on dmz port 80"):
+            generate(proxies, **options)
+
     def test_nothing_is_refused_without_the_setting(self) -> None:
         layer(ClusterSettings(), reservations=b"tcp_ports: ['198.51.100.20:80']\n")
 

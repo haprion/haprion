@@ -872,7 +872,7 @@ hostnames:
   - www.demo.example
 listen:
   protocol: https
-  certificate: wildcard-demo-example
+  certificate: demo.example.pem
   redirect_http: true
 routes:
   - path: /
@@ -881,7 +881,8 @@ backends:
   web:
     balance: roundrobin
     health:
-      type: tcp
+      type: http
+      path: /healthz
     servers:
       - host: 192.0.2.10
         port: 8080
@@ -897,7 +898,7 @@ hostnames:
   - api.demo.example
 listen:
   protocol: https
-  certificate: api-demo-example
+  certificate: demo.example.pem
 routes:
   - path: /
     backend: service
@@ -919,7 +920,7 @@ hostnames:
   - shop.demo.example
 listen:
   protocol: https
-  certificate: wildcard-demo-example
+  certificate: demo.example.pem
 routes:
   - path: /
     backend: storefront

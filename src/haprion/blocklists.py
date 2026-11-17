@@ -327,9 +327,9 @@ def _kind(line: str) -> str | None:
             return "address"
         if _URL.match(value):
             return "url"
-        if _ASN.match(value):
+        if _ASN.fullmatch(value):
             return "asn"
-        if _DOMAIN.match(value):
+        if _DOMAIN.fullmatch(value):
             return "domain"
     return None
 

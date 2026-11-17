@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import ipaddress
+import json
 import random
 import ssl
 import threading
@@ -13,6 +14,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+import haprion
 from haprion import blocklists
 from haprion.blocklists import BlocklistError
 from tests.test_oidc import CA_PEM, SERVER_CONTEXT
@@ -180,6 +182,57 @@ class TheFormatIsOneAddressToALine(unittest.TestCase):
             blocklists.parse(many.encode())
         self.assertEqual(caught.exception.code, "too_many")
         self.assertIn("100 000", str(caught.exception))
+
+    def test_a_json_list_reaches_the_entry_limit_before_the_byte_limit(self) -> None:
+        # B516: Spamhaus's JSON takes ~70 bytes a line, so 100 000 entries must fit in the bytes.
+        lines = [
+            json.dumps(
+                {
+                    "cidr": f"{ipaddress.ip_address('2001:db8::') + (n << 16)}/112",
+                    "sblid": "SBL123456",
+                    "rir": "ripencc",
+                },
+                separators=(",", ":"),
+            )
+            for n in range(blocklists.MAX_ENTRIES)
+        ]
+        body = "\n".join(
+            [*lines, '{"type":"metadata","timestamp":1,"size":1,"records":100000}']
+        ).encode()
+        self.assertGreater(len(body), 4 * 1024 * 1024)
+        networks = blocklists.parse(body).networks
+        self.assertEqual(
+            sum(network.num_addresses for network in networks), blocklists.MAX_ENTRIES << 16
+        )
+
+    def test_a_list_that_is_not_addresses_says_what_it_holds(self) -> None:
+        lists = {
+            "AS numbers": b'{"asn":64496,"rir":"arin","domain":"example.com","cc":"US","asname":"EXAMPLE"}\n'
+            b'{"asn":64497,"rir":"ripencc","domain":"example.net","cc":"SE","asname":"EXAMPLE-2"}\n',
+            "domain names": b"# a feed\nphish.example.com\nlogin.example.net\n",
+            "web addresses (URLs)": b"https://login.example.com/index\nhttp://example.net/a?b=c\n",
+        }
+        for kind, body in lists.items():
+            with self.subTest(kind=kind), self.assertRaises(BlocklistError) as caught:
+                blocklists.parse(body)
+            self.assertEqual(caught.exception.code, "empty")
+            self.assertEqual(str(caught.exception), f"the list holds {kind}, not addresses")
+
+    def test_a_list_too_large_says_what_its_start_holds(self) -> None:
+        record = (
+            b'  {\n    "RegisterPositionId": 1,\n    "DomainAddress": "phish.example.com",\n  },\n'
+        )
+        domains = b"[\n" + record * (blocklists.MAX_BYTES // len(record) + 1)
+        with self.assertRaises(BlocklistError) as caught:
+            blocklists.parse(domains)
+        self.assertEqual(caught.exception.code, "too_large")
+        self.assertEqual(
+            str(caught.exception), "the list is over 8 MiB, and holds domain names, not addresses"
+        )
+        addresses = b"192.0.2.1\nphish.example.com\n" * (blocklists.MAX_BYTES // 28 + 1)
+        with self.assertRaises(BlocklistError) as caught:
+            blocklists.parse(addresses)
+        self.assertEqual(str(caught.exception), "the list is over 8 MiB")
 
     def test_the_file_is_one_network_to_a_line_a_single_address_bare(self) -> None:
         networks = _networks("192.0.2.0/24", "198.51.100.7/32", "2001:db8::1/128")
@@ -399,6 +452,11 @@ class TheFetchIsHttpsAndNothingElse(unittest.TestCase):
 
     def test_the_body_comes_back(self) -> None:
         self.assertEqual(blocklists.fetch(self._item(), context=self.context), RAW)
+
+    def test_the_request_names_haprion(self) -> None:
+        # lists.blocklist.de refuses urllib's own Python-urllib with 403 (26-11-17).
+        blocklists.fetch(self._item(), context=self.context)
+        self.assertEqual(self.source.seen[-1]["User-Agent"], f"haprion/{haprion.__version__}")
 
     def test_basic_and_bearer_are_sent(self) -> None:
         blocklists.fetch(

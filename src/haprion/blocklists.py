@@ -37,6 +37,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -57,8 +58,12 @@ EXCEPT_MAX = 256  # what the blocklist table's excepts column holds (0119)
 
 #
 # B500: a list over either limit is refused, and the last good one stays.
+# The entries are what cost memory (90 MB to read 100 000); the bytes only
+# guard against a URL that names something else. 8 MiB (B516) holds 100 000
+# entries in Spamhaus's JSON (~70 bytes a line) as well as in plain text, so
+# the entry limit is the one a list meets, whichever format it uses.
 #
-MAX_BYTES = 4 * 1024 * 1024
+MAX_BYTES = 8 * 1024 * 1024
 MAX_ENTRIES = 100_000
 TIMEOUT_SECONDS = 30
 
@@ -281,6 +286,78 @@ def _json_entry(line: str) -> str | None:
     return cidr if isinstance(cidr, str) and cidr else None
 
 
+#
+# What a list holds when it is not addresses (26-11-17). AS numbers, domain
+# names and web addresses are lists too, kept for routers, resolvers and web
+# filters; a cluster refuses visitors by their address and can use none of
+# them. Such a list says what it is, rather than only that it holds no
+# address or is too large. The first lines are read for it: a list with any
+# address among them is an address list.
+#
+SAMPLE_LINES = 1000
+KINDS = {"asn": "AS numbers", "domain": "domain names", "url": "web addresses (URLs)"}
+_URL = re.compile(r"^[a-z][a-z0-9+.-]*://", re.IGNORECASE)
+_ASN = re.compile(r"^AS\d+$", re.IGNORECASE)
+_DOMAIN = re.compile(
+    r"^(?=.{1,253}$)(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$",
+    re.IGNORECASE,
+)
+# A pretty-printed JSON member, `"DomainAddress": "example.com",`.
+_MEMBER = re.compile(r'^"[^"]*"\s*:\s*"([^"]*)"')
+
+
+def _kind(line: str) -> str | None:
+    """`address`, one of KINDS, or None for a line that says nothing (a bracket, a number, a date)."""
+
+    if line.startswith("{"):
+        try:
+            found = json.loads(line.removesuffix(","))
+        except ValueError:
+            return None
+        if not isinstance(found, dict):
+            return None
+        if "asn" in found:
+            return "asn"
+        values = [value for value in found.values() if isinstance(value, str)]
+    else:
+        member = _MEMBER.match(line)
+        values = [member.group(1)] if member else [re.split(r"[\s#;]", line, maxsplit=1)[0]]
+    for value in values:
+        if _network(value) is not None:
+            return "address"
+        if _URL.match(value):
+            return "url"
+        if _ASN.match(value):
+            return "asn"
+        if _DOMAIN.match(value):
+            return "domain"
+    return None
+
+
+def _holds(text: str) -> str | None:
+    """What a list's first lines are when they are no addresses: one of KINDS, or None."""
+
+    kinds: Counter[str] = Counter()
+    for line in text.splitlines()[:SAMPLE_LINES]:
+        stripped = line.strip()
+        if not stripped or stripped[0] in "#;[]}":
+            continue
+        kind = _kind(stripped)
+        if kind == "address":
+            return None
+        if kind is not None:
+            kinds[kind] += 1
+    return kinds.most_common(1)[0][0] if kinds else None
+
+
+def _too_large(body: bytes) -> BlocklistError:
+    """The refusal of a list over MAX_BYTES, saying what its start holds when that is not addresses."""
+
+    kind = _holds(body[:MAX_BYTES].decode("utf-8-sig", errors="replace"))
+    held = f", and holds {KINDS[kind]}, not addresses" if kind else ""
+    return BlocklistError("too_large", f"the list is over {MAX_BYTES // (1024 * 1024)} MiB{held}")
+
+
 def _public(version: int, first: int, last: int) -> tuple[list[tuple[int, int]], bool]:
     """The part of a range outside the reserved networks, and whether any of it was cut."""
 
@@ -312,7 +389,7 @@ def parse(body: bytes) -> Parsed:
     """
 
     if len(body) > MAX_BYTES:
-        raise BlocklistError("too_large", f"the list is over {MAX_BYTES // (1024 * 1024)} MiB")
+        raise _too_large(body)
     text = body.decode("utf-8-sig", errors="replace")
     #
     # Kept as ranges, not as the network objects read: an object per entry
@@ -353,7 +430,9 @@ def parse(body: bytes) -> Parsed:
                 "too_many", f"the list holds more than {MAX_ENTRIES:,} addresses".replace(",", " ")
             )
     if not read:
-        raise BlocklistError("empty", "the list holds no address")
+        kind = _holds(text)
+        held = f"{KINDS[kind]}, not addresses" if kind else "no address"
+        raise BlocklistError("empty", f"the list holds {held}")
     if not (ranges[4] or ranges[6]):
         raise BlocklistError("empty", "the list holds no public address")
     return Parsed(networks=_merged(ranges), skipped=skipped)
@@ -568,11 +647,7 @@ def fetch(
     deadline = time.monotonic() + timeout
     context = context or ssl.create_default_context()
     context.sslsocket_class = _bounded(deadline, timeout)
-    opener = urllib.request.build_opener(
-        urllib.request.ProxyHandler({}),
-        urllib.request.HTTPSHandler(context=context),
-        http_answer.NoRedirect(),
-    )
+    opener = http_answer.opener(context)
     request = urllib.request.Request(url, headers=_headers(item, secret))  # noqa: S310 - https only
     host = urllib.parse.urlsplit(url).hostname
     try:
@@ -598,5 +673,5 @@ def fetch(
         text = reason if isinstance(reason, str) else http_answer.said(reason)
         raise BlocklistError("unreachable", f"{host} could not be reached: {text}") from exc
     if len(body) > MAX_BYTES:
-        raise BlocklistError("too_large", f"the list is over {MAX_BYTES // (1024 * 1024)} MiB")
+        raise _too_large(body)
     return body

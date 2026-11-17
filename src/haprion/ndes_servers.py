@@ -158,11 +158,7 @@ def _opener(trust: Path) -> urllib.request.OpenerDirector:
     # (review 2026-10-29, round 3, B3-02; B392).
     #
     context.verify_flags &= ~ssl.VERIFY_X509_STRICT
-    return urllib.request.build_opener(
-        urllib.request.ProxyHandler({}),
-        urllib.request.HTTPSHandler(context=context),
-        http_answer.NoRedirect(),
-    )
+    return http_answer.opener(context)
 
 
 # The store the fetch and the completion use (B392).

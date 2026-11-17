@@ -1761,8 +1761,16 @@ and a cluster whose network description cannot be read is left out of the pass a
 now, without fetching. The answer names the list, the entry that holds the address, when the list was
 fetched, and the clusters whose *Except* keeps it off.
 
-**Limits.** A list is at most 4 MiB and 100 000 addresses; a larger one is refused as a failed fetch. The
-*Network* page shows each list among the groups, with its size and when it was fetched.
+**Limits.** A list is at most 8 MiB and 100 000 addresses; a larger one is refused as a failed fetch. The
+*Network* page shows each list among the groups, with its size and when it was fetched. The bytes guard
+against a URL that names something else; the addresses are what a list costs.
+
+**Lists of something else.** Lists of AS numbers, domain names or web addresses are kept for routers,
+resolvers and web filters, and a cluster refuses visitors by their address. Such a list is refused, and the
+reason says what it holds: *the list holds domain names, not addresses*, or for a large one *the list is over
+8 MiB, and holds domain names, not addresses*.
+
+The manager names itself to the source as `haprion/<version>`. Some sources refuse a client that does not.
 
 **Removing one** is refused while an object, a saved change or a draft names it under *Denied*: take it
 out there first. The list's file then leaves every cluster; the nodes keep their copy. If a cluster could not be read, the removal waits until it has been.
@@ -5801,6 +5809,9 @@ These gaps are not on the way to being filled. Each one is either impossible wit
 the manager does not own, or left out because the alternative is better done elsewhere. The details are
 in the section linked.
 
+- **A blocklist of AS numbers, domain names or web addresses is not read.** A cluster refuses visitors by
+  their address. An AS number needs routing data to become networks, and a domain or a URL says where
+  people go, not who visits ([Blocklists](#blocklists)).
 - **Forward auth is not offered.** Authelia, Tinyauth, Vouch and authentik's forward-auth modes ask the proxy
   to check every request with them before passing it on. HAProxy can do that only through a Lua script on
   every node, and the nodes run none. A product that stands in the traffic path itself does the same job

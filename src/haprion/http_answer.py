@@ -8,14 +8,19 @@ hold for both, and live here once:
   short, is an `http.client.HTTPException`, not an `OSError` (review
   2026-10-29, C01), and a bounded read returns what came before the
   connection closed as if it were all - so the body is read to its end.
+
+The blocklist fetch asks a third server, and all three go through `opener`.
 """
 
 from __future__ import annotations
 
 import http.client
+import ssl
 import time
 import urllib.request
 from typing import Any
+
+from haprion import __version__
 
 #
 # What a request or a read raises when the server did not answer whole.
@@ -29,6 +34,30 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, *_: Any, **__: Any) -> None:
         return None
+
+
+#
+# Who is asking (26-11-17). urllib's own `Python-urllib/3.x` is refused by
+# some servers - lists.blocklist.de answers it 403 and any other name 200 - so
+# the engine's clients name themselves, as the update check does.
+#
+USER_AGENT = f"haprion/{__version__}"
+
+
+def opener(context: ssl.SSLContext) -> urllib.request.OpenerDirector:
+    """The engine's clients' opener: `context`'s TLS, no proxy from the environment, no redirect, our name.
+
+    An empty ProxyHandler, so an https_proxy in the environment cannot route
+    the answers through somewhere else.
+    """
+
+    built = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        urllib.request.HTTPSHandler(context=context),
+        NoRedirect(),
+    )
+    built.addheaders = [("User-Agent", USER_AGENT)]
+    return built
 
 
 def read_body(stream: Any, limit: int, *, deadline: float | None = None) -> bytes:

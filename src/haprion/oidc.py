@@ -154,15 +154,7 @@ class Client:
                     raise OidcError("bad_ca", "the CA certificate could not be read") from exc
         self._timeout = timeout
         self._max_bytes = max_bytes
-        #
-        # An empty ProxyHandler, so an https_proxy in the environment cannot
-        # route the provider's answers through somewhere else.
-        #
-        self._opener = urllib.request.build_opener(
-            urllib.request.ProxyHandler({}),
-            urllib.request.HTTPSHandler(context=context),
-            http_answer.NoRedirect(),
-        )
+        self._opener = http_answer.opener(context)
 
     def request(
         self,

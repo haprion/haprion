@@ -36,6 +36,7 @@ names used below, that is a bug in the software, not in this guide.
   - [What the advanced layer does, line by line](#what-the-advanced-layer-does-line-by-line)
 - [Access rules](#access-rules)
   - [Blocklists](#blocklists)
+  - [A sign-in or bot check in front of an application](#a-sign-in-or-bot-check-in-front-of-an-application)
 - [Dynamic blocking](#dynamic-blocking)
 - [The WAF engine](#the-waf-engine)
 - [Certificates](#certificates)
@@ -1770,6 +1771,70 @@ out there first. The list's file then leaves every cluster; the nodes keep their
 form does, and `haprion-blocklists remove <name>` removes one. A file that changes a list's URL,
 authorization or username carries the list's `secret` again. `haprion-blocklist-check <address>` is
 *Check address*, and `haprion-blocklist-check --list <name>` is *Test* for a stored list.
+
+### A sign-in or bot check in front of an application
+
+Haprion does not sign visitors in to the applications behind it. It also does not ask another product
+whether to let each request through (forward auth; see [What it does not do](#what-it-does-not-do)). A
+product that does sign-in or bot checks can still guard an application, if one rule holds: **the product
+stands in the traffic path itself.** The cluster sends the traffic to the product, and the product passes it
+on.
+
+**Haprion in front.** This fits authentik's proxy outpost in *Proxy* mode, oauth2-proxy with `--upstream`,
+Pomerium, Teleport's application access and Anubis:
+
+```text
+visitor → cluster (VIP) → sign-in or bot check → application
+```
+
+On the object:
+
+- **The pool's server is the product**, not the application. The product knows where the application is.
+- **The product must believe the cluster's forwarding headers.** The cluster always writes
+  `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host`
+  ([An http or https object, field by field](#an-http-or-https-object-field-by-field)). Let the product trust
+  them from the object's *Source address*, so it sees the visitor's address and that the visit was over https.
+- **The health check measures the product**, not the application. Point it at the product's own health path.
+- **The application is reached only through the product.** Close the application's own port to everything
+  else in the firewall. Otherwise anyone who finds the port walks round the sign-in.
+- **The product sets the identity headers** the application reads, such as `X-authentik-username`. Haprion
+  passes them on and does not need to know them.
+
+**Haprion behind.** Entra Application Proxy and Cloudflare Tunnel run a connector inside the network, and the
+connector sends the traffic on to the cluster. Put the connector's address in the cluster's
+`trusted_proxy_cidrs` ([Optional per-cluster sections](#optional-per-cluster-sections)). The access rules and
+rate limits then see the visitor, not the connector.
+
+**Example: authentik in front of an internal tool** (checked against 2026.8). The cluster is `alpha`, the
+proxy `status` answers `status.example.com`, authentik's server listens on `192.0.2.30:9000` and serves its
+own interface as `id.example.com`, and the tool runs on `192.0.2.31:3001`. Use your own names.
+
+1. **In authentik**, under *Applications → Applications*, *New Application*: provider type *Proxy Provider*,
+   mode *Proxy*, *External host* `https://status.example.com`, *Internal host* `http://192.0.2.31:3001`.
+2. **Bind a group** on the application's *Policy / Group / User Bindings* tab. Without a binding, every
+   authentik user may use the application.
+3. **Add the application to an outpost** under *Applications → Outposts*.
+4. **In Haprion**, the proxy `status`: `status.example.com`, a pool with the server `192.0.2.30` port `9000`,
+   and a health check with *Path* `/-/health/live/`, *Host header* `id.example.com` and *Expected status*
+   `200`. The host header makes the check reach authentik itself; with the proxy's own name it would meet the
+   sign-in instead.
+5. **Try it.** `https://status.example.com` shows authentik's sign-in, then the tool. authentik's event log
+   should show your own address for the sign-in, not a node's.
+
+What the test found about authentik's **embedded outpost**, the one inside the authentik server:
+
+- It sends the browser to the address in its own `authentik_host` (the outpost's configuration under
+  *Applications → Outposts*). It does not read `authentik_host_browser`. Visitors must reach that address,
+  and an access rule on the way that refuses authentik's sign-in pages stops them there with a 403.
+- If the server's environment sets `AUTHENTIK_HOST_BROWSER`, it must be the same address as the outpost's
+  `authentik_host`. If the two differ, the sign-in loops, and the server's log says
+  `failed to redeem callback` with `InvalidIssuer`.
+- One embedded outpost has one sign-in address. If internal and external applications sign in at different
+  addresses, give one of them a proxy outpost of its own, in its own container.
+
+**Anubis** guards one application per instance, named in its `TARGET`. The pool's server is Anubis. Which
+header Anubis reads the visitor's address from is its own setting; check its documentation, so that its
+decisions are about the visitor and not the node.
 
 ## Dynamic blocking
 
@@ -5736,6 +5801,10 @@ These gaps are not on the way to being filled. Each one is either impossible wit
 the manager does not own, or left out because the alternative is better done elsewhere. The details are
 in the section linked.
 
+- **Forward auth is not offered.** Authelia, Tinyauth, Vouch and authentik's forward-auth modes ask the proxy
+  to check every request with them before passing it on. HAProxy can do that only through a Lua script on
+  every node, and the nodes run none. A product that stands in the traffic path itself does the same job
+  ([A sign-in or bot check in front of an application](#a-sign-in-or-bot-check-in-front-of-an-application)).
 - **A server named in advanced configuration is not found by its name.** The *Traffic logs* page shows
   it, but the search reads the destinations the manager configured (their address or host name), not the
   names of servers written in advanced configuration.

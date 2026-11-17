@@ -39,13 +39,32 @@
       const arrow = row.querySelector("[data-log-open]");
       if (timings) timings.hidden = row.hidden || arrow?.getAttribute("aria-expanded") !== "true";
     };
+    //
+    // The heading's arrow opens or closes every request's timings, on every
+    // page, so a page turn finds them as left (26-11-17). It reads as open
+    // while every row is, and a row closed by hand turns it back.
+    //
+    const openAll = root.querySelector("[data-log-open-all]");
+    const arrows = rows.map((row) => row.querySelector("[data-log-open]")).filter(Boolean);
+    const showOpenAll = () =>
+      openAll?.setAttribute(
+        "aria-expanded",
+        String(arrows.length > 0 && arrows.every((arrow) => arrow.getAttribute("aria-expanded") === "true"))
+      );
     rows.forEach((row) =>
       row.querySelector("[data-log-open]")?.addEventListener("click", (event) => {
         const arrow = event.currentTarget;
         arrow.setAttribute("aria-expanded", String(arrow.getAttribute("aria-expanded") !== "true"));
         showTimings(row);
+        showOpenAll();
       })
     );
+    openAll?.addEventListener("click", () => {
+      const open = openAll.getAttribute("aria-expanded") !== "true";
+      arrows.forEach((arrow) => arrow.setAttribute("aria-expanded", String(open)));
+      rows.forEach(showTimings);
+      showOpenAll();
+    });
 
     const selectedRows = () =>
       rows.filter((row) => row.querySelector("[data-log-select]")?.checked);

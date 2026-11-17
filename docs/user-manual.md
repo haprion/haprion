@@ -4124,9 +4124,11 @@ the rule: red when the rule refused the request, amber when it only logged it. R
 saved with *Export selected (.csv)*. The file has the row's columns plus *Rule* and *Mode* (`denied` or
 `logged`), empty when no rule matched; from *WAF logs* it is named `waf-logs-…`.
 
-**Where the time went.** The arrow beside a row's tick box opens the request's timings under it, in the order
-the request went through them: *Request received*, *Queue*, *Connect*, *Server response* and *Total*. A step
-the request never reached shows a dash, not zero: a request refused by a rule has no *Connect*, and one that
+**Where the time went.** The arrow beside a row's tick box opens the request's timings under it, and the arrow
+in the heading opens or closes them for every request on every page. They come in the order
+the request went through them: *Request received*, *Queue*, *Connect*, *Server response*, *Transfer* and
+*Total*. *Server response* ends when the server has sent its headers; *Transfer* is the body on its way to the
+client after that, so the steps add up to *Total*. A step the request never reached shows a dash, not zero: a request refused by a rule has no *Connect*, and one that
 waited out the queue has no server response. When the session did not end normally, the line ends with how
 it ended, such as *The server's timeout ran out while waiting for the server's headers*. The same sentence is
 the title of the row's status.

@@ -72,16 +72,36 @@ class Entry:
         return ended_in_words(self.termination)
 
     @property
-    def timings(self) -> tuple[tuple[str, str], ...]:
-        """The five times HAProxy measured, in its order, with `–` for a step never reached."""
+    def transfer_time(self) -> int:
+        """HAProxy's Td: what *Total* holds beyond the steps before it, the response body on its way out.
 
-        return tuple((label, shown_duration(getattr(self, field))) for label, field in TIMINGS)
+        `Td = Ta - (TR + Tw + Tc + Tr)`, leaving out a step never reached
+        (HAProxy's configuration manual, 8.4). Without the server's headers
+        (Tr -1) no body was sent, so there is no transfer to show, only a wait.
+        """
+
+        steps = (self.request_time, self.queue_time, self.connect_time, self.response_time)
+        if self.response_time < 0 or self.total_time < 0:
+            return -1
+        transfer = self.total_time - sum(step for step in steps if step >= 0)
+        return transfer if transfer >= 0 else -1
+
+    @property
+    def timings(self) -> tuple[tuple[str, str], ...]:
+        """HAProxy's times in the order a request goes through them, with `–` for a step never reached.
+
+        *Transfer* stands before *Total*, so that the steps add up to it (26-11-17).
+        """
+
+        steps = [(label, getattr(self, field)) for label, field in TIMINGS]
+        steps.insert(-1, ("Transfer", self.transfer_time))
+        return tuple((label, shown_duration(value)) for label, value in steps)
 
 
 #
 # HAProxy's timers as the log format records them (generate.py,
 # HTTP_TRAFFIC_LOG_FORMAT): %TR, %Tw, %Tc, %Tr and %Ta, in the order a request
-# goes through them. HAProxy writes -1 for a step the request never reached - a
+# goes through them; *Transfer* (Td) is worked out from them, not logged. HAProxy writes -1 for a step the request never reached - a
 # queue it did not wait in, a server it never connected to - and that is not
 # zero, so it is shown as a dash rather than as "0 ms" (B496, 1).
 #

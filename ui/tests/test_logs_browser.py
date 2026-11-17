@@ -358,6 +358,50 @@ class LogControlsInABrowser(unittest.TestCase):
         self.page.click('[data-row="3"] [data-log-open]')
         self.assertEqual(timings.count(), 0)
 
+    def test_the_heading_s_arrow_opens_every_request_on_every_page(self) -> None:
+        """26-11-17: one arrow for all; the page turn keeps them open, and one closed by hand turns it back."""
+
+        rows = "".join(
+            f'<tr data-log-row data-row="{number}"><td><input type="checkbox" data-log-select></td>'
+            f'<td><button type="button" data-log-open aria-expanded="false">Timings</button></td></tr>'
+            f'<tr data-log-timings data-timings="{number}" hidden><td>Total {number} ms</td></tr>'
+            for number in range(30)
+        )
+        self.load(
+            f"""
+            <div data-log-region>
+              <span data-log-selected-count></span>
+              <input type="checkbox" data-log-select-all>
+              <button type="button" data-log-open-all aria-expanded="false">Every timing</button>
+              <table><tbody>{rows}</tbody></table>
+              <select data-log-page-size><option value="25" selected>25</option></select>
+              <span data-log-page-range></span>
+              <button type="button" data-log-page-previous>Previous</button>
+              <button type="button" data-log-page-next>Next</button>
+            </div>
+            """
+        )
+        timings = self.page.locator("[data-log-timings]:visible")
+        all_arrow = self.page.locator("[data-log-open-all]")
+
+        all_arrow.click()
+        self.assertEqual(timings.count(), 25)
+        self.assertEqual(all_arrow.get_attribute("aria-expanded"), "true")
+        self.page.click("[data-log-page-next]")
+        self.assertEqual(timings.count(), 5)
+
+        self.page.click('[data-row="27"] [data-log-open]')
+        self.assertEqual(timings.count(), 4)
+        self.assertEqual(all_arrow.get_attribute("aria-expanded"), "false")
+        self.page.click('[data-row="27"] [data-log-open]')
+        self.assertEqual(all_arrow.get_attribute("aria-expanded"), "true")
+
+        all_arrow.click()
+        self.assertEqual(timings.count(), 0)
+        self.page.click("[data-log-page-previous]")
+        self.assertEqual(timings.count(), 0)
+        self.assertEqual(self.page.locator("[data-log-select-all]").is_checked(), False)
+
 
 if __name__ == "__main__":
     unittest.main()

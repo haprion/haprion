@@ -1117,6 +1117,7 @@ class TheTrafficLogPage(LoginTestCase):
             ("Queue", "0 ms"),
             ("Connect", "1 ms"),
             ("Server response", "–"),
+            ("Transfer", "–"),
             ("Total", "30.0 s"),
         ):
             with self.subTest(label=label):
@@ -1126,6 +1127,27 @@ class TheTrafficLogPage(LoginTestCase):
             timings,
         )
         self.assertNotIn("log-timings", row)
+
+    def test_the_transfer_makes_the_steps_add_up_to_the_total(self) -> None:
+        """26-11-17: 2 + 0 + 0 + 4 is not 19; the other 13 ms carried the body (HAProxy's Td)."""
+
+        with (self.root / "alpha--node-a.jsonl").open("wb") as mirror:
+            mirror.write(
+                record(
+                    path="/page",
+                    request_time=2,
+                    queue_time=0,
+                    connect_time=0,
+                    response_time=4,
+                    total_time=19,
+                )
+            )
+        timings = self.page().split(">/page<")[1].split("</tr>", 2)[1]
+        self.assertIn(
+            "<span><em>Server response</em>4 ms</span><span><em>Transfer</em>13 ms</span>"
+            "<span><em>Total</em>19 ms</span>",
+            timings,
+        )
 
     def test_a_normal_ending_adds_nothing_to_the_timings(self) -> None:
         (self.root / "alpha--node-a.jsonl").write_bytes(record(path="/fine", termination="--"))

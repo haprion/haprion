@@ -165,6 +165,16 @@ class TheFormBecomesTheObjectTheEngineReads(unittest.TestCase):
         self.assertNotIn("\\nb: evil\\n", document.replace("  ", ""))
         self.assertIn("schema: 1", document)
 
+    def test_an_international_name_is_saved_in_its_ascii_form(self) -> None:
+        """B517, 9: only the xn-- form is kept, so it is what the form shows when reopened."""
+
+        document = build_document(form(name="app", hostnames="bücher.example.com, straße.example"))
+
+        self.assertIn("xn--bcher-kva.example.com", document)
+        self.assertNotIn("bücher", document)
+        self.assertNotIn("strasse", document)
+        self.assertIn("IDNA version", check(form(hostnames="straße.example")).problem or "")
+
 
 class ThePageIsGone(unittest.TestCase):
     """The preview page was removed once the editor did the same job better.

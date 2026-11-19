@@ -41,6 +41,13 @@ class WhatMayBeReserved(unittest.TestCase):
 
         self.assertIn("legacy.example.com", reservations.hostnames)
 
+    def test_an_international_name_is_reserved_in_the_form_an_object_takes(self) -> None:
+        """B517, 9: so it collides with the object that names it either way."""
+
+        reservations = load_reservations("hostnames: [Bücher.example.com]\n".encode())
+
+        self.assertEqual(reservations.hostnames, frozenset({"xn--bcher-kva.example.com"}))
+
     def test_something_that_is_not_a_hostname_is_refused(self) -> None:
         with self.assertRaises(ReservationError) as raised:
             load_reservations(b"hostnames: ['https://legacy.example.com']\n")

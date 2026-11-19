@@ -60,7 +60,7 @@ import yaml
 from haprion import safe_yaml
 from haprion.config import ConfigError, _address, _mapping, _only_keys
 from haprion.digits import is_digits
-from haprion.proxy_model import HOSTNAME
+from haprion.proxy_model import HOSTNAME, ascii_hostname
 
 #
 # Where the promise lives, named once. Two modules read this file, and a
@@ -315,9 +315,15 @@ def _hostnames(value: Any, location: str) -> list[str]:
         # and a reservation written in mixed case would otherwise reserve
         # nothing while looking like it reserved something.
         #
-        if not isinstance(entry, str) or not HOSTNAME.fullmatch(entry.lower()):
+        if not isinstance(entry, str):
             raise ReservationError(f"{location} contains something that is not a hostname")
-        names.append(entry.lower())
+        try:
+            name = ascii_hostname(entry.lower())
+        except ValueError as problem:
+            raise ReservationError(f"{location}: {problem}") from problem
+        if not HOSTNAME.fullmatch(name):
+            raise ReservationError(f"{location} contains something that is not a hostname")
+        names.append(name)
     return names
 
 

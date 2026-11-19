@@ -40,6 +40,7 @@ from haprion.proxy_model import (
     WAF_ENGINE_ERROR_DEFAULT,
     ModelError,
     Proxy,
+    ascii_hostname,
     dump_document,
     pool_written_by_hand,
     read_document,
@@ -877,7 +878,7 @@ def build_document(form: dict[str, object]) -> str:
     #
     if text("description"):
         document["description"] = text("description")
-    written = [name for name in hostnames if name]
+    written = [_ascii(name) for name in hostnames if name]
     if protocol in OWN_PORT:
         #
         # A tcp object is an address, a port and one backend, and so is a dns
@@ -1156,6 +1157,19 @@ def _routes(
     redirect["redirect"] = {"location": location, "status": int(status)}
     routes.append(redirect)
     return routes
+
+
+def _ascii(hostname: str) -> str:
+    """The name the document keeps: its `xn--` form, as the engine reads it (B517, 9).
+
+    A name with no such form is kept as written, so the engine refuses it in
+    its own words.
+    """
+
+    try:
+        return ascii_hostname(hostname)
+    except ValueError:
+        return hostname
 
 
 def _header_edits(written: str, phase: str) -> dict[str, object]:

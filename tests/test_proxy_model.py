@@ -2021,3 +2021,34 @@ backend: pool-servers
             with self.subTest(protocol), self.assertRaises(ModelError) as raised:
                 load_proxy("pool", document)
             self.assertIn(words, str(raised.exception))
+
+
+class AnInternationalNameIsKeptInItsAsciiForm(unittest.TestCase):
+    """B517, 9: written as it looks, read as `xn--`, one spelling everywhere after."""
+
+    def named(self, hostnames: str) -> tuple[str, ...]:
+        document = with_lines(("hostnames: [shop.example.com]", f"hostnames: {hostnames}"))
+        return load_proxy("shop", document).hostnames
+
+    def refused(self, hostnames: str) -> str:
+        with self.assertRaises(ModelError) as raised:
+            self.named(hostnames)
+        return str(raised.exception)
+
+    def test_a_unicode_name_and_a_wildcard_are_read_as_xn(self) -> None:
+        self.assertEqual(
+            self.named("[bücher.example.com, '*.exämple.com']"),
+            ("xn--bcher-kva.example.com", "*.xn--exmple-cua.com"),
+        )
+
+    def test_an_ascii_name_is_left_as_it_was(self) -> None:
+        self.assertEqual(self.named("[xn--bcher-kva.example.com]"), ("xn--bcher-kva.example.com",))
+
+    def test_both_spellings_of_one_name_are_one_name_twice(self) -> None:
+        self.assertIn(
+            "same hostname twice", self.refused("[bücher.example.com, xn--bcher-kva.example.com]")
+        )
+
+    def test_a_letter_whose_form_depends_on_the_idna_version_is_refused(self) -> None:
+        self.assertIn("IDNA version", self.refused("[straße.example.com]"))
+        self.assertIn("another dot", self.refused("[bücher。example.com]"))

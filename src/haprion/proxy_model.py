@@ -21,6 +21,7 @@ does. Both are worse than being told.
 
 from __future__ import annotations
 
+import encodings.idna
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -174,6 +175,42 @@ WILDCARD_HOSTNAME = re.compile(
     r"^\*\.(?=.{1,251}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
     r"(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$"
 )
+
+
+#
+# Where IDNA 2003 - Python's own codec - and IDNA 2008 answer differently: 2003
+# writes ß as ss and drops the two joiners, 2008 keeps them, so one name could
+# be two domains depending on who asks. Refused rather than guessed (B517, 9).
+# The dots other scripts write are refused too: a name's labels are split on
+# the ASCII dot alone, here and in a Host header.
+#
+IDNA_DEVIATIONS = frozenset("\u00df\u03c2\u200c\u200d")
+FOREIGN_DOTS = frozenset("\u3002\uff0e\uff61")
+
+
+def ascii_hostname(hostname: str) -> str:
+    """A name with letters outside ASCII in its `xn--` form (B517, 9); any other as written.
+
+    Only the ASCII form is kept, saved and shown, so a duplicate, a certificate,
+    ACME and a search all see one spelling, and two names that look alike stay
+    visibly different. Raises `ValueError` where a label has no single form.
+    """
+
+    if hostname.isascii():
+        return hostname
+    if any(character in IDNA_DEVIATIONS for character in hostname):
+        raise ValueError(
+            f"{hostname} holds a letter (ß, ς or a joiner) whose ASCII form depends on the IDNA version"
+        )
+    if any(character in FOREIGN_DOTS for character in hostname):
+        raise ValueError(f"{hostname} separates its labels with another dot than .")
+    try:
+        return ".".join(
+            label if label.isascii() else encodings.idna.ToASCII(label).decode("ascii")
+            for label in hostname.split(".")
+        )
+    except UnicodeError as error:
+        raise ValueError(f"{hostname} cannot be written as an international domain name") from error
 
 
 def is_wildcard(hostname: str) -> bool:
@@ -2458,11 +2495,22 @@ def _refuse_countries(data: Mapping[str, Any], name: str) -> None:
 def _hostnames(value: Any, name: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not value:
         raise ModelError(f"{name}.hostnames must list at least one hostname")
-    for hostname in value:
-        if not isinstance(hostname, str) or not (
-            HOSTNAME.fullmatch(hostname) or WILDCARD_HOSTNAME.fullmatch(hostname)
-        ):
+    written = value
+    value = []
+    for hostname in written:
+        if not isinstance(hostname, str):
             raise ModelError(f"{name}.hostnames contains something that is not a hostname")
+        try:
+            hostname = ascii_hostname(hostname)
+        except ValueError as problem:
+            raise ModelError(f"{name}.hostnames: {problem}") from problem
+        if not (HOSTNAME.fullmatch(hostname) or WILDCARD_HOSTNAME.fullmatch(hostname)):
+            raise ModelError(f"{name}.hostnames contains something that is not a hostname")
+        value.append(hostname)
+    #
+    # After the conversion, so the Unicode and the xn-- spelling of one name
+    # are one name written twice.
+    #
     if len(set(value)) != len(value):
         raise ModelError(f"{name}.hostnames lists the same hostname twice")
     #

@@ -169,7 +169,7 @@ class Switched(LoginTestCase):
             answer = self.post(client, "/settings/features/node_backups", enabled="off")
 
         self.assertEqual(answer.status_code, 303)
-        self.assertEqual(answer.headers["location"], "/settings?switched=node_backups-off")
+        self.assertEqual(answer.headers["location"], "/settings?switched=node_backups-off#features")
         self.assertEqual(
             self.queued,
             [
@@ -242,10 +242,13 @@ class Switched(LoginTestCase):
         self.assertEqual(answer.status_code, 303)
         self.assertEqual(self.queued, [])
         self.assertEqual(self.flips[0]["enabled"], False)
-        self.assertIn(
-            "Registered receivers still get new certificates.",
-            client.get("/settings?switched=cert_receivers-off").text,
+        page = client.get("/settings?switched=cert_receivers-off").text
+        # Said in the card the switch's answer lands on (#features), not above it.
+        self.assertGreater(
+            page.find("Registered receivers still get new certificates."),
+            page.find('id="features"'),
         )
+        self.assertGreater(page.find('id="features"'), 0)
 
     def test_the_question_names_what_off_does(self) -> None:
         page = self.admin().get("/settings/features/node_backups").text

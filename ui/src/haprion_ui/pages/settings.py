@@ -402,7 +402,9 @@ def build_router(config: Config) -> APIRouter:
                 connection.commit()
         if refusal is not None:
             return _settings_page(request, gate, problem=str(refusal), status_code=409)
-        return RedirectResponse("/settings?switched=" + name + "-" + enabled, status_code=303)
+        return RedirectResponse(
+            "/settings?switched=" + name + "-" + enabled + "#features", status_code=303
+        )
 
     # - Settings -> Users (§16.4 U4, B189) ----------------------------------
     #

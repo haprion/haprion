@@ -20,9 +20,6 @@
 {% if certificate_job %}
 {% call certificate_job_notice(certificate_job) %}This page refreshes until it has finished.{% endcall %}
 {% endif %}
-{% if done %}
-<p class="preview-notice notice-done"><span class="status-orb status-healthy" aria-hidden="true"></span><strong>{{ done }}</strong></p>
-{% endif %}
 {% if problem %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
 {% endif %}
@@ -227,6 +224,10 @@
 {% if features %}
 <section class="cluster-card settings-card" id="features">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Features</h3></div></div></header>
+  {# The switch answers with #features, so what it did is said where the page lands (26-11-19). #}
+  {% if done %}
+  <p class="preview-notice settings-notice notice-done"><span class="status-orb status-healthy" aria-hidden="true"></span><strong>{{ done }}</strong></p>
+  {% endif %}
   {% for feature, on in features %}
   <div class="cluster-actions feature-row">
     <div><strong>{{ feature.title }}</strong></div>

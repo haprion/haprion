@@ -19,9 +19,10 @@ from unittest import mock
 
 from playwright.sync_api import Browser, Playwright
 
-from haprion_ui import demo
+from haprion_ui import demo, features
 from haprion_ui.app import create_app
 from tests import browser_policy, live_server
+from tests.test_feature_switches import switch
 from tests.test_login import PASSWORD, configuration
 from tests.test_queue_route import QueueRouteTestCase
 from tests.test_settings_cluster import NOW
@@ -57,6 +58,23 @@ ROOM_LEFT = """selects => selects.map(select => {
     - ARROW - widest
   );
 })""".replace("ARROW", str(ARROW))
+
+#
+# The first switch the selector finds and a copy of it in the other state,
+# beside it: both widths, in pixels. Inter draws On and Off equally wide in
+# Chromium, other fonts do not; in monospace Off is surely the wider, so the
+# rule is measured and not the font.
+#
+FLIPPED_TWIN = """selector => {
+  const shown = document.querySelector(selector);
+  shown.style.fontFamily = 'monospace';
+  const twin = shown.cloneNode(true);
+  const on = shown.getAttribute('aria-checked') === 'true';
+  twin.setAttribute('aria-checked', on ? 'false' : 'true');
+  twin.lastChild.textContent = on ? 'Off' : 'On';
+  shown.after(twin);
+  return [shown.getBoundingClientRect().width, twin.getBoundingClientRect().width];
+}"""
 
 
 class TheLogsAndMetricsForm(QueueRouteTestCase):
@@ -132,6 +150,21 @@ class TheLogsAndMetricsForm(QueueRouteTestCase):
                     page.goto(f"http://127.0.0.1:{self.port}/settings")
                     page.locator(row).first.locator(cell).click()
                     page.wait_for_url(f"**{address}*")
+
+    def test_a_switch_keeps_its_width_when_it_flips(self) -> None:
+        #
+        # On and Off were different widths, so the switch and the text beside
+        # it moved when it flipped (26-11-19). Its twin in the other state is
+        # measured beside it, whatever the demo's switches are set to.
+        #
+        shown = {features.CERT_RECEIVERS: switch(features.CERT_RECEIVERS, enabled=True)}
+        with (
+            mock.patch("haprion_ui.db.feature_switches", return_value=shown),
+            self.signed_in(1280) as page,
+        ):
+            page.goto(f"http://127.0.0.1:{self.port}/settings")
+            widths = page.evaluate(FLIPPED_TWIN, "#features .toggle-switch")
+            self.assertEqual(widths[0], widths[1], widths)
 
 
 if __name__ == "__main__":

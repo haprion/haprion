@@ -1732,7 +1732,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
  * the state reads at a glance. A real button underneath,
  * so it submits without script and announces itself as a switch.
  */
-.toggle-switch { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; padding: 0; border: 0; background: none; color: var(--critical-text); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+/* One width for On and Off, so the switch and what stands beside it do not move when it flips (26-11-19). */
+.toggle-switch { display: inline-flex; align-items: center; justify-content: flex-start; gap: 8px; min-width: calc(34px + 8px + 3.4ch); min-height: 32px; padding: 0; border: 0; background: none; color: var(--critical-text); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
 .toggle-switch .toggle-track { overflow: visible; margin-top: 0; }
 .toggle-track { position: relative; width: 34px; height: 20px; border-radius: 10px; background: var(--critical); transition: background .15s; }
 .toggle-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--toggle-knob); box-shadow: 0 1px 2px rgb(0 0 0 / .25); transition: transform .15s; }

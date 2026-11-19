@@ -1191,8 +1191,9 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .registry-table tbody tr.registry-detail:hover { background: transparent; }
 /* The detail is prose and wraps; the node table's one-line rule is for cells
    that hold a value, and inherited here it laid one label's text over the
-   next. */
-.registry-detail td { padding: 4px 0 14px; white-space: normal; }
+   next. With the grid's own 2 px on top, 8 and 10 give it even air under
+   the open row's border (26-11-19). */
+.registry-detail td { padding: 8px 0 10px; white-space: normal; }
 .registry-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px 28px; padding: 2px 2px 0; }
 .registry-detail-grid > div { display: grid; align-content: start; gap: 3px; min-width: 0; }
 .registry-detail-grid strong { color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
@@ -2416,7 +2417,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .log-open-button[aria-expanded="true"] svg { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .log-open-button svg { transition: none; } }
 .log-table tr:has(+ .log-timings:not([hidden])) td { border-bottom: 0; }
-.log-table .log-timings td { padding-top: 0; padding-bottom: 10px; white-space: normal; }
+/* Even air above and below the timings: the request row above keeps its own 6 px, so 2 and 8 centre the line (26-11-19). */
+.log-table .log-timings td { padding-top: 2px; padding-bottom: 8px; white-space: normal; }
 .log-timing-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 22px; color: var(--text-primary); font-size: 12px; font-variant-numeric: tabular-nums; }
 .log-timing-line em { margin-right: 6px; color: var(--muted); font-style: normal; }
 .log-timing-line .log-ended { color: var(--warning-text); }

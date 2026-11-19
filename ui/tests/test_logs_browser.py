@@ -403,5 +403,67 @@ class LogControlsInABrowser(unittest.TestCase):
         self.assertEqual(self.page.locator("[data-log-select-all]").is_checked(), False)
 
 
+#
+# Air in pixels above the first of the opened part's text and below its last,
+# inside the band from the row above it to the row after.
+#
+AIR = """([above, opened, part]) => {
+  const top = document.querySelector(above).querySelector('time, strong').getBoundingClientRect();
+  const band = document.querySelector(opened).getBoundingClientRect();
+  const parts = [...document.querySelector(opened).querySelectorAll(part)].map(e => e.getBoundingClientRect());
+  const first = Math.min(...parts.map(r => r.top)), last = Math.max(...parts.map(r => r.bottom));
+  return [first - (above === opened ? band.top : top.bottom), band.bottom - last];
+}"""
+
+
+class AnOpenedRowInABrowser(unittest.TestCase):
+    """What a row opens sits with even air above and below it (26-11-19).
+
+    The timings had 6.5 px above and 10.5 below, a certificate's detail 6.5
+    and 14.5: the text sat high in its band. Measured with the app's own CSS.
+    """
+
+    def setUp(self) -> None:
+        playwright = sync_playwright().start()
+        self.addCleanup(playwright.stop)
+        browser = playwright.chromium.launch()
+        self.addCleanup(browser.close)
+        self.page = browser.new_page()
+        self.css = (STATIC_DIRECTORY / "app.css").read_text(encoding="utf-8")
+
+    def assert_even(self, markup: str, above: str, opened: str, part: str) -> None:
+        self.page.set_content(f"<style>{self.css}</style>{markup}")
+        over, under = self.page.evaluate(AIR, [above, opened, part])
+        self.assertLessEqual(abs(over - under), 1, (over, under))
+
+    def test_a_request_s_timings(self) -> None:
+        row = (
+            "<tr id=a><td class=log-select><input type=checkbox></td><td class=log-open></td>"
+            "<td><time>26-11-19 10:00:00</time></td><td>alpha</td></tr>"
+        )
+        timings = (
+            "<tr class=log-timings id=t><td></td><td></td><td colspan=2>"
+            "<div class=log-timing-line><span><em>Total</em>12 ms</span></div></td></tr>"
+        )
+        self.assert_even(
+            f"<table class='node-table log-table'><tbody>{row}{timings}{row}</tbody></table>",
+            "#a",
+            "#t",
+            ".log-timing-line span",
+        )
+
+    def test_a_certificate_s_detail(self) -> None:
+        self.assert_even(
+            "<table class='node-table registry-table'><tbody>"
+            "<tr class='registry-row registry-open'><td><strong>www.example.com</strong></td></tr>"
+            "<tr class=registry-detail id=d><td><div class=registry-detail-grid>"
+            "<div><strong>Names</strong><span>www.example.com</span></div></div></td></tr>"
+            "</tbody></table>",
+            "#d",
+            "#d",
+            ".registry-detail-grid > div > *",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

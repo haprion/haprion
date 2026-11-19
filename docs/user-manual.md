@@ -5844,6 +5844,9 @@ in the section linked.
   ([Syslog objects](#syslog-objects)).
 - **Two DNS objects cannot share an address and port.** dnsdist tells them apart by where a query arrives
   ([DNS objects](#dns-objects)).
+- **A service that ends TLS itself does not share 443 with https objects on one VIP.** The cluster does
+  not pass a connection on by its host name without opening it. Give that service its own VIP and a tcp
+  object on 443 ([Ports the cluster takes itself](#ports-the-cluster-takes-itself)).
 - **The terminal places no block by hand.** `haprion-server-state unblock` lifts one; an address is
   blocked by hand only through the API, which exists for the tools that block
   ([Blocking an address](#blocking-an-address)).

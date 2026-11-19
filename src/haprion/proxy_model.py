@@ -389,6 +389,20 @@ RESERVED_HEADERS = ("x-forwarded-for", "x-forwarded-proto", "x-forwarded-host")
 MAX_HEADER_VALUE = 200
 
 #
+# A header an object sets or adds (B496, 2; 26-11-19): what a Content Security
+# Policy needs. It quotes its keywords - 'self', 'none' - and a real one runs
+# to a few kilobytes, so the single quote is allowed here and the generator
+# closes, escapes and reopens the quoting around it ('\''), measured on
+# HAProxy 3.4.7: the header arrived byte for byte, with a backslash, `$HOME`,
+# `%` and a double quote in it. A condition and a redirect keep the older,
+# narrower rule above. 4096 because the response's headers share HAProxy's one
+# 16 KiB buffer: measured on 3.4.7, a 4096-character value went through beside
+# 11 KB of the server's own headers and gave a 500 beside 14 KB.
+#
+MAX_HEADER_EDIT_VALUE = 4096
+FORBIDDEN_IN_EDIT = ("\r", "\n", "\0")
+
+#
 # What a maintenance page may say. The value is written into a double-quoted
 # configuration line, so a quote or a backslash would end that line somewhere
 # other than where it looks like it ends. `$` is allowed and escaped where the
@@ -2536,16 +2550,14 @@ def _header_pairs(value: Any, location: str) -> tuple[tuple[str, str], ...]:
         if not isinstance(content, (str, int)):
             raise ModelError(f"{location}.{name} must be text")
         text = str(content)
-        if not text or len(text) > MAX_HEADER_VALUE:
+        if not text or len(text) > MAX_HEADER_EDIT_VALUE:
             raise ModelError(
-                f"{location}.{name} must be between 1 and {MAX_HEADER_VALUE} characters"
+                f"{location}.{name} must be between 1 and {MAX_HEADER_EDIT_VALUE} characters"
             )
-        if any(character in text for character in FORBIDDEN_IN_VALUE) or CONTROL_IN_VALUE.search(
+        if any(character in text for character in FORBIDDEN_IN_EDIT) or CONTROL_IN_VALUE.search(
             text
         ):
-            raise ModelError(
-                f"{location}.{name} may not contain line breaks, control characters or a single quote"
-            )
+            raise ModelError(f"{location}.{name} may not contain line breaks or control characters")
         pairs.append((name, text))
     return tuple(pairs)
 

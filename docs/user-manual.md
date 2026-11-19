@@ -442,8 +442,18 @@ back. Write one per line:
 - `+Name: value` adds one more header with that name, beside any the traffic already carries.
 - `-Name` removes every header with that name.
 
-One name cannot appear in two of these three forms, or twice in one of them. A value is at most 200 characters, without a single
-quote. `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` belong to the cluster, which writes
+One name cannot appear in two of these three forms, or twice in one of them. A value is one line of at most 4096
+characters. A Content Security Policy fits, quotes and all:
+
+```text
+Content-Security-Policy: default-src 'self'; frame-ancestors 'none'
+```
+
+`Name: value` replaces a policy the server sent. `+Name: value` adds a second one, and the browser enforces both. A
+policy can stop an application from working; `Content-Security-Policy-Report-Only` reports what it would block without
+blocking it. A response whose headers no longer fit HAProxy's 16 KiB buffer with the added ones is answered with a 500.
+
+`X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` belong to the cluster, which writes
 them from what the connection actually was. They are refused here.
 
 **Health check.** *Type* `disabled` means no check. HAProxy then treats every server as always up, sends a

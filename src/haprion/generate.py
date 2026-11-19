@@ -3995,7 +3995,9 @@ def _header_lines(proxy: Proxy) -> list[str]:
     single quoting is what lets a value hold a dollar sign at all. `%` is a
     log-format alias even there and has to be doubled - HAProxy says so itself
     when it refuses to start: "Maybe you want to write a single '%', use the
-    syntax '%%'".
+    syntax '%%'". A single quote - a CSP's 'self' - closes the quoting, is
+    written escaped and opens it again: `'\\''`, one word to HAProxy (measured
+    on 3.4.7, 26-11-19).
     """
 
     lines: list[str] = []
@@ -4004,9 +4006,9 @@ def _header_lines(proxy: Proxy) -> list[str]:
         ("response", proxy.headers.response),
     ):
         for name, value in actions.assign:
-            lines.append(f"    http-{phase} set-header {name} '{_header_value(value)}'")
+            lines.append(f"    http-{phase} set-header {name} '{_edited_value(value)}'")
         for name, value in actions.append:
-            lines.append(f"    http-{phase} add-header {name} '{_header_value(value)}'")
+            lines.append(f"    http-{phase} add-header {name} '{_edited_value(value)}'")
         for name in actions.remove:
             lines.append(f"    http-{phase} del-header {name}")
     return lines
@@ -4014,6 +4016,12 @@ def _header_lines(proxy: Proxy) -> list[str]:
 
 def _header_value(value: str) -> str:
     return value.replace("%", "%%")
+
+
+def _edited_value(value: str) -> str:
+    """A header edit's value, inside single quotes; see `_header_lines`."""
+
+    return _header_value(value).replace("'", "'\\''")
 
 
 def _hsts_value(hsts: Hsts) -> str:

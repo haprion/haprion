@@ -456,6 +456,20 @@ class HeaderEditsAreWrittenAsLines(unittest.TestCase):
 
         self.assertIsNotNone(result.problem)
 
+    def test_a_quoted_policy_is_written_as_the_engine_writes_it(self) -> None:
+        """B496, 2: the same CSP from the form and from a file, one line in HAProxy."""
+
+        result = check(
+            form(response_headers="Content-Security-Policy: default-src 'self'; img-src 'none'")
+        )
+
+        self.assertIsNone(result.problem)
+        self.assertIn(
+            "http-response set-header Content-Security-Policy "
+            "'default-src '\\''self'\\''; img-src '\\''none'\\'''",
+            result.files["1001-app.cfg"],
+        )
+
     def test_a_forwarded_header_is_refused_by_the_engine(self) -> None:
         result = check(form(request_headers="X-Forwarded-For: 203.0.113.1"))
 

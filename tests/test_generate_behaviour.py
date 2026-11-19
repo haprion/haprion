@@ -231,6 +231,8 @@ headers:
   response:
     set:
       X-Frame-Options: DENY
+      Content-Security-Policy: "default-src 'self'; frame-ancestors 'none'"
+      X-Odd: 'it''s a\\b $HOME "q" 50%'
     delete: [Server]
 routes:
   - path: /
@@ -1198,6 +1200,16 @@ class HeaderEditsReachTheTraffic(unittest.TestCase):
 
         self.assertEqual(received["x-trace"], "1")
         self.assertNotIn("x-debug", received)
+
+    def test_a_quoted_policy_arrives_byte_for_byte(self) -> None:
+        """A single quote is written '\\'' and the rest as it stands (B496, 2)."""
+
+        _, answered = self.exchange({})
+
+        self.assertEqual(
+            answered["content-security-policy"], "default-src 'self'; frame-ancestors 'none'"
+        )
+        self.assertEqual(answered["x-odd"], 'it\'s a\\b $HOME "q" 50%')
 
     def test_the_answer_is_edited_on_the_way_out(self) -> None:
         _, answered = self.exchange({})

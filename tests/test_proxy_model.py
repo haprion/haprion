@@ -1294,13 +1294,19 @@ class EditingTheHeadersThatPassThrough(unittest.TestCase):
 
         self.assertIn("the connection actually was", str(raised.exception))
 
-    def test_a_value_with_a_single_quote_is_refused(self) -> None:
-        """The generator writes values in single quotes, so one would end the line."""
+    def test_a_policy_with_quoted_keywords_and_a_few_kilobytes_is_kept(self) -> None:
+        """A CSP quotes 'self' and runs long (B496, 2); the generator escapes the quote."""
 
+        policy = "default-src 'self'; img-src 'none'; " + "a" * (4096 - 36)
+        proxy = load_proxy(
+            "shop",
+            self.headers(f'  response:\n    set:\n      Content-Security-Policy: "{policy}"'),
+        )
+
+        self.assertEqual(proxy.headers.response.assign, (("Content-Security-Policy", policy),))
         with self.assertRaises(ModelError) as raised:
-            load_proxy("shop", self.headers('  request:\n    set:\n      X-Note: "it\'s here"'))
-
-        self.assertIn("single quote", str(raised.exception))
+            load_proxy("shop", self.headers(f'  response:\n    set:\n      X-A: "{policy}a"'))
+        self.assertIn("between 1 and 4096", str(raised.exception))
 
     def test_a_line_break_is_refused_where_it_is_still_a_value(self) -> None:
         """The one injection an HTTP header carries, stopped at the model.

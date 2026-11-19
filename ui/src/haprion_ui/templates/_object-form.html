@@ -41,11 +41,11 @@
 
 {% macro rule_card(rule, open=False) %}
 <details class="rule-card"{% if open %} open{% endif %} data-rule>
-  <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title" data-rule-title>{{ rule.name or 'New rule' }}</span>{% if rule.mode == 'deny' %}<span class="status-badge status-badge-unknown" data-rule-badge>Denying</span>{% else %}<span class="status-badge status-badge-warning" data-rule-badge>Logging</span>{% endif %}<span class="form-group-summary" data-rule-summary>{{ rule.summary }}</span></summary>
+  <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title" data-rule-title>{{ rule.name or 'New rule' }}</span>{% if rule.mode in ('deny', 'block') %}<span class="status-badge status-badge-unknown" data-rule-badge>{{ 'Blocking' if rule.mode == 'block' else 'Denying' }}</span>{% else %}<span class="status-badge status-badge-warning" data-rule-badge>Logging</span>{% endif %}<span class="form-group-summary" data-rule-summary>{{ rule.summary }}</span></summary>
   <input type="hidden" name="rule_index" value="{{ rule.index }}">
   <div class="form-grid">
     <label><span class="field-title">Name</span><input name="rule_name" value="{{ rule.name }}" placeholder="admin-post"></label>
-    <label><span class="field-title">Mode</span><select name="rule_mode">{% for mode in ('log', 'deny') %}<option{% if rule.mode == mode %} selected{% endif %}>{{ mode }}</option>{% endfor %}</select></label>
+    <label><span class="field-title">Mode</span><select name="rule_mode">{% for mode in ('log', 'deny', 'block') %}<option{% if rule.mode == mode %} selected{% endif %}>{{ mode }}</option>{% endfor %}</select></label>
     <label><span class="field-title">Path <span class="optional">(optional)</span></span><input name="rule_path" value="{{ rule.path }}" placeholder="/admin"></label>
     <label><span class="field-title">Path match</span><select name="rule_match">{% for match in ('prefix', 'exact') %}<option{% if rule.match == match %} selected{% endif %}>{{ match }}</option>{% endfor %}</select></label>
   </div>

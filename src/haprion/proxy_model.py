@@ -1119,7 +1119,8 @@ class AccessRule:
 
     `log` lets the request through and records the rule's name on its traffic
     record, so that what a rule would refuse can be seen before it refuses it;
-    `deny` answers 403 and records the same.
+    `deny` answers 403 and records the same; `block` does what `deny` does and
+    blocks the source as the object's dynamic blocking would (B517, 10).
     """
 
     name: str
@@ -2126,6 +2127,11 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
     )
     deny_from = _deny_from(data.get("deny_from"), f"{name}.deny_from", listen.protocol)
     deny_rules = _deny_rules(data.get("deny_rules"), f"{name}.deny_rules")
+    if dynamic_block is None and any(rule.mode == "block" for rule in deny_rules):
+        raise ModelError(
+            f"{name}.deny_rules: a rule in block mode needs dynamic blocking on the object,"
+            " whose table holds the block and whose block_for ends it"
+        )
     max_request_body = _body_size(data.get("max_request_body"), f"{name}.max_request_body")
     waf = _waf(data.get("waf"), f"{name}.waf")
     handwritten = sorted(key for key, backend in backends.items() if backend.written_by_hand)
@@ -2815,7 +2821,12 @@ def _sources(value: Any, location: str, verb: str) -> tuple[str, ...]:
     return tuple(entries)
 
 
-ACCESS_MODES = ("log", "deny")
+#
+# `block` (B517, 10): the match is refused as `deny` refuses it, and its source
+# goes into the object's blocked table for `block_for`, as if it had passed a
+# dynamic limit - a scanner asking for `/.env` is never a visitor.
+#
+ACCESS_MODES = ("log", "deny", "block")
 HEADER_MATCHES = ("equals", "prefix", "contains")
 HTTP_METHODS = ("CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRACE")
 #
@@ -2856,10 +2867,12 @@ MIN_BODY = 1024
 MAX_BODY = 100 * 1024**3
 
 
-def _mode(data: Mapping[str, Any], location: str) -> str:
+def _mode(data: Mapping[str, Any], location: str, modes: tuple[str, ...] = ("log", "deny")) -> str:
+    """`log` or `deny`; a deny rule may also `block` (B517, 10), a `deny_from` list may not."""
+
     mode = data.get("mode", "log")
-    if mode not in ACCESS_MODES:
-        raise ModelError(f"{location}.mode must be one of: {', '.join(ACCESS_MODES)}")
+    if mode not in modes:
+        raise ModelError(f"{location}.mode must be one of: {', '.join(modes)}")
     return str(mode)
 
 
@@ -2923,7 +2936,7 @@ def _deny_rule(value: Any, location: str) -> AccessRule:
                 f"{location}.name {name} starts like {prefix}, a name the generator writes "
                 f"and that a query matches on its beginning; choose a name that does not start with {prefix}"
             )
-    mode = _mode(data, location)
+    mode = _mode(data, location, ACCESS_MODES)
 
     path = data.get("path")
     match = data.get("match", "prefix")

@@ -152,6 +152,10 @@ dynamic_block:
   max_errors: 3
   block_for: 1m
   exempt: [{EXEMPT}]
+deny_rules:
+  - name: env-probe
+    path: /.env
+    mode: block
 routes:
   - path: /
     backend: web
@@ -472,6 +476,27 @@ backends:
         self.assertEqual(first, [404] * 4)
         self.get(a, "127.0.0.43", host=host)
         self.assertEqual(self.reasons(a, "limited").get("127.0.0.43"), "errors")
+
+    def test_a_blocking_rule_blocks_who_walks_into_it_on_both_nodes(self) -> None:
+        """B517, 10: the match is refused, and so is everything after it."""
+
+        a, b = NODES[0][1], NODES[1][1]
+        self.assertEqual(self.get(a, "127.0.0.44", "/.env"), 403)
+        self.assertEqual(self.get(a, "127.0.0.44"), 404, "the next request meets the block")
+        self.assertEqual(self.reasons(a)["127.0.0.44"], "rule")
+        self.assertTrue(self.logged(a, "env-probe:deny"), "the match names its rule")
+        self.assertTrue(self.logged(a, "dynamic-block/rule:deny"), "the block names its reason")
+        self.assertTrue(_until(lambda: self.reasons(b).get("127.0.0.44") == "rule"))
+        self.assertEqual(self.get(b, "127.0.0.44"), 404)
+        self.assertEqual(self.get(a, "127.0.0.45"), 200, "a neighbour is served")
+
+    def test_a_blocking_rule_spares_the_exempt_and_blocks_behind_a_proxy(self) -> None:
+        a = NODES[0][1]
+        self.assertEqual(self.get(a, EXEMPT, "/.env"), 403, "refused, as deny refuses")
+        self.assertEqual(self.get(a, EXEMPT), 200, "but never blocked")
+        self.assertEqual(self.get(a, PROXY, "/.env", forwarded=BEHIND), 403)
+        self.assertEqual(self.get(a, PROXY, forwarded=NEIGHBOUR), 200, "the proxy is not blocked")
+        self.assertEqual(list(self.blocked(a)), [BEHIND])
 
     def test_an_exempt_address_is_never_blocked(self) -> None:
         a = NODES[0][1]

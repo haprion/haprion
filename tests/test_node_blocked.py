@@ -14,6 +14,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from haprion.generate import BLOCK_REASONS
+
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-node-status"
 PARSING = re.compile(r"^BLOCKED_TABLE = .*?(?=^def read_blocked\()", re.DOTALL | re.MULTILINE)
 
@@ -60,6 +62,11 @@ def parsing() -> dict[str, Any]:
 class ReadingTheBlockedTables(unittest.TestCase):
     def setUp(self) -> None:
         self.parsing = parsing()
+
+    def test_the_node_knows_every_reason_the_generator_stores(self) -> None:
+        """Two copies, the node script's and the generator's; one added alone is a reason never shown."""
+
+        self.assertEqual(self.parsing["BLOCK_REASONS"], BLOCK_REASONS)
 
     def test_only_the_blocked_tables_count_by_object(self) -> None:
         self.assertEqual(self.parsing["parse_blocked_tables"](TABLES), {"shop": 2, "db": 0})

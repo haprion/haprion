@@ -1467,6 +1467,8 @@ backends:
                 "if { var(txn.dynblock) -m int 3 }",
                 "http-request set-var(txn.rule) str(dynamic-block/manual:deny) "
                 "if { var(txn.dynblock) -m int 4 }",
+                "http-request set-var(txn.rule) str(dynamic-block/rule:deny) "
+                "if { var(txn.dynblock) -m int 5 }",
                 "http-request deny deny_status 429 if { var(txn.dynblock) -m found }",
                 "backend mgd-shop-dynblock-rate",
                 "backend mgd-shop-dynblock",

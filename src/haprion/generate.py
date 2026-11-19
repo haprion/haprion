@@ -141,7 +141,7 @@ BLOCK_RULE = "dynamic-block:deny"
 # the part before the colon keep reading as they did. 0 is an entry the old
 # configuration placed, which says nothing and is logged as `BLOCK_RULE`.
 #
-BLOCK_REASONS = {1: "requests", 2: "errors", 3: "connections", 4: "manual"}
+BLOCK_REASONS = {1: "requests", 2: "errors", 3: "connections", 4: "manual", 5: "rule"}
 BLOCK_REASON_BY_NAME = {name: code for code, name in BLOCK_REASONS.items()}
 
 FRONTEND_FILE = "1000-frontends.cfg"
@@ -2850,6 +2850,37 @@ def _client_rules(proxy: Proxy, host: str, trusted: bool) -> list[str]:
 HEADER_MATCH_FLAGS = {"equals": "str", "prefix": "beg", "contains": "sub"}
 
 
+def _rule_block(
+    proxy: Proxy, condition: str, trusted: bool, exempt_source: str, exempt_forwarded: str
+) -> list[str]:
+    """A `block` rule's match, placed in the object's blocked table (B517, 10).
+
+    The same entry a limit places (`_http_block_lines`): tracked on the mark's
+    counter, keyed on the visitor - the forwarded address behind a trusted
+    proxy, never the proxy - and stamped with the reason `rule`. Its expiry is
+    `block_for`, and every later match starts it again. An address that is
+    never blocked is not tracked, so the stamp, which acts on the tracked entry
+    alone, does nothing for it. The match itself is refused by `_verdict`
+    after these lines; the requests after it meet the block in the pools.
+    """
+
+    _, blocked = block_tables(proxy.name)
+    mark = f"    http-request track-sc{BLOCK_MARK_COUNTER}"
+    if trusted:
+        tracked = [
+            f"{mark} req.hdr_ip(X-Forwarded-For,-1) table {blocked} "
+            f"if {condition} {TRUSTED_ACL}{exempt_forwarded}",
+            f"{mark} src table {blocked} if {condition} !{TRUSTED_ACL}{exempt_source}",
+        ]
+    else:
+        tracked = [f"{mark} src table {blocked} if {condition}{exempt_source}"]
+    return [
+        *tracked,
+        f"    http-request sc-set-gpt(0,{BLOCK_MARK_COUNTER}) {BLOCK_REASON_BY_NAME['rule']} "
+        f"if {condition}",
+    ]
+
+
 def _verdict(condition: str, name: str, mode: str) -> list[str]:
     """What a matched rule does, and the name it leaves on the traffic record.
 
@@ -2863,6 +2894,11 @@ def _verdict(condition: str, name: str, mode: str) -> list[str]:
             f"    http-request set-var(txn.rule) str({name}:log) "
             f"if {condition} !{{ var(txn.rule) -m found }}"
         ]
+    #
+    # `block` answers its match as `deny` does, and the record says `deny`:
+    # this request was refused by the rule. The block is told by the record
+    # of the requests after it, `dynamic-block/rule:deny` (B517, 10).
+    #
     return [
         f"    http-request set-var(txn.rule) str({name}:deny) if {condition}",
         f"    http-request deny deny_status 403 if {condition}",
@@ -2959,6 +2995,13 @@ def _access_rules(
         lines.extend(_address_acl(acl, fetch, proxy.deny_from.sources, networks))
         lines.extend(_verdict(f"{host} {acl}", "deny-from", proxy.deny_from.mode))
     lines.extend(_access_path_rules(proxy, host))
+    blocking = proxy.dynamic_block is not None and any(
+        rule.mode == "block" for rule in proxy.deny_rules
+    )
+    exempt_source = exempt_forwarded = ""
+    if blocking:
+        exempt, exempt_source, exempt_forwarded = _block_exempt(proxy, networks, forwarded=trusted)
+        lines.extend(exempt)
     for index, rule in enumerate(proxy.deny_rules):
         prefix = f"rule{index}"
         condition = [host]
@@ -3000,6 +3043,10 @@ def _access_rules(
             acl = _acl_name(proxy.name, f"{prefix}-source")
             lines.extend(_address_acl(acl, fetch, rule.sources, networks))
             condition.append(f"!{acl}" if rule.source_negate else acl)
+        if rule.mode == "block":
+            lines.extend(
+                _rule_block(proxy, " ".join(condition), trusted, exempt_source, exempt_forwarded)
+            )
         lines.extend(_verdict(" ".join(condition), rule.name, rule.mode))
     if proxy.max_request_body is not None:
         #

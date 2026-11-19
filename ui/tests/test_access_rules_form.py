@@ -123,6 +123,30 @@ class TheFormWritesTheRules(EditorTestCase):
         self.assertIn("names no condition", answer.text)
         self.assertEqual(self.saved, [])
 
+    def test_a_blocking_rule_is_offered_and_needs_dynamic_blocking(self) -> None:
+        """B517, 10: the block lives in the object's dynamic blocking table."""
+
+        client = self.editor()
+
+        page = self.submit(client, "/proxies/alpha/shop/edit", action="check").text
+        self.assertIn(
+            "<option>block</option>", page.split('name="rule_mode"')[1].split("</select>")[0]
+        )
+        answer = self.submit(
+            client,
+            "/proxies/alpha/shop/edit",
+            action="save",
+            rule_index=["0"],
+            rule_name=["env-probe"],
+            rule_mode=["block"],
+            rule_path=["/.env"],
+            rule_match=["prefix"],
+        )
+
+        self.assertEqual(answer.status_code, 200)
+        self.assertIn("needs dynamic blocking", answer.text)
+        self.assertEqual(self.saved, [])
+
     def test_a_raw_port_posts_no_rules(self) -> None:
         """The fields are hidden for tcp, and hidden fields still post."""
 
@@ -213,6 +237,9 @@ class AddingAndRemovingRulesInTheBrowser(EditorTestCase):
         )
         rule.locator("input[name=rule_name]").fill("")
         self.assertEqual(rule.locator("[data-rule-title]").inner_text(), "New rule")
+        rule.locator("select[name=rule_mode]").select_option("block")
+        self.assertEqual(badge.inner_text(), "Blocking")
+        self.assertIn("status-badge-unknown", badge.get_attribute("class") or "")
 
     def test_what_the_browser_posts_is_the_rules_on_the_screen(self) -> None:
         client = self.editor()

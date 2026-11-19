@@ -69,6 +69,16 @@ class TheAccessGroupSaysWhatItsRulesDo(unittest.TestCase):
             [("2 logging", "warning"), ("1 denying", "unknown")],
         )
 
+    def test_a_blocking_rule_is_counted_with_the_refusals(self) -> None:
+        """B517, 10: it refuses its match as a denying rule does."""
+
+        state = form_groups({"rule_mode": ["block", "log"]})["access"]
+
+        self.assertEqual(
+            [(badge.text, badge.kind) for badge in state.badges],
+            [("1 logging", "warning"), ("1 denying", "unknown")],
+        )
+
     def test_an_object_without_rules_shows_no_badge(self) -> None:
         self.assertEqual(form_groups({})["access"].badges, ())
 

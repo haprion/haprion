@@ -1597,7 +1597,8 @@ proxy*), below *Reachable from*, *Rate limit* and *Rate window*
   *deny*; it starts as *log only*, so nobody is refused until it is *deny*.
 - **Max request body** (http and https) is the largest body a request may declare, such as `10m`.
 - **Deny rules** (http and https) are tried in order, and any one of them is enough. *Add rule* adds one
-  and *Remove rule* drops it. A rule has a *Name*, a *Mode* (*log* or *deny*), and the conditions it names:
+  and *Remove rule* drops it. A rule has a *Name*, a *Mode* (*log*, *deny* or *block*), and the conditions it
+  names:
   - a *Path*, with its *Path match* (*prefix* or *exact*);
   - one or more *Methods*;
   - a *Header*, with its *Header match* (*equals*, *prefix* or *contains*) and *Header value*;
@@ -1688,6 +1689,18 @@ date its published lists were made from. The data is IPFire Location, licensed u
 **Look before refusing.** A new rule starts in *log* mode. The request is served, and the rule's name is
 written on its traffic record as `admin-post:log`. In *deny* mode the visitor gets a 403, and the record
 says `admin-post:deny`.
+
+**Block whoever walks into a rule.** A visitor who asks for `/.env` or `/wp-login.php` on a site that has neither
+is not a visitor. In *block* mode the request is refused as in *deny* mode, and the address is blocked for the
+object's *Block for*, as if it had gone over a [dynamic blocking](#dynamic-blocking) limit. Every later match
+starts that time again. The object needs dynamic blocking, and its *Never blocked* addresses are refused but
+never blocked. The block is on *Blocked addresses* with its reason. Try the rule in *log* mode first: a wrongly
+written rule blocks real visitors. No list of paths comes with Haprion; for example, as rules with a *prefix*
+path:
+
+```text
+/.env    /.git/    /wp-login.php    /phpmyadmin/
+```
 
 - The first logged rule a request meets is the one recorded. A refusal always names itself.
 - *Denied* (`deny_from`) is recorded as `deny-from`.
@@ -1915,8 +1928,9 @@ records from before the reason was kept and `dynamic-block/<reason>` since; matc
 reaches the other nodes with the block. It is the limit that last renewed the block: every request over a
 limit writes it again, so an address blocked through the API that then goes over a limit shows that limit instead
 of *Blocked through the API*. It is *Too many requests* or *Too many errors* when the address went
-over that limit, *Too many new connections* for a tcp object's limit, and *Blocked through the API* for an
-address placed through the API. An address over both limits shows the requests. A block
+over that limit, *Too many new connections* for a tcp object's limit, *Blocked through the API* for an
+address placed through the API, and *Matched a deny rule in block mode* for a
+[rule that blocks](#access-rules). An address over both limits shows the requests. A block
 placed before the object had a reason, and one that a node cannot tell, shows none.
 
 **Which address is blocked.** The one the rate limit counts: behind a trusted proxy, the last element of

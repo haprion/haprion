@@ -12,6 +12,10 @@ dynamic_block:
   max_errors: 20
   block_for: 30m
   exempt: [office, 192.0.2.10]
+deny_rules:
+  - name: env-probe
+    path: /.env
+    mode: block
 routes:
   - path: /api
     backend: api

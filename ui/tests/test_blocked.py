@@ -17,6 +17,8 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
+from haprion.generate import BLOCK_REASONS
+
 from haprion_ui import auth, blocked, db, demo, refusals
 from haprion_ui.db import ClusterStatus
 from haprion_ui.form_groups import form_groups
@@ -52,6 +54,13 @@ def held(count: int, *addresses: tuple[str, int]) -> dict[str, Any]:
         "count": count,
         "addresses": [{"address": address, "expires_in_ms": left} for address, left in addresses],
     }
+
+
+class EveryReasonIsSaid(unittest.TestCase):
+    def test_each_reason_the_generator_stores_has_its_words(self) -> None:
+        """A reason added to the generator alone would be shown as no reason at all (B517, 10)."""
+
+        self.assertEqual(set(blocked.REASON_TEXT), set(BLOCK_REASONS.values()))
 
 
 class TheCard(unittest.TestCase):

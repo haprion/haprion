@@ -121,8 +121,11 @@ def _access_badges(form: Mapping[str, Any]) -> tuple[Badge, ...]:
     denied = any(str(name).strip() for name in form.get("deny_from", ()) or ())
     if denied or _lines(form, "deny_ranges"):
         modes.append(_text(form, "deny_mode") or "log")
-    logging = sum(mode != "deny" for mode in modes)
-    denying = sum(mode == "deny" for mode in modes)
+    logging = sum(mode == "log" for mode in modes)
+    #
+    # A blocking rule refuses its match as a denying one does (B517, 10).
+    #
+    denying = sum(mode in ("deny", "block") for mode in modes)
     return tuple(
         Badge(text, kind)
         for text, kind, count in (

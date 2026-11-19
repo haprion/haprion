@@ -701,6 +701,17 @@ class WhoAndWhatAnObjectRefuses(unittest.TestCase):
             "/Admin/v1.2/x",
         )
 
+    def test_a_blocking_rule_needs_the_object_s_dynamic_blocking(self) -> None:
+        """B517, 10: the block is an entry in that table, ended by its block_for."""
+
+        rule = "deny_rules:\n  - name: env-probe\n    path: /.env\n    mode: block"
+        self.assertIn("needs dynamic blocking", self.refused(rule))
+        block = "dynamic_block:\n  window: 10s\n  max_errors: 20\n  block_for: 1h"
+        self.assertEqual(self.load(f"{block}\n{rule}").deny_rules[0].mode, "block")
+        self.assertIn(
+            "one of: log, deny", self.refused("deny_from:\n  mode: block\n  sources: [office]")
+        )
+
     def test_two_rules_may_not_share_a_name(self) -> None:
         block = "deny_rules:\n  - name: a\n    path: /x\n  - name: a\n    path: /y"
         self.assertIn("same rule twice", self.refused(block))

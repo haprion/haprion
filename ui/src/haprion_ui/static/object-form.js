@@ -518,9 +518,10 @@
       if (!rule) return;
       const name = rule.querySelector("input[name='rule_name']").value.trim();
       rule.querySelector("[data-rule-title]").textContent = name || "New rule";
-      const deny = rule.querySelector("select[name='rule_mode']").value === "deny";
+      const mode = rule.querySelector("select[name='rule_mode']").value;
+      const deny = mode !== "log";
       const badge = rule.querySelector("[data-rule-badge]");
-      badge.textContent = deny ? "Denying" : "Logging";
+      badge.textContent = { log: "Logging", deny: "Denying", block: "Blocking" }[mode] || "Logging";
       badge.classList.toggle("status-badge-unknown", deny);
       badge.classList.toggle("status-badge-warning", !deny);
       if (!["rule_name", "rule_mode"].includes(event.target.name)) {

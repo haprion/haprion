@@ -233,7 +233,15 @@ class MarkingARange(TheChartInABrowser):
         with self.signed_in() as page:
             page.route("**/metrics?*", slow_all)
             page.click(".metrics-clusters a:has-text('All')")
-            page.wait_for_function("() => true")
+            #
+            # The route sees the answer for All only once the page has asked for
+            # it; a wait that returned at once lost that race on CI's runner
+            # (26-11-20). Waiting lets Playwright run the route meanwhile.
+            #
+            for _ in range(100):
+                if held:
+                    break
+                page.wait_for_timeout(50)
             self.assertEqual(len(held), 1)
             page.click(".metrics-clusters a:has-text('service-demo')")
             page.wait_for_function(

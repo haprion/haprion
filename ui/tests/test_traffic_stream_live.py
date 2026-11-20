@@ -84,10 +84,23 @@ def die_with_the_test_run() -> None:
     ctypes.CDLL("libc.so.6", use_errno=True).prctl(_PR_SET_PDEATHSIG, signal.SIGKILL)
 
 
+#
+# The engine suite's `tests/spawned.py` holds the same helper; this suite has a
+# `tests` package of its own and cannot import it. The kernel hands a port it
+# just took back to the next bind (measured 26-11-20), so two calls in a row can
+# return one port: the ports handed out are remembered.
+#
+_HANDED_OUT: set[int] = set()
+
+
 def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+    while True:
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = int(sock.getsockname()[1])
+        if port not in _HANDED_OUT:
+            _HANDED_OUT.add(port)
+            return port
 
 
 def wait_until(condition: object, what: str, timeout: float = 5.0) -> None:

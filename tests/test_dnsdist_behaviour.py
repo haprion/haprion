@@ -33,31 +33,12 @@ from haprion.config import Vip
 from haprion.generate import generate
 from haprion.golden import cases, expected_dns
 from haprion.proxy_model import load_proxy
+from tests.spawned import free_port
 from tests.test_node_dns_metrics import parse_dns_metrics
 
 DNSDIST = shutil.which("dnsdist")
 # Starts of dnsdist before a lost port is a failure (see setUp).
 STARTS = 5
-
-
-def free_port() -> int:
-    """A port free for both UDP and TCP, which dnsdist binds together.
-
-    Asking UDP alone lost one run in the full gate (2026-10-06): another test
-    process held the same number over TCP, dnsdist could not bind its TCP
-    listener, and the answer never came.
-    """
-
-    while True:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as stream:
-            stream.bind(("127.0.0.1", 0))
-            port = int(stream.getsockname()[1])
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as datagram:
-                try:
-                    datagram.bind(("127.0.0.1", port))
-                except OSError:
-                    continue
-                return port
 
 
 def question(name: str) -> bytes:

@@ -156,5 +156,38 @@ class ATakenPortIsTriedAgain(unittest.TestCase):
         self.assertEqual(calls, [1])
 
 
+class AFreePortIsNeverHandedOutTwice(unittest.TestCase):
+    """Two objects of one test were given one port, and the generator refused them (26-11-20)."""
+
+    def test_a_process_is_never_given_one_port_twice(self) -> None:
+        #
+        # The kernel repeated a port 133 times in 2000 binds (26-11-20); a
+        # helper that does not remember fails this every time.
+        #
+        ports = [spawned.free_port() for _ in range(3000)]
+        self.assertEqual(len(ports), len(set(ports)))
+
+    def test_the_port_is_free_over_udp_too(self) -> None:
+        port = spawned.free_port()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as datagram:
+            datagram.bind(("127.0.0.1", port))
+
+    def test_the_engine_suite_has_one_helper(self) -> None:
+        #
+        # Copies drifted: four modules had their own, without the UDP check or
+        # the memory. The interface suite's lone copy is its own package's
+        # (`ui/tests/test_traffic_stream_live.py`) and remembers too.
+        #
+        copies = [
+            path.name
+            for path in sorted((ROOT / "tests").glob("*.py"))
+            if path.name != "spawned.py"
+            and re.search(r"^def free_port\(", path.read_text(encoding="utf-8"), re.M)
+        ]
+        self.assertEqual(copies, [])
+        stream = (ROOT / "ui" / "tests" / "test_traffic_stream_live.py").read_text()
+        self.assertIn("_HANDED_OUT", stream)
+
+
 if __name__ == "__main__":
     unittest.main()

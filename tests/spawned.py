@@ -44,10 +44,38 @@ def die_with_the_test_run() -> None:
     ctypes.CDLL("libc.so.6", use_errno=True).prctl(_PR_SET_PDEATHSIG, signal.SIGKILL)
 
 
+#
+# Ports this process has handed out. The kernel gives a port it just took back
+# to the next bind as readily as any other: 133 repeats in 2000 calls, and two
+# calls in a row returned the same port once in 5000 (measured 26-11-20). Two
+# objects of one test were then given one port, and the generator refused them
+# as sharing a listener (test_dnsdist_behaviour, full gate on 3.14, 26-11-20).
+#
+_HANDED_OUT: set[int] = set()
+
+
 def free_port() -> int:
-    with socket.socket() as held:
-        held.bind(("127.0.0.1", 0))
-        return int(held.getsockname()[1])
+    """A port free over both TCP and UDP, and never one this process handed out before.
+
+    Both, since dnsdist and HAProxy's QUIC bind the number over the two at once:
+    asking UDP alone lost one run in the full gate (2026-10-06), another test
+    process held the same number over TCP. Free means free when asked; another
+    process can still take it before it is bound (`retry_on_taken_port`).
+    """
+
+    while True:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as stream:
+            stream.bind(("127.0.0.1", 0))
+            port = int(stream.getsockname()[1])
+            if port in _HANDED_OUT:
+                continue
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as datagram:
+                try:
+                    datagram.bind(("127.0.0.1", port))
+                except OSError:
+                    continue
+        _HANDED_OUT.add(port)
+        return port
 
 
 #

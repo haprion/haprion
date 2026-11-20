@@ -60,7 +60,7 @@ from haprion.generate import (
 from haprion.proxy_model import Proxy, load_proxy
 from haprion.route_match import order_routes, rewrite, select
 from tests import spawned
-from tests.spawned import start_haproxy, wait_for
+from tests.spawned import free_port, start_haproxy, wait_for
 
 
 def load_apart(name: str, document: bytes) -> Proxy:
@@ -342,12 +342,6 @@ def write_release(root: Path, layer: GeneratedLayer, certificates: Path | None =
     for name, content in layer.map_files.items():
         (root / "maps" / name).write_text(content)
     return ["-f", str(root / "haproxy.cfg"), "-f", str(root / "conf.d")]
-
-
-def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
 
 
 def held_dead_port() -> socket.socket:

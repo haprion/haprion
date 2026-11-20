@@ -30,13 +30,8 @@ from haprion.config import Vip
 from haprion.generate import generate
 from haprion.proxy_model import load_proxy
 from tests import spawned
-from tests.spawned import start_haproxy, wait_for
-from tests.test_generate_behaviour import (
-    echo_server,
-    free_port,
-    self_signed,
-    write_release,
-)
+from tests.spawned import free_port, start_haproxy, wait_for
+from tests.test_generate_behaviour import echo_server, self_signed, write_release
 
 SITE = """
 schema: 1

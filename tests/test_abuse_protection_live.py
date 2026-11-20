@@ -20,8 +20,8 @@ from haprion.config import AbuseProtection, Vip
 from haprion.generate import generate
 from haprion.proxy_model import load_proxy
 from tests import spawned
-from tests.spawned import start_haproxy
-from tests.test_generate_behaviour import free_port, write_release
+from tests.spawned import free_port, start_haproxy
+from tests.test_generate_behaviour import write_release
 
 WINDOW = 3
 

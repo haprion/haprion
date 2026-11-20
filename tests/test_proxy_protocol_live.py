@@ -28,8 +28,8 @@ from haprion.config import Vip
 from haprion.generate import generate
 from haprion.proxy_model import load_proxy
 from tests import spawned
-from tests.spawned import start_haproxy, wait_for
-from tests.test_generate_behaviour import free_port, write_release
+from tests.spawned import free_port, start_haproxy, wait_for
+from tests.test_generate_behaviour import write_release
 
 SIGNATURE = b"\r\n\r\n\x00\r\nQUIT\n"
 

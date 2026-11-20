@@ -26,6 +26,7 @@ from pathlib import Path
 from unittest import mock
 
 from haprion import cert_receiver
+from tests.spawned import free_port
 
 TEMPLATE = Path(__file__).resolve().parents[1] / "install" / "platform" / "examples"
 NGINX = shutil.which("nginx") or "/usr/sbin/nginx"
@@ -41,12 +42,6 @@ def nginx_version() -> tuple[int, ...] | None:
     )
     found = re.search(r"nginx/(\d+)\.(\d+)\.(\d+)", answer.stderr + answer.stdout)
     return tuple(int(part) for part in found.groups()) if found else None
-
-
-def free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
 
 
 # Starts of nginx before a lost port is a failure (see `serving`).

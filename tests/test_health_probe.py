@@ -26,14 +26,9 @@ from pathlib import Path
 from typing import Any
 
 from tests import spawned
+from tests.spawned import free_port
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-health-probe"
-
-
-def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
 
 
 class Handler(BaseHTTPRequestHandler):

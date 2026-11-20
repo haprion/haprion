@@ -853,6 +853,16 @@ class AStoredObjectMayWriteWhatTheFormLeavesUnsaid(unittest.TestCase):
         self.assertEqual(reopened["health_method"], "HEAD")
 
 
+class AnInternationalNameOpensAsItsAsciiForm(unittest.TestCase):
+    def test_a_name_stored_in_unicode_opens_as_xn(self) -> None:
+        stored = build_document(form()).replace("app.example.com", "b\u00fccher.example.com")
+        self.assertIn("b\u00fccher.example.com", stored)
+
+        reopened = form_from_document(stored)
+
+        self.assertEqual(reopened["hostnames"], "xn--bcher-kva.example.com")
+
+
 class TheCheckTimingTheObjectAsksFor(unittest.TestCase):
     """Interval, rise and fall, which the form had no field for until now.
 

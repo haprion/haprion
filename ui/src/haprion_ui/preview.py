@@ -1530,6 +1530,23 @@ def _with_normalised_limits(data: Any) -> Any:
     return {**data, "path_limits": limits}
 
 
+def _with_ascii_hostnames(data: Any) -> Any:
+    """The stored object with its hostnames in their `xn--` form, the one the form shows and saves.
+
+    A file written with `bücher.example.com` means the same name to the engine,
+    which reads it as `xn--bcher-kva.example.com`; the form opens it so. A name
+    with no such form is left as written, and the engine's own refusal stands.
+    """
+
+    names = data.get("hostnames") if isinstance(data, Mapping) else None
+    if not isinstance(names, list):
+        return data
+    return {
+        **data,
+        "hostnames": [_ascii(name) if isinstance(name, str) else name for name in names],
+    }
+
+
 def _with_normalised_pool_defaults(data: Any) -> Any:
     """The stored object with a pool's default `http_version` and check `method` left unsaid.
 
@@ -1702,7 +1719,7 @@ def form_from_document(document: str, *, networks: Collection[str] = ()) -> dict
     """
 
     try:
-        data = read_document("object", document.encode())
+        data = _with_ascii_hostnames(read_document("object", document.encode()))
         form = _form_fields(data, networks)
     except (ModelError, ValueError) as exc:
         raise Unexpressible(str(exc)) from exc

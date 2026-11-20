@@ -336,8 +336,10 @@ Below are the fields in the order the form shows them.
   characters and unique in the cluster.
 - *Hostnames* takes several names separated by commas. One of them may be a whole subdomain
   ([A whole subdomain](#a-whole-subdomain)). A name with letters such as å or ü is kept in the form DNS and
-  certificates use: `bücher.example.com` is saved, shown and searched as `xn--bcher-kva.example.com`. A name
-  with ß or ς is refused, because its form depends on the rules a resolver follows.
+  certificates use: `bücher.example.com` typed here is saved as `xn--bcher-kva.example.com`. An object file
+  keeps the spelling it was written with, but the form, the cluster, the lists and the search use the
+  `xn--` form either way. A name with ß or ς is refused, because its form depends on the rules a resolver
+  follows.
 - *VIP* is the cluster's default VIP unless you choose another. http and https are served on the cluster's
   own ports, so a site names no port.
 - *Description* is the one line described above.

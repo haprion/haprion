@@ -2419,6 +2419,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .log-table tr:has(+ .log-timings:not([hidden])) td { border-bottom: 0; }
 /* Even air above and below the timings: the request row above keeps its own 6 px, so 2 and 8 centre the line (26-11-19). */
 .log-table .log-timings td { padding-top: 2px; padding-bottom: 8px; white-space: normal; }
+/* No band of its own under the pointer: hovered, it showed the line high in it, as a certificate's detail did (26-11-20). */
+.log-table tbody tr.log-timings:hover { background: transparent; }
 .log-timing-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; color: var(--text-primary); font-size: 12px; font-variant-numeric: tabular-nums; }
 .log-timing-line em { margin-right: 6px; color: var(--muted); font-style: normal; }
 .log-timing-line .log-ended { color: var(--warning-text); }

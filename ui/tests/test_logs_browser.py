@@ -458,6 +458,29 @@ class AnOpenedRowInABrowser(unittest.TestCase):
             ".log-timing-line span",
         )
 
+    def test_a_request_s_timings_take_no_band_of_their_own_under_the_pointer(self) -> None:
+        """Hovered, the timings row showed its own band: 2 px above the line, 8.5 below (26-11-20).
+
+        The air is even between the request's text and the timings' (above);
+        a band of the timings row's own would show the line high in it. A
+        certificate's detail row takes no hover either.
+        """
+
+        row = "<tr id=a><td><time>26-11-19 10:00:00</time></td></tr>"
+        timings = (
+            "<tr class=log-timings id=t><td>"
+            "<div class=log-timing-line><span><em>Total</em>12 ms</span></div></td></tr>"
+        )
+        self.page.set_content(
+            f"<style>{self.css}</style>"
+            f"<table class='node-table log-table'><tbody>{row}{timings}{row}</tbody></table>"
+        )
+        self.page.hover("#t")
+        self.assertEqual(
+            self.page.evaluate("getComputedStyle(document.querySelector('#t')).backgroundColor"),
+            "rgba(0, 0, 0, 0)",
+        )
+
     def test_a_certificate_s_detail(self) -> None:
         self.assert_even(
             "<table class='node-table registry-table'><tbody>"

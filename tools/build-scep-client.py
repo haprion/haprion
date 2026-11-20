@@ -36,6 +36,11 @@ PROGRAMS = {
     "LICENSE": "./usr/share/doc/certmonger/copyright",
 }
 OSV_QUERY = "https://api.osv.dev/v1/query"
+#
+# Who is asking: some archives refuse urllib's own `Python-urllib/3.x`
+# (archive.ubuntu.com answered it 403, 26-11-20).
+#
+USER_AGENT = "haprion-build-scep-client"
 ECOSYSTEMS = {"debian": "Debian", "ubuntu": "Ubuntu"}
 #
 # OSV answers a release it has no data for exactly as a release with no
@@ -50,7 +55,7 @@ def osv_query(body: dict[str, Any]) -> dict[str, Any]:
     request = urllib.request.Request(  # fixed https endpoint
         OSV_QUERY,
         data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310 - fixed https endpoint

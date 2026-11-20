@@ -63,6 +63,11 @@ LIB = "usr/lib/haprion/scep"
 ROOT = "/opt/haprion-scep"
 STEP = "/usr/share/haprion-ui/install/platform/16-platform-scep"
 MAX_BYTES = 16 * 1024 * 1024
+#
+# Who is asking: some archives refuse urllib's own `Python-urllib/3.x`
+# (archive.ubuntu.com answered it 403, 26-11-20).
+#
+USER_AGENT = "haprion-build-scep-package"
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,7 +158,8 @@ fi
 
 
 def fetch(url: str, digest: str) -> bytes:
-    with urllib.request.urlopen(url, timeout=120) as response:  # noqa: S310 - pinned https pool
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})  # noqa: S310 - pinned https pool
+    with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310 - pinned https pool
         data: bytes = response.read(MAX_BYTES + 1)
     if len(data) > MAX_BYTES:
         raise ui.BuildError(f"{url} is larger than {MAX_BYTES} bytes")

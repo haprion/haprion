@@ -51,6 +51,11 @@ CRS_SHARE = "usr/share/haprion/crs"
 GPG = "/usr/bin/gpg"
 GPGV = "/usr/bin/gpgv"
 DPKG_DEB = "/usr/bin/dpkg-deb"
+#
+# Who is asking: some archives refuse urllib's own `Python-urllib/3.x`
+# (archive.ubuntu.com answered it 403, 26-11-20).
+#
+USER_AGENT = "haprion-crs-regression"
 # Ports of their own: 8080 is the management interface's on a manager.
 HAPROXY_PORT = 18080
 BACKEND_PORT = 18081
@@ -341,7 +346,10 @@ def download(url: str, path: Path) -> None:
         return
     partial = path.with_name(path.name + ".partial")
     with (
-        urllib.request.urlopen(url, timeout=120) as response,  # noqa: S310 - https only, checked above
+        urllib.request.urlopen(  # noqa: S310 - https only, checked above
+            urllib.request.Request(url, headers={"User-Agent": USER_AGENT}),  # noqa: S310
+            timeout=120,
+        ) as response,
         partial.open("wb") as out,
     ):
         shutil.copyfileobj(response, out)

@@ -6,7 +6,9 @@ The OIDC client, the NDES fetch and the blocklist fetch each built their own
 opener, and none said who it was. They now share `http_answer.opener`, which
 does; this refuses a module that builds an opener or calls `urlopen` beside it,
 and a UI module that calls `urlopen` without naming itself, as the update check
-does.
+does. The release tools under tools/ are held to the same rule (26-11-20):
+archive.ubuntu.com answered the SCEP build's `Python-urllib` 403 and a named
+client 206, and the release could not be built.
 """
 
 from __future__ import annotations
@@ -25,7 +27,23 @@ from haprion import http_answer
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE = ROOT / "src" / "haprion"
 INTERFACE = ROOT / "ui" / "src" / "haprion_ui"
+TOOLS = ROOT / "tools"
 CALLS = ("build_opener", "urlopen")
+
+
+def _python_tools() -> list[Path]:
+    """Every Python file under tools/, the scripts without a suffix included."""
+
+    return sorted(
+        path
+        for path in TOOLS.rglob("*")
+        if path.is_file()
+        and "__pycache__" not in path.parts
+        and (
+            path.suffix == ".py"
+            or (not path.suffix and path.read_bytes()[:64].startswith(b"#!/usr/bin/env python"))
+        )
+    )
 
 
 def _calls(path: Path) -> list[str]:
@@ -56,6 +74,15 @@ class EveryClientNamesItself(unittest.TestCase):
             for call in _calls(path)
         ]
         self.assertEqual(silent, [], "send a User-Agent, as update_check does")
+
+    def test_a_release_tool_request_names_itself(self) -> None:
+        silent = [
+            call
+            for path in _python_tools()
+            if "User-Agent" not in path.read_text(encoding="utf-8")
+            for call in _calls(path)
+        ]
+        self.assertEqual(silent, [], "send a User-Agent: some archives refuse Python-urllib")
 
     def test_the_shared_opener_sends_haprions_name(self) -> None:
         seen: list[str | None] = []

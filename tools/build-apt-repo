@@ -221,12 +221,18 @@ def sign(release: Path, key_file: Path) -> None:
 
 
 FETCH_TIMEOUT = 120
+#
+# Who is asking: some archives refuse urllib's own `Python-urllib/3.x`
+# (archive.ubuntu.com answered it 403, 26-11-20).
+#
+USER_AGENT = "haprion-build-apt-repo"
 
 
 def _get(url: str) -> bytes:
     if not url.startswith("https://"):
         raise RepoError(f"refusing a non-https site: {url}")
-    with urllib.request.urlopen(url, timeout=FETCH_TIMEOUT) as response:  # noqa: S310 - https only, checked above
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})  # noqa: S310 - https only, checked above
+    with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT) as response:  # noqa: S310 - https only, checked above
         return bytes(response.read())
 
 

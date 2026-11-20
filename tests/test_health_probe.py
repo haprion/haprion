@@ -13,12 +13,16 @@ actually opened the connection.
 from __future__ import annotations
 
 import ast
+import importlib.machinery
+import importlib.util
+import io
 import json
 import re
 import shutil
 import socket
 import ssl
 import subprocess as sp
+import sys
 import tempfile
 import threading
 import time
@@ -26,6 +30,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from haprion.health_probe import OLD_NODE_REFUSAL
 from tests import spawned
@@ -1197,6 +1202,50 @@ class AnExpiredCertificate(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(answer["results"][0]["ok"], answer)
         self.assertEqual(answer["results"][0]["certificate"]["not_after"], "2020-01-02T00:00:00Z")
+
+
+class CurlIsHeldToTheRequest(unittest.TestCase):
+    """The HTTP/2 check's curl reads nothing the request did not hand it."""
+
+    def curl_call(self) -> tuple[list[str], dict[str, str] | None]:
+        loader = importlib.machinery.SourceFileLoader("health_probe_script", str(SCRIPT))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        assert spec is not None
+        module: Any = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        module.CURL_COMMANDS = (sys.executable,)
+        seen: dict[str, Any] = {}
+
+        def run(argv: list[str], **kwargs: Any) -> sp.CompletedProcess[bytes]:
+            seen["argv"] = argv
+            seen["env"] = kwargs.get("env")
+            return sp.CompletedProcess(argv, 0, b"", b"")
+
+        entry = module.read_request(
+            io.BytesIO(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "targets": [target(host="192.0.2.10", port=443, tls=True, http2=True)],
+                    }
+                ).encode()
+            )
+        )["targets"][0]
+        with mock.patch.object(module.subprocess, "run", run):
+            module.http2_check(entry, 1000, None)
+        return seen["argv"], seen["env"]
+
+    def test_curl_is_told_first_to_read_no_config_file(self) -> None:
+        """`--disable` counts only as the first argument; a `~/.curlrc` could say `insecure`."""
+
+        argv, _ = self.curl_call()
+        self.assertEqual(argv[1], "--disable")
+
+    def test_curl_inherits_no_environment(self) -> None:
+        """`CURL_CA_BUNDLE`, `SSL_CERT_FILE`, `CURL_HOME` and proxy variables steer it otherwise."""
+
+        _, env = self.curl_call()
+        self.assertEqual(env, {"PATH": "/usr/bin:/bin", "LC_ALL": "C"})
 
 
 H2_SERVERS = """global

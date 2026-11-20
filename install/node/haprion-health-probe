@@ -622,6 +622,13 @@ def certificate_read(der: bytes | None, version: str, timeout: float) -> dict[st
 # pool is verified - so the address is put in the URL otherwise.
 #
 CURL_COMMANDS = ("/usr/bin/curl", "/bin/curl")
+#
+# Nothing inherited: `CURL_CA_BUNDLE`, `SSL_CERT_FILE`, `CURL_HOME`,
+# `XDG_CONFIG_HOME` and the proxy variables would all steer curl's trust or
+# route away from what the request says. The CA, when there is one, arrives on
+# stdin; `LC_ALL=C` keeps curl's messages the ones this file reads.
+#
+CURL_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "LC_ALL": "C"}
 CURL_ANSWER = "%{exitcode}\t%{http_code}\t%{http_version}\t%{errormsg}\n%{certs}"
 TLS_LINE = re.compile(r"SSL connection using (TLSv1\.[0-3]|SSLv3) ")
 CERTIFICATE_CLOSING = "-" * 5 + "END CERTIFICATE" + "-" * 5
@@ -663,8 +670,13 @@ def http2_check(target: dict[str, Any], timeout_ms: int, source: str | None) -> 
                 found["error"] = error.strerror or str(error)
                 return found
     shown = f"[{address}]" if ":" in address else address
+    #
+    # `--disable` is read only as the first argument: it keeps curl from reading
+    # `~/.curlrc`, where one line (`insecure`) would turn the certificate check
+    # off. The environment is passed whole below for the same reason.
+    #
     argv = [
-        binary, "--silent", "--verbose", "--globoff", "--path-as-is", "--noproxy", "*",
+        binary, "--disable", "--silent", "--verbose", "--globoff", "--path-as-is", "--noproxy", "*",
         "--proto", "=http,https", "--output", "/dev/null", "--write-out", CURL_ANSWER,
         "--connect-timeout", f"{timeout:.3f}", "--max-time", f"{3 * timeout:.3f}",
         "--header", "User-Agent:", "--header", "Accept:",
@@ -699,7 +711,12 @@ def http2_check(target: dict[str, Any], timeout_ms: int, source: str | None) -> 
             given = target["ca_pem"].encode()
     try:
         completed = subprocess.run(  # noqa: S603 - fixed argv, validated values, CA on stdin
-            argv, input=given, capture_output=True, check=False, timeout=4 * timeout + 1
+            argv,
+            input=given,
+            capture_output=True,
+            check=False,
+            timeout=4 * timeout + 1,
+            env=CURL_ENVIRONMENT,
         )
     except subprocess.TimeoutExpired:
         found["error"] = f"no answer within {timeout_ms} ms"

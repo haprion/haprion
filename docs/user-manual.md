@@ -38,6 +38,7 @@ names used below, that is a bug in the software, not in this guide.
   - [Path limits](#path-limits)
   - [Blocklists](#blocklists)
   - [A sign-in or bot check in front of an application](#a-sign-in-or-bot-check-in-front-of-an-application)
+  - [Protection review](#protection-review)
 - [Dynamic blocking](#dynamic-blocking)
 - [The WAF engine](#the-waf-engine)
 - [Certificates](#certificates)
@@ -1911,6 +1912,33 @@ What the test found about authentik's **embedded outpost**, the one inside the a
 **Anubis** guards one application per instance, named in its `TARGET`. The pool's server is Anubis. Which
 header Anubis reads the visitor's address from is its own setting; check its documentation, so that its
 decisions are about the visitor and not the node.
+
+### Protection review
+
+*Proxies → Protection review* lists every proxy with the settings that protect it less. Each setting is one
+somebody chose, and may be right: an internal admin page without a WAF can be. It is a list to read, not an
+alarm, and it is not part of *Needs attention*.
+
+A proxy's row names, as marks:
+
+- *WAF off*, where the cluster offers the WAF engine, or *WAF log only*;
+- *No rate limit*, also when the proxy has [path limits](#path-limits), which protect their own paths only;
+- *No HSTS*, on an https proxy;
+- *Backend TLS not verified*, when a pool speaks TLS and does not check the servers' certificate;
+- *Advanced config*, when the proxy carries [advanced configuration](#features-and-advanced-configuration);
+- *Not assessed · written by hand*, for a proxy in the cluster's own configuration (*Manual* on *Proxies*).
+
+*Reachable from* is shown beside them and is not a mark: a VLAN and a firewall usually stand in front.
+A dns or a syslog proxy has none of these settings. Each mark opens the proxy's form with the field in
+focus; the row opens the proxy.
+
+**Accept.** An admin accepts a row once the marks are what is meant. The row is dimmed and says who
+accepted it and when, and *Undo* takes it back. The acceptance holds the marks the row had. A new mark makes
+the row one to review again: the new mark says *New*, and the accepted ones stay dimmed. The number on the
+*Protection review* tab counts the rows still to review.
+
+**What is shown.** *Proxies with nothing to review* and one switch per cluster choose what the view shows.
+The choice is the same for everybody who opens it, and only an admin changes it.
 
 ## Dynamic blocking
 

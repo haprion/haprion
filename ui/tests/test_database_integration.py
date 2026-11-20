@@ -4630,6 +4630,63 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
 
         self.assertEqual(found, {"lb-02.example.net": early, "192.0.2.40": early})
 
+    def test_an_acceptance_on_protection_review_is_the_web_s(self) -> None:
+        """0122 (B517, 12): accept, accept again, undo, forget; the view's one row; the web's alone."""
+
+        def clear() -> None:
+            with self.connection.cursor() as cursor:
+                cursor.execute("delete from protection_review_ack")
+                cursor.execute("delete from protection_review_view")
+            self.connection.commit()
+
+        self.addCleanup(clear)
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as web:
+            self.assertEqual(db.review_state(web), ({}, db.ReviewView()))
+            db.accept_review(
+                web, cluster="alpha", subject="shop", weaknesses=["waf-off"], actor="admin"
+            )
+            db.accept_review(
+                web,
+                cluster="alpha",
+                subject="shop",
+                weaknesses=["no-rate-limit", "waf-off"],
+                actor="operator",
+            )
+            db.accept_review(
+                web, cluster="alpha", subject="old", weaknesses=["advanced"], actor="admin"
+            )
+            db.set_review_view(
+                web,
+                db.ReviewView(show_clean=False, hidden_clusters=frozenset({"beta"})),
+                actor="admin",
+            )
+            db.set_review_view(
+                web,
+                db.ReviewView(show_clean=False, hidden_clusters=frozenset({"beta", "gamma"})),
+                actor="admin",
+            )
+            db.forget_review_acks(web, {("alpha", "old")})
+            web.commit()
+            acks, view = db.review_state(web)
+            self.assertFalse(db.undo_review(web, cluster="alpha", subject="old"))
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                db.accept_review(web, cluster="alpha", subject="x", weaknesses=[], actor="admin")
+            web.rollback()
+            self.assertTrue(db.undo_review(web, cluster="alpha", subject="shop"))
+            web.commit()
+            self.assertEqual(db.review_state(web)[0], {})
+
+        self.assertEqual(list(acks), [("alpha", "shop")])
+        self.assertEqual(acks["alpha", "shop"].weaknesses, {"no-rate-limit", "waf-off"})
+        self.assertEqual(acks["alpha", "shop"].accepted_by, "operator")
+        self.assertEqual(view, db.ReviewView(False, frozenset({"beta", "gamma"})))
+        for role in ("HAPRION_UI_TEST_POLLER_ROLE", "HAPRION_UI_TEST_WORKER_ROLE"):
+            with (
+                self.connect(role) as other,
+                self.assertRaises(psycopg.errors.InsufficientPrivilege),
+            ):
+                db.review_state(other)
+
     def test_the_sources_the_fetches_are_read_from_keep_their_first_reading(self) -> None:
         """0121: the poller writes a source once and moves only read_at; the web reads it."""
 
@@ -11915,6 +11972,9 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
 
     def test_a_dump_at_0120_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
         self.restored_from("0120", grants_differ="0120 has no receiver_witness to grant on")
+
+    def test_a_dump_at_0121_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
+        self.restored_from("0121", grants_differ="0121 has no protection review tables to grant on")
 
 
 class EveryRevisionADumpCanBeAtIsRestored(unittest.TestCase):

@@ -70,7 +70,7 @@
   draft beside the first rather than moving it, and a discard asked to throw
   away a draft the route had no way to know about.
 #}
-<form method="post" action="{% if name %}/proxies/{{ cluster }}/{{ name }}/edit{% else %}/proxies/{{ cluster }}/new{% endif %}" class="preview-form" id="object-form">
+<form method="post" action="{% if name %}/proxies/{{ cluster }}/{{ name }}/edit{% else %}/proxies/{{ cluster }}/new{% endif %}" class="preview-form" id="object-form"{% if focus_field %} data-focus="{{ focus_field }}"{% endif %}>
   {#
     What Enter does, decided rather than inherited. A browser submits with the
     first submit button in tree order, which was "Test health check" inside the form -

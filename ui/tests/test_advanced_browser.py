@@ -114,6 +114,35 @@ class TheDialogInABrowser(DraftReading):
         page.wait_for_selector("[data-advanced-dialog][open]")
         return page
 
+    def signed_in(self, path: str) -> Any:
+        page = self._browser.new_page(viewport={"width": 1280, "height": 900})
+        browser_policy.watch(self, page)
+        self.addCleanup(page.close)
+        page.goto(f"http://127.0.0.1:{self.port}/login")
+        page.fill("input[name=username]", "operator")
+        page.fill("input[name=password]", PASSWORD)
+        page.click("button[type=submit]")
+        page.wait_for_url(f"http://127.0.0.1:{self.port}/")
+        page.goto(f"http://127.0.0.1:{self.port}{path}")
+        return page
+
+    def test_a_link_opens_the_dialog(self) -> None:
+        """A mark on *Protection review* (B517, 12) links here with `?open=advanced`."""
+
+        page = self.signed_in("/proxies/edge-demo/public-web?open=advanced")
+
+        page.wait_for_selector("[data-advanced-dialog][open]")
+
+    def test_a_link_into_the_form_focuses_its_field(self) -> None:
+        """B517, 12: `?open=access&focus=rate_limit` opens Access and puts the cursor there."""
+
+        page = self.signed_in("/proxies/edge-demo/public-web/edit?open=access&focus=rate_limit")
+
+        page.wait_for_function(
+            "document.activeElement && document.activeElement.name === 'rate_limit'"
+        )
+        self.assertTrue(page.locator("input[name=rate_limit]").is_visible())
+
     def test_check_draws_each_line_in_the_dialog(self) -> None:
         page = self.open_page()
 

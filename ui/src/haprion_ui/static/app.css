@@ -2815,3 +2815,36 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .test-answer { margin: 4px 20px 0; color: var(--text-primary); font-size: 13px; }
 .blocklist-group td:nth-child(2) { color: var(--text-secondary); }
 .blocklist-table .inline-form { display: inline; margin: 0; }
+
+/* Protection review (B517, 12): a row per proxy, its marks, and the view's shared switches. */
+.review-bar { display: flex; flex-direction: column; gap: 10px; margin: 0 0 16px; padding: 10px 20px; border: 1px solid var(--line); border-radius: var(--radius-md, 10px); background: var(--panel); }
+.review-bar-group { display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 8px 18px; }
+.review-bar-group + .review-bar-group { padding-top: 10px; border-top: 1px solid var(--line); }
+.review-bar-title { min-width: 90px; padding-top: 3px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .055em; text-transform: uppercase; white-space: nowrap; }
+.review-bar-items { display: flex; flex-wrap: wrap; gap: 8px 18px; min-width: 0; }
+.review-bar-item { display: inline-flex; align-items: center; gap: 10px; color: var(--text-strong); font-size: 13px; }
+.review-bar .toggle-switch { min-height: 0; }
+.review-switch { display: inline-flex; margin: 0; }
+.review-table { table-layout: fixed; width: 100%; }
+.review-table col.col-proxy { width: 190px; }
+.review-table col.col-reach { width: 160px; }
+.review-table col.col-action { width: 200px; }
+.review-table tr[data-href] { cursor: pointer; }
+.review-table tbody tr { height: 37px; }
+.node-table.review-table th, .node-table.review-table td { width: auto; }
+.node-table.review-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
+.review-table td:first-child strong { font-weight: var(--font-weight-regular); color: var(--text-strong); }
+.review-table td:last-child, .review-table th:last-child { text-align: right; padding-right: 20px; }
+.review-table form { display: inline-flex; margin: 0; }
+.review-table .secondary-button { min-height: 22px; padding: 1px 10px; line-height: 18px; }
+.review-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.review-chips .status-badge { white-space: nowrap; }
+a.status-badge { text-decoration: none; cursor: pointer; }
+a.status-badge:hover { outline: 1px solid var(--line-strong); }
+.review-new { font-weight: 700; }
+.review-table tr.is-accepted td { color: var(--muted); }
+.review-table tr.is-accepted strong { color: var(--muted); font-weight: 560; }
+.review-table tr.is-accepted .review-chips .status-badge, .review-table .status-badge.was-accepted { opacity: .55; }
+.accepted-mark { display: inline-flex; align-items: center; gap: 6px; color: var(--healthy-text); font-size: 12px; font-weight: 600; }
+.accepted-mark svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.review-cell-action { display: inline-flex; align-items: center; gap: 10px; justify-content: flex-end; }

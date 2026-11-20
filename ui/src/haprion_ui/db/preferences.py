@@ -279,3 +279,114 @@ def set_status_access(connection: Connection[Any], *, networks: Sequence[str], a
                 "on conflict (network) do nothing",
                 {"network": network, "actor": actor},
             )
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewAck:
+    """An object an admin accepted on *Protection review* (0122): the weaknesses it had then."""
+
+    weaknesses: frozenset[str]
+    accepted_by: str
+    accepted_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewView:
+    """The view's shared choices (0122). Before anybody chose, everything shows."""
+
+    show_clean: bool = True
+    hidden_clusters: frozenset[str] = frozenset()
+
+
+def review_state(
+    connection: Connection[Any],
+) -> tuple[dict[tuple[str, str], ReviewAck], ReviewView]:
+    """Every acceptance by (cluster, object), and the view's choices, in one read."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select cluster, subject, weaknesses, accepted_by, accepted_at"
+            "  from protection_review_ack"
+        )
+        acks = {
+            (str(cluster), str(subject)): ReviewAck(
+                weaknesses=frozenset(str(item) for item in weaknesses),
+                accepted_by=str(accepted_by),
+                accepted_at=accepted_at,
+            )
+            for cluster, subject, weaknesses, accepted_by, accepted_at in cursor
+        }
+        cursor.execute("select show_clean, hidden_clusters from protection_review_view")
+        row = cursor.fetchone()
+    view = (
+        ReviewView()
+        if row is None
+        else ReviewView(show_clean=bool(row[0]), hidden_clusters=frozenset(row[1]))
+    )
+    return acks, view
+
+
+def accept_review(
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    subject: str,
+    weaknesses: Sequence[str],
+    actor: str,
+) -> None:
+    """Accept one object with the weaknesses it has now, replacing an earlier acceptance."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "insert into protection_review_ack (cluster, subject, weaknesses, accepted_by)"
+            " values (%(cluster)s, %(subject)s, %(weaknesses)s, %(actor)s)"
+            " on conflict (cluster, subject) do update"
+            "   set weaknesses = excluded.weaknesses, accepted_by = excluded.accepted_by,"
+            "       accepted_at = statement_timestamp()",
+            {
+                "cluster": cluster,
+                "subject": subject,
+                "weaknesses": sorted(weaknesses),
+                "actor": actor,
+            },
+        )
+
+
+def undo_review(connection: Connection[Any], *, cluster: str, subject: str) -> bool:
+    """Take an acceptance back; False when there was none."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "delete from protection_review_ack where cluster = %s and subject = %s",
+            (cluster, subject),
+        )
+        return cursor.rowcount == 1
+
+
+def forget_review_acks(connection: Connection[Any], gone: set[tuple[str, str]]) -> None:
+    """Remove the acceptances of objects that are gone, so one made again starts afresh."""
+
+    with connection.cursor() as cursor:
+        for cluster, subject in sorted(gone):
+            cursor.execute(
+                "delete from protection_review_ack where cluster = %s and subject = %s",
+                (cluster, subject),
+            )
+
+
+def set_review_view(connection: Connection[Any], view: ReviewView, *, actor: str) -> None:
+    """Store the view's shared choices."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "insert into protection_review_view (id, show_clean, hidden_clusters, updated_by)"
+            " values (true, %(show_clean)s, %(hidden)s, %(actor)s)"
+            " on conflict (id) do update"
+            "   set show_clean = excluded.show_clean, hidden_clusters = excluded.hidden_clusters,"
+            "       updated_by = excluded.updated_by, updated_at = statement_timestamp()",
+            {
+                "show_clean": view.show_clean,
+                "hidden": sorted(view.hidden_clusters),
+                "actor": actor,
+            },
+        )

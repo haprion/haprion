@@ -1,0 +1,65 @@
+{% extends "layout.html" %}
+{% block title %}Protection review — Haprion{% endblock %}
+{% block content %}
+<script defer src="{{ url_for('static', path='/proxy-rows.js') }}?v={{ asset_token }}"></script>
+<section class="page-heading">
+  <div><h1>Proxies</h1></div>
+  <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
+</section>
+
+{% include "_proxy-views.html" %}
+
+{#
+  The view's two rows of switches (B517, 12): the same for everybody who opens
+  it, and changed by an admin. Each switch is a form of its own.
+#}
+{% macro switch(name, on, cluster='', label='') %}
+<form method="post" action="/proxies/review/view" class="review-switch">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="switch" value="{{ name }}">
+  <input type="hidden" name="on" value="{{ '0' if on else '1' }}">
+  {% if cluster %}<input type="hidden" name="cluster" value="{{ cluster }}">{% endif %}
+  <button type="submit" class="toggle-switch" role="switch" aria-checked="{{ 'true' if on else 'false' }}" aria-label="{{ label }}"{% if not can_change %} disabled{% endif %}><span class="toggle-track" aria-hidden="true"></span>{{ 'On' if on else 'Off' }}</button>
+</form>
+{% endmacro %}
+<div class="review-bar">
+  <div class="review-bar-group"><span class="review-bar-title">Show</span><span class="review-bar-items"><span class="review-bar-item">Proxies with nothing to review {{ switch('clean', review.view.show_clean, label='Proxies with nothing to review') }}</span></span></div>
+  {% if review.clusters %}
+  <div class="review-bar-group"><span class="review-bar-title">Clusters</span><span class="review-bar-items">
+    {% for cluster in review.clusters %}<span class="review-bar-item">{{ cluster.cluster }} {{ switch('cluster', cluster.shown, cluster.cluster, cluster.cluster) }}</span>{% endfor %}
+  </span></div>
+  {% endif %}
+</div>
+
+{% set check %}<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8.5 3 3 7-7"></path></svg>{% endset %}
+<div class="cluster-list proxy-cluster-list">
+{% for cluster in review.clusters if cluster.shown %}
+  {% set rows = cluster.rows if review.view.show_clean else cluster.rows | rejectattr('state', 'equalto', 'clean') | list %}
+  <article class="cluster-card proxy-cluster-card {{ cluster.accent | accent_class }}" id="review-{{ cluster.cluster }}">
+    <header class="cluster-header">
+      <div class="cluster-identity"><span class="status-orb status-{{ cluster.tone }}" aria-hidden="true"></span><div><h3>{{ cluster.cluster }}</h3><p>{{ cluster.detail }}</p></div></div>
+    </header>
+    {% if rows %}
+    <div class="table-scroll"><table class="node-table review-table">
+      <colgroup><col class="col-proxy"><col class="col-reach"><col><col class="col-action"></colgroup>
+      <thead><tr><th>Proxy</th><th>Reachable from</th><th>Weaker protection</th><th></th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+      <tr data-href="{{ row.href }}"{% if row.state == 'accepted' %} class="is-accepted"{% elif row.state == 'clean' %} class="is-clean"{% endif %}>
+        <td data-label="Proxy"><a class="proxy-link" href="{{ row.href }}"><strong>{{ row.name }}</strong></a></td>
+        <td data-label="Reachable from">{{ row.reach }}</td>
+        <td data-label="Weaker protection">{% if row.marks %}<span class="review-chips">{% for mark in row.marks %}<a class="status-badge {{ 'status-badge-warning' if mark.state == 'new' else 'status-badge-unknown' }}{% if mark.state == 'accepted' %} was-accepted{% endif %}" href="{{ mark.href }}">{% if mark.state == 'new' %}<span class="review-new">New</span>&nbsp;· {% endif %}{{ mark.label }}</a>{% endfor %}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
+        <td class="review-cell">{% if row.state == 'accepted' %}<span class="review-cell-action"><span class="accepted-mark" title="Accepted by {{ row.accepted_by }}, {{ row.accepted_at | shown_at }}">{{ check }}Accepted</span>{% if can_change %}<form method="post" action="/proxies/review/undo"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="name" value="{{ row.name }}"><button type="submit" class="secondary-button">Undo</button></form>{% endif %}</span>{% elif row.state == 'open' and can_change %}<form method="post" action="/proxies/review/accept"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="name" value="{{ row.name }}"><button type="submit" class="secondary-button">Accept</button></form>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}
+    <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"></path></svg><div><strong>Nothing to review</strong><span>{{ cluster.detail }}</span></div></div>
+    {% endif %}
+  </article>
+{% else %}
+  {% if not review.clusters %}{% include "_no-clusters.html" %}{% endif %}
+{% endfor %}
+</div>
+{% endblock %}

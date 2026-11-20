@@ -49,6 +49,8 @@ class GroupState:
     title: str
     summary: str
     badges: tuple[Badge, ...] = ()
+    key: str = ""
+    """The group's name in `GROUPS`, which `?open=` names it by."""
 
 
 def _text(form: Mapping[str, Any], key: str) -> str:
@@ -440,7 +442,9 @@ def form_groups(
     """
 
     states = {
-        key: GroupState(title=group.title, summary=group.summary(form), badges=group.badges(form))
+        key: GroupState(
+            title=group.title, summary=group.summary(form), badges=group.badges(form), key=key
+        )
         for key, group in GROUPS.items()
     }
     if blocked:

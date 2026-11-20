@@ -446,6 +446,7 @@ def editor_page(
     notice: str = "",
     probe_asked: bool = False,
     open_group: str = "",
+    focus_field: str = "",
     answered: bool = True,
     object_fingerprint: str | None = None,
     copy_from: str = "",
@@ -682,6 +683,7 @@ def editor_page(
             ).unavailable(cluster),
             "backend_health": backend,
             "open_group": open_group,
+            "focus_field": focus_field,
             "waf_exceptions": waf.form_exceptions(
                 cluster,
                 name,

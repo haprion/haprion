@@ -683,12 +683,26 @@
     });
   };
 
+  //
+  // A link into the form at one field (`?open=…&focus=…`, B517, 12): the
+  // group is drawn open, and the field is brought into view and focused.
+  //
+  const wireFocus = () => {
+    const form = document.querySelector("form[data-focus]");
+    if (!form) return;
+    const field = form.querySelector(`[name='${CSS.escape(form.dataset.focus)}']:not([type=hidden])`);
+    if (!field) return;
+    field.scrollIntoView({ block: "center" });
+    field.focus({ preventScroll: true });
+  };
+
   window.addEventListener("DOMContentLoaded", () => {
     wireUnsaved();
     wireEmptyChoices();
     wireToggledChoices();
     wireRules();
     wireLimits();
+    wireFocus();
     wireRecheck();
     wireShownWhen();
     wireCheckProposal();

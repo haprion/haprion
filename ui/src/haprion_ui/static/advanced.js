@@ -15,6 +15,16 @@
     document.querySelectorAll("[data-advanced-open]").forEach((button) => {
       button.addEventListener("click", () => dialog.showModal());
     });
+    //
+    // Opened by a link (`?open=advanced`), as a mark on *Protection review*
+    // is (B517, 12), where the page offers the dialog at all.
+    //
+    if (
+      new URLSearchParams(window.location.search).get("open") === "advanced" &&
+      document.querySelector("[data-advanced-open]")
+    ) {
+      dialog.showModal();
+    }
     dialog.querySelector("[data-advanced-close]").addEventListener("click", () => dialog.close());
     form.addEventListener("submit", async (event) => {
       event.preventDefault();

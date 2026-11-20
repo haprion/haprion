@@ -15,7 +15,7 @@
     // went nowhere outside their name and button (26-10-12), and so did the
     // pending changes on Versions (26-10-20).
     const row = event.target.closest(
-      ".proxy-table tr[data-href], .users-table tr[data-href], .search-table tr[data-href], .audit-table tr[data-href], .settings-cluster-table tr[data-href], .pending-table tr[data-href]",
+      ".proxy-table tr[data-href], .review-table tr[data-href], .users-table tr[data-href], .search-table tr[data-href], .audit-table tr[data-href], .settings-cluster-table tr[data-href], .pending-table tr[data-href]",
     );
     if (!row || event.button !== 0) return;
     if (event.target.closest("a, button, input, select, textarea, summary, label")) return;

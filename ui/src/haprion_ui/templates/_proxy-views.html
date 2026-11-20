@@ -1,0 +1,12 @@
+{#
+  The Proxies page's two views (B517, 12): every proxy, and the states that
+  protect them less. The number is the rows still to review in the clusters
+  the review shows.
+#}
+<div class="page-ranges-sticky waf-strip"><nav class="traffic-ranges page-ranges waf-views" aria-label="Proxy views">
+  {% for value, label, href in (('all', 'All proxies', '/proxies'), ('review', 'Protection review', '/proxies/review')) %}
+  {% set current = proxy_view == value %}
+  {% set count = review_count if value == 'review' else none %}
+  <a href="{{ href }}"{% if current %} class="is-current" aria-current="true"{% endif %}><span>{{ label }}{% if count is not none %} <b>{{ count }}</b>{% endif %}</span><span class="segment-reserve" aria-hidden="true">{{ label }}{% if count is not none %} <b>{{ count }}</b>{% endif %}</span></a>
+  {% endfor %}
+</nav></div>

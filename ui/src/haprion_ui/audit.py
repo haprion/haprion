@@ -192,6 +192,13 @@ ACTIVITY_PHRASES: Mapping[str, Callable[[Mapping[str, Any]], str]] = {
     "attention_acknowledged": lambda detail: (
         f"Acknowledged {_text(detail, 'subject', 'a row')}: {_text(detail, 'message', '')}"
     ),
+    "protection_review_accepted": lambda detail: (
+        f"Accepted {_text(detail, 'subject', 'a proxy')} on Protection review"
+    ),
+    "protection_review_undone": lambda detail: (
+        f"Took back the acceptance of {_text(detail, 'subject', 'a proxy')} on Protection review"
+    ),
+    "protection_review_view": lambda _detail: "Changed what Protection review shows",
     "getting_started_hidden": lambda _detail: "Hid the getting started list",
     "getting_started_shown": lambda _detail: "Showed the getting started list again",
     "status_access_changed": lambda detail: (

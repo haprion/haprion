@@ -31,7 +31,7 @@ from haprion_ui import attention, auth, db, metrics
 from haprion_ui.app import create_app
 from haprion_ui.config import Config, Database, Poller, Throttle
 from haprion_ui.config import Session as SessionPolicy
-from haprion_ui.db import Account, AuthenticatedSession
+from haprion_ui.db import Account, AuthenticatedSession, ReviewView
 from tests.registry_fixture import manager_of
 
 PASSWORD = "a sufficiently long password"
@@ -293,6 +293,9 @@ class LoginTestCase(unittest.TestCase):
                 },
             ),
             mock.patch("haprion_ui.db.forget_attention_acks"),
+            # Protection review (0122): nothing accepted, every view shown.
+            mock.patch("haprion_ui.db.review_state", side_effect=lambda _c: ({}, ReviewView())),
+            mock.patch("haprion_ui.db.forget_review_acks"),
             # Every package current (0088): nothing waits in the repository.
             mock.patch("haprion_ui.db.package_waiting", return_value=[]),
             mock.patch(

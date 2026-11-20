@@ -31,6 +31,7 @@ from haprion_ui import (
     db,
     deploy_bands,
     features,
+    form_groups,
     health,
     job_payloads,
     jobs,
@@ -38,6 +39,7 @@ from haprion_ui import (
     network,
     objects,
     operations,
+    protection_review,
     proxies,
     refusals,
     search_index,
@@ -383,6 +385,11 @@ def proxy_listing(
     counts = objects.counted(listed, unmanaged)
     return {
         "proxies": overview,
+        #
+        # Every cluster's stored objects, for the count on *Protection review*'s
+        # tab (B517, 12), read here rather than a second time.
+        #
+        "stored": stored,
         "listed": listed,
         "counts": counts,
         "health": backend_lamps,
@@ -409,8 +416,221 @@ def proxy_listing(
     }
 
 
+def _known(asked: str, names: Mapping[str, object]) -> str:
+    """`asked` where it names one of `names`, else ""."""
+
+    return asked if asked in names else ""
+
+
+def _review(
+    request: Request,
+    config: Config,
+    session: AuthenticatedSession,
+    *,
+    clusters: Sequence[proxies.ProxyClusterView],
+    stored: Mapping[str, Sequence[objects.ObjectView]],
+    unmanaged: Mapping[str, Sequence[proxies.ProxyView]],
+    read: Mapping[str, Iterable[str]] | None = None,
+) -> protection_review.Review:
+    """*Protection review* from what the page has read (B517, 12).
+
+    `read` is every name in each cluster whose objects could be read; an
+    acceptance of an object no longer in one is forgotten, so an object made
+    again under its name starts afresh.
+    """
+
+    with request.app.state.pool.connection() as connection:
+        acks, view = db.review_state(connection)
+        if read is not None:
+            present = {cluster: frozenset(names) for cluster, names in read.items()}
+            gone = protection_review.gone(acks, present)
+            if gone:
+                db.forget_review_acks(connection, gone)
+                connection.commit()
+                acks = {key: ack for key, ack in acks.items() if key not in gone}
+    return protection_review.review(
+        [(view_.cluster, view_.accent, view_.tone) for view_ in clusters],
+        stored,
+        unmanaged,
+        acks,
+        view,
+        waf_offered=features.is_on(features.WAF_ENGINE),
+        editable=config.management_writes and session.role == "admin",
+    )
+
+
 def build_router(config: Config) -> APIRouter:
     router = APIRouter()
+
+    def _review_page_inputs(
+        request: Request,
+    ) -> tuple[
+        Sequence[proxies.ProxyClusterView],
+        dict[str, tuple[objects.ObjectView, ...]],
+        dict[str, tuple[proxies.ProxyView, ...]],
+        dict[str, list[str]],
+    ]:
+        """The clusters, their stored objects and their proxies written by hand."""
+
+        clusters, inventory_rows = read_source(request, config, INVENTORY_SOURCE)
+        overview = proxies.build_proxy_overview(
+            clusters, inventory_rows, stale_after=config.poller.stale_after
+        )
+        _, object_rows = read_source(request, config, OBJECTS_SOURCE)
+        rows = {reading.cluster: reading for reading in object_rows}
+        stored = {
+            view.cluster: objects.cluster_object_views(rows.get(view.cluster))
+            for view in overview.clusters
+        }
+        unmanaged = {
+            view.cluster: objects.unmanaged_only(view.proxies) for view in overview.clusters
+        }
+        read = {
+            cluster: [
+                *(entry.name for entry in stored[cluster]),
+                *(proxy.name for proxy in unmanaged[cluster]),
+            ]
+            for cluster in stored
+            if cluster in rows
+        }
+        return overview.clusters, stored, unmanaged, read
+
+    @router.get("/proxies/review", response_class=HTMLResponse)
+    def protection_review_page(request: Request) -> Response:
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        clusters, stored, unmanaged, read = _review_page_inputs(request)
+        review = _review(
+            request,
+            config,
+            session,
+            clusters=clusters,
+            stored=stored,
+            unmanaged=unmanaged,
+            read=read,
+        )
+        return TEMPLATES.TemplateResponse(
+            request,
+            "proxy-review.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "section": "proxies",
+                "proxy_view": "review",
+                "review": review,
+                "review_count": review.count,
+                "can_change": config.management_writes and session.role == "admin",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+            },
+        )
+
+    def _review_write(request: Request, csrf_token: str) -> AuthenticatedSession | Response:
+        gate = admin_write_gate(config, request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return forbidden_page(request, config)
+        return gate
+
+    @router.post("/proxies/review/accept")
+    def protection_review_accept(
+        request: Request,
+        cluster: Annotated[str, Form(max_length=64)],
+        name: Annotated[str, Form(max_length=256)],
+        csrf_token: Annotated[str, Form(max_length=128)] = "",
+    ) -> Response:
+        gate = _review_write(request, csrf_token)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        clusters, stored, unmanaged, _ = _review_page_inputs(request)
+        review = _review(
+            request, config, gate, clusters=clusters, stored=stored, unmanaged=unmanaged
+        )
+        #
+        # Accepted with the marks the row has now, read again here rather than
+        # taken from the page: a mark that came since it was drawn is not one
+        # anybody looked at.
+        #
+        keys = protection_review.row_keys(review, cluster, name)
+        if keys:
+            with request.app.state.pool.connection() as connection:
+                db.accept_review(
+                    connection, cluster=cluster, subject=name, weaknesses=keys, actor=gate.username
+                )
+                db.record_audit_event(
+                    connection,
+                    actor=gate.username,
+                    action="protection_review_accepted",
+                    cluster=cluster,
+                    detail={"cluster": cluster, "subject": name, "weaknesses": list(keys)},
+                )
+                connection.commit()
+        return RedirectResponse("/proxies/review", status_code=303)
+
+    @router.post("/proxies/review/undo")
+    def protection_review_undo(
+        request: Request,
+        cluster: Annotated[str, Form(max_length=64)],
+        name: Annotated[str, Form(max_length=256)],
+        csrf_token: Annotated[str, Form(max_length=128)] = "",
+    ) -> Response:
+        gate = _review_write(request, csrf_token)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        with request.app.state.pool.connection() as connection:
+            if db.undo_review(connection, cluster=cluster, subject=name):
+                db.record_audit_event(
+                    connection,
+                    actor=gate.username,
+                    action="protection_review_undone",
+                    cluster=cluster,
+                    detail={"cluster": cluster, "subject": name},
+                )
+            connection.commit()
+        return RedirectResponse("/proxies/review", status_code=303)
+
+    @router.post("/proxies/review/view")
+    def protection_review_view(
+        request: Request,
+        switch: Annotated[str, Form(max_length=16)],
+        on: Annotated[str, Form(max_length=1)],
+        cluster: Annotated[str, Form(max_length=64)] = "",
+        csrf_token: Annotated[str, Form(max_length=128)] = "",
+    ) -> Response:
+        """One of the view's switches, shared by everybody who opens it."""
+
+        gate = _review_write(request, csrf_token)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        if switch not in ("clean", "cluster") or on not in ("0", "1"):
+            return PlainTextResponse("Bad request", status_code=400)
+        with request.app.state.pool.connection() as connection:
+            _, view = db.review_state(connection)
+            hidden = set(view.hidden_clusters)
+            if switch == "cluster" and cluster:
+                (hidden.discard if on == "1" else hidden.add)(cluster)
+            changed = db.ReviewView(
+                show_clean=(on == "1") if switch == "clean" else view.show_clean,
+                hidden_clusters=frozenset(hidden),
+            )
+            if changed != view:
+                db.set_review_view(connection, changed, actor=gate.username)
+                db.record_audit_event(
+                    connection,
+                    actor=gate.username,
+                    action="protection_review_view",
+                    detail={
+                        "show_clean": changed.show_clean,
+                        "hidden_clusters": sorted(changed.hidden_clusters),
+                    },
+                )
+            connection.commit()
+        return RedirectResponse("/proxies/review", status_code=303)
 
     def _proxy_listing(request: Request) -> dict[str, Any]:
         return proxy_listing(request, config, request.query_params)
@@ -423,6 +643,14 @@ def build_router(config: Config) -> APIRouter:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         listing = _proxy_listing(request)
         sort, asked = proxies.TABLE.chosen(request)
+        review = _review(
+            request,
+            config,
+            session,
+            clusters=listing["proxies"].clusters,
+            stored=listing["stored"],
+            unmanaged=listing["unmanaged"],
+        )
         response = TEMPLATES.TemplateResponse(
             request,
             "proxies.html",
@@ -440,6 +668,8 @@ def build_router(config: Config) -> APIRouter:
                     sort, listing["used"].query() if listing["used"] else None
                 ),
                 "proxy_paging": proxies.pages_asked(request.query_params),
+                "proxy_view": "all",
+                "review_count": review.count,
             },
         )
         if asked:
@@ -542,7 +772,12 @@ def build_router(config: Config) -> APIRouter:
             cluster,
             name,
             None,
-            open_group="waf" if request.query_params.get("open") == "waf" else "",
+            #
+            # A group to open and a field to focus, from a link such as a
+            # mark on *Protection review* (B517, 12): only names the form has.
+            #
+            open_group=_known(request.query_params.get("open", ""), form_groups.GROUPS),
+            focus_field=_known(request.query_params.get("focus", ""), editor_module.FIELD_LABELS),
             #
             # The card under it says which: a draft or saved changes (B257).
             #

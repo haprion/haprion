@@ -322,6 +322,15 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
     "/attention/acknowledge": NotASetting(
         "a judgement on a row of Needs attention, not something the installation is"
     ),
+    "/proxies/review/accept": NotASetting(
+        "a judgement on a row of Protection review (B517, 12), not something a cluster is"
+    ),
+    "/proxies/review/undo": NotASetting(
+        "takes back a judgement on a row of Protection review, not something a cluster is"
+    ),
+    "/proxies/review/view": NotASetting(
+        "what the Protection review view shows, which the terminal has no view of"
+    ),
     "/jobs/{job_id}/held": NotASetting(
         "an answer about a job in the interface's own queue (0082); the terminal runs an"
         " operation at once and has no queue to hold it in"

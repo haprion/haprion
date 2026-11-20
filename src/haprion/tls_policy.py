@@ -264,7 +264,7 @@ def core_defaults_problem(core_cfg: bytes, *, cluster: str, config_path: str) ->
 #
 # HAProxy's own number of stick counter slots when `global` names none, and the
 # line that raises it. Generated configuration uses up to `sc4` once an object
-# has dynamic blocking (B271).
+# has dynamic blocking (B271), and `sc5` once one has path limits (B520).
 #
 DEFAULT_STICK_COUNTERS = 3
 STICK_COUNTERS_KEYWORD = "tune.stick-counters"
@@ -276,6 +276,11 @@ GENERATED_CONFIGURATION = "managed/generated/"
 #
 MANAGER_SOCKET = "/run/haproxy/manager.sock"
 BLOCK_COUNTERS = 5
+#
+# The slot path limits count on (`generate.PATH_LIMIT_COUNTER`; a test holds
+# the two together). It needs no socket: nothing lists or lifts a count.
+#
+PATH_LIMIT_SLOT = 5
 
 
 def stick_counters_problem(
@@ -290,16 +295,32 @@ def stick_counters_problem(
     or why (measured on 3.4.6, 26-10-10).
     """
 
-    needed = 0
+    slots: set[int] = set()
     for path, content in files.items():
         if path.startswith(GENERATED_CONFIGURATION) and path.endswith(".cfg"):
-            for slot in _TRACK_SLOT.findall(content):
-                needed = max(needed, int(slot) + 1)
+            slots.update(int(slot) for slot in _TRACK_SLOT.findall(content))
+    needed = max(slots, default=-1) + 1
+    #
+    # What the slots past the rate limit's are for, in the refusal's words. A
+    # slot the advanced text tracks counts as the blocking's, as it always has.
+    #
+    blocking = any(slot >= BLOCK_COUNTERS - 1 and slot != PATH_LIMIT_SLOT for slot in slots)
+    uses = (
+        " and ".join(
+            what
+            for what, used in (
+                ("dynamic blocking", blocking or bool(slots & {3})),
+                ("path limits", PATH_LIMIT_SLOT in slots),
+            )
+            if used
+        )
+        or "dynamic blocking"
+    )
     core = files.get("core/haproxy.cfg", b"").decode("utf-8", errors="replace")
     stated = _stated(core, re.escape(STICK_COUNTERS_KEYWORD))
     have = int(stated) if stated is not None and is_digits(stated) else DEFAULT_STICK_COUNTERS
     if needed <= have:
-        if needed >= BLOCK_COUNTERS and not re.search(
+        if blocking and not re.search(
             rf"^[ \t]*stats socket {re.escape(MANAGER_SOCKET)}[ \t].*\blevel admin\b",
             core,
             re.MULTILINE,
@@ -323,7 +344,7 @@ def stick_counters_problem(
             )
         return None
     return (
-        f"{cluster}: an object uses dynamic blocking, which needs {needed} stick counters, "
+        f"{cluster}: an object uses {uses}, which needs {needed} stick counters, "
         f"and core/haproxy.cfg allows {have}.\n"
         f"\n"
         f"  Fix it, then publish again:\n"
@@ -331,8 +352,8 @@ def stick_counters_problem(
         f"    add this line to the `global` section:\n"
         f"      {STICK_COUNTERS_KEYWORD} {needed}\n"
         f"\n"
-        f"  Why this stops a publish: dynamic blocking counts and marks an address on\n"
-        f"  counters of its own, past the cluster's brake and the object's rate limit,\n"
+        f"  Why this stops a publish: dynamic blocking and path limits count an address\n"
+        f"  on counters of their own, past the cluster's brake and the object's rate limit,\n"
         f"  and HAProxy keeps three unless `global` says otherwise. `global` is the\n"
         f"  cluster's own file, which the generator never writes."
     )

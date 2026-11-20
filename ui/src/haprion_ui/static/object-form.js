@@ -543,6 +543,37 @@
   };
 
   //
+  // Path limits (B520). A limit's fields always post, so a new one is the
+  // template as it stands; its folded line is worded here, from the four
+  // fields, as the server words it.
+  //
+  const wireLimits = () => {
+    const list = document.querySelector("[data-limit-list]");
+    if (!list) return;
+    const template = list.querySelector("template[data-limit-template]");
+    const add = list.querySelector("[data-add-limit]");
+    list.addEventListener("click", (event) => {
+      const remove = event.target.closest("[data-remove-limit]");
+      if (remove) remove.closest("[data-limit]").remove();
+    });
+    const follow = (event) => {
+      const limit = event.target.closest("[data-limit]");
+      if (!limit) return;
+      const value = (name) => limit.querySelector(`[name='${name}']`).value.trim();
+      limit.querySelector("[data-limit-title]").textContent = value("limit_path") || "New limit";
+      limit.querySelector("[data-limit-summary]").textContent =
+        `${value("limit_match")} · at most ${value("limit_requests") || "?"} per ${value("limit_window") || "?"}`;
+    };
+    list.addEventListener("input", follow);
+    list.addEventListener("change", follow);
+    if (!template || !add) return;
+    add.addEventListener("click", () => {
+      template.insertAdjacentHTML("beforebegin", template.innerHTML);
+      template.previousElementSibling.querySelector("input[name='limit_path']").focus();
+    });
+  };
+
+  //
   // "Everywhere" and "Nobody" are the empty choices, and each stops being true
   // the moment an address is written below it - so it leaves the list then
   // (2026-10-03), as the page rendered after a post already has it. Cleared
@@ -657,6 +688,7 @@
     wireEmptyChoices();
     wireToggledChoices();
     wireRules();
+    wireLimits();
     wireRecheck();
     wireShownWhen();
     wireCheckProposal();

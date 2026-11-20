@@ -58,6 +58,7 @@ from haprion.proxy_model import (
     Backend,
     Health,
     Hsts,
+    PathLimit,
     Proxy,
     Route,
     Server,
@@ -132,6 +133,12 @@ RATE_COUNTER = 1
 #
 BLOCK_COUNT_COUNTER = 3
 BLOCK_MARK_COUNTER = 4
+#
+# Path limits count on the sixth slot (B520), past them all - sharing the rate
+# limit's would have taken a limited path's requests off the object's count -
+# so a cluster with them needs `tune.stick-counters 6`.
+#
+PATH_LIMIT_COUNTER = 5
 BLOCK_RULE = "dynamic-block:deny"
 #
 # Which limit placed a block (B424) - more exactly, which last renewed it: every
@@ -2947,10 +2954,11 @@ DOT_SEGMENT = r"(^|/)\.\.?(/|$)|\\\\"
 def _access_path_rules(proxy: Proxy, host: str) -> list[str]:
     """The path the access rules read, and the refusal of dot segments and control characters.
 
-    Only on an object with a rule on a path other than every path. The refusal
-    is 400, as nginx answers a path that leaves the root, and follows the rules
-    it protects: it refuses when any of them refuses and only looks when all of
-    them only look.
+    Only on an object with a rule or a path limit on a path other than every
+    path. The refusal is 400, as nginx answers a path that leaves the root, and
+    follows the rules it protects: it refuses when any of them refuses and only
+    looks when all of them only look. A path limit always refuses (B520): a
+    `/./login` the limit only looked at would be a way around it.
     """
 
     rules = [
@@ -2958,7 +2966,10 @@ def _access_path_rules(proxy: Proxy, host: str) -> list[str]:
         for rule in proxy.deny_rules
         if rule.path is not None and not (rule.path == "/" and rule.path_match == "prefix")
     ]
-    if not rules:
+    limited = any(
+        not (limit.path == "/" and limit.path_match == "prefix") for limit in proxy.path_limits
+    )
+    if not rules and not limited:
         return []
     dots = _acl_name(proxy.name, "path-dots")
     controls = _acl_name(proxy.name, "path-chars")
@@ -2969,7 +2980,7 @@ def _access_path_rules(proxy: Proxy, host: str) -> list[str]:
     ]
     for acl, name in ((dots, "path-dots"), (controls, "path-chars")):
         condition = f"{host} {acl}"
-        if any(rule.mode == "deny" for rule in rules):
+        if limited or any(rule.mode in ("deny", "block") for rule in rules):
             lines += [
                 f"    http-request set-var(txn.rule) str({name}:deny) if {condition}",
                 f"    http-request deny deny_status 400 if {condition}",
@@ -3064,6 +3075,79 @@ def _access_rules(
             f"{{ req.hdr(transfer-encoding) -m found }} !{{ req.hdr(content-length) -m found }} "
             f"!{{ var(txn.rule) -m found }}",
         ]
+    lines.extend(_path_limit_rules(proxy, host, trusted))
+    return lines
+
+
+def _limit_path_acl(acl: str, path: str, match: str) -> list[str]:
+    """A path condition as the access rules write one; nothing for every path."""
+
+    if path == "/" and match == "prefix":
+        return []
+    rest = "-m str" if match == "exact" else "-m beg"
+    return [
+        f"    acl {acl} {ACCESS_PATH} -m str {path.lower()}",
+        f"    acl {acl} {ACCESS_PATH} {rest} {path.lower()}/",
+    ]
+
+
+def most_specific_first(limits: Sequence[PathLimit]) -> list[tuple[int, PathLimit]]:
+    """The limits with their places in the list, in the order they are tried (B520).
+
+    An exact path before a prefix, a longer path before a shorter one, so the
+    first that holds is the most specific and the list's own order means
+    nothing.
+    """
+
+    return sorted(
+        enumerate(limits),
+        key=lambda item: (item[1].path_match != "exact", -len(item[1].path), item[1].path.lower()),
+    )
+
+
+def _path_limit_rules(proxy: Proxy, host: str, trusted: bool) -> list[str]:
+    """The object's path limits: the one that holds, its count, and its 429 (B517, 11; B520).
+
+    The most specific limit that holds is chosen once, by its place in the
+    list, and only that one counts the request: `/api/login` under a limit of
+    its own is not also counted under `/api`. Counted on the sixth slot in the
+    limit's own table, keyed on the visitor as the rate limit is - the last
+    forwarded address behind a trusted proxy, never the proxy. The request is
+    still the object's, so its rate limit counts it too.
+
+    In the shared frontend, after the access rules: a refused request is not
+    counted, and none of this can be reached before the host says the request
+    is this object's.
+    """
+
+    if not proxy.path_limits:
+        return []
+    chosen = "txn.path_limit"
+    lines: list[str] = []
+    for index, limit in most_specific_first(proxy.path_limits):
+        acl = _acl_name(proxy.name, f"limit{index}-path")
+        paths = _limit_path_acl(acl, limit.path, limit.path_match)
+        lines += paths
+        held = f" {acl}" if paths else ""
+        lines.append(
+            f"    http-request set-var({chosen}) int({index}) "
+            f"if {host}{held} !{{ var({chosen}) -m found }}"
+        )
+    track = f"    http-request track-sc{PATH_LIMIT_COUNTER}"
+    for index, limit in enumerate(proxy.path_limits):
+        table = path_limit_table(proxy.name, index)
+        this = f"{host} {{ var({chosen}) -m int {index} }}"
+        if trusted:
+            lines += [
+                f"{track} req.hdr_ip(X-Forwarded-For,-1) table {table} if {this} {TRUSTED_ACL}",
+                f"{track} src table {table} if {this} !{TRUSTED_ACL}",
+            ]
+        else:
+            lines.append(f"{track} src table {table} if {this}")
+        lines.append(
+            f"    http-request deny deny_status 429 "
+            f"if {this} {{ sc_http_req_rate({PATH_LIMIT_COUNTER}) gt {limit.max_requests} }}"
+        )
     return lines
 
 
@@ -3656,6 +3740,7 @@ def _object_file(
         )
     body.extend(_redirect_backends(proxy))
     body.extend(_block_tables(proxy, peers))
+    body.extend(_path_limit_tables(proxy, peers))
     body.extend(_added_sections(proxy, source))
     return _lines(HEADER, ["#", f"# Object: {proxy.name}", "#"], body)
 
@@ -3690,6 +3775,46 @@ def block_tables(proxy_name: str) -> tuple[str, str]:
     """
 
     return f"{PREFIX}-{proxy_name}-dynblock-rate", f"{PREFIX}-{proxy_name}-dynblock"
+
+
+def path_limit_table(proxy_name: str, index: int) -> str:
+    """The table of an object's path limit by its place in the list (B520).
+
+    In the generator's own `mgd-` space, as the dynamic blocking tables are.
+    """
+
+    return f"{PREFIX}-{proxy_name}-pathlimit-{index}"
+
+
+#
+# Every section that holds a table and nothing else: no servers and no
+# traffic, so not a pool. `haprion-node-status` knows the same shapes, and a
+# test holds the two alike.
+#
+TABLE_SECTION = re.compile(rf"^{PREFIX}-.+-(?:dynblock(?:-rate)?|pathlimit-[0-9]+)$")
+
+
+def is_table_section(name: str) -> bool:
+    """Whether a backend a node reports is one of the generator's table sections."""
+
+    return TABLE_SECTION.fullmatch(name) is not None
+
+
+def _path_limit_tables(proxy: Proxy, peers: str | None) -> list[str]:
+    """One section per path limit, each holding that limit's table (B520).
+
+    A table holds one window - a second `http_req_rate` is ignored with a
+    warning, measured on 3.4.8 (26-11-20) - and each limit has its own.
+    """
+
+    lines: list[str] = []
+    for index, limit in enumerate(proxy.path_limits):
+        lines += [
+            "",
+            f"backend {path_limit_table(proxy.name, index)}",
+            _stick_table(limit.window, f"http_req_rate({limit.window})", peers),
+        ]
+    return lines
 
 
 def _block_tables(proxy: Proxy, peers: str | None) -> list[str]:

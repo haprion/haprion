@@ -60,6 +60,23 @@
   <div class="rule-foot"><button type="button" class="secondary-button" data-remove-rule>Remove rule</button></div>
 </details>
 {% endmacro %}
+{#
+  Path limits (B517, 11; B520): a card per limit, as a rule has. Four fields
+  that always post, so a row needs no index of its own.
+#}
+{% macro limit_card(limit, open=False) %}
+<details class="rule-card"{% if open %} open{% endif %} data-limit>
+  <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title" data-limit-title>{{ limit.path or 'New limit' }}</span><span class="form-group-summary" data-limit-summary>{{ limit.summary }}</span></summary>
+  <div class="form-grid">
+    <label><span class="field-title">Path</span><input name="limit_path" value="{{ limit.path }}" placeholder="/login"></label>
+    <label><span class="field-title">Path match</span><select name="limit_match">{% for match in ('prefix', 'exact') %}<option{% if limit.match == match %} selected{% endif %}>{{ match }}</option>{% endfor %}</select></label>
+    <label><span class="field-title">Requests</span><input name="limit_requests" value="{{ limit.requests }}" size="10" placeholder="5"></label>
+    <label><span class="field-title">Window</span><input name="limit_window" value="{{ limit.window }}" size="10" placeholder="10s"></label>
+  </div>
+  <div class="rule-foot"><button type="button" class="secondary-button" data-remove-limit>Remove limit</button></div>
+</details>
+{% endmacro %}
+{% set new_limit = {'path': '', 'match': 'prefix', 'requests': '', 'window': rate_window, 'summary': 'prefix · at most ? per ' ~ rate_window} %}
 {% set new_rule = {'index': '__index__', 'name': '', 'mode': 'log', 'path': '', 'match': 'prefix', 'methods': [], 'header': '', 'header_match': 'equals', 'header_value': '', 'source': '', 'negate': False, 'summary': 'No condition'} %}
 
 {% macro group(state, shown='', expanded=false) %}
@@ -149,6 +166,12 @@
       <label><span class="field-title">Reachable from — addresses <span class="optional">(optional)</span></span><textarea name="allow_ranges" rows="5" placeholder="198.51.100.0/24&#10;203.0.113.10">{{ form.allow_ranges }}</textarea><small>One address, range or <code>country:SE</code> per line.</small></label>
       <label{{ when('protocol', 'http https tcp') }}><span class="field-title">Rate limit <span class="optional">(optional)</span></span><input name="rate_limit" value="{{ form.rate_limit }}" size="10" placeholder="100"><small>Per source address; new connections for TCP.</small></label>
       <label{{ when('protocol', 'http https tcp') }}><span class="field-title">Rate window <span class="optional">(optional)</span></span><input name="rate_window" value="{{ form.rate_window }}" size="10" placeholder="{{ rate_window }}"><small>Such as <code>10s</code> or <code>1m</code>.</small></label>
+    </div>
+    <div class="rule-list"{{ when('protocol', 'http https') }} data-limit-list>
+      <div class="rule-list-head"><span class="field-title">Path limits <span class="optional">(optional)</span></span></div>
+      {% for limit in form.path_limits %}{{ limit_card(limit) }}{% endfor %}
+      <template data-limit-template>{{ limit_card(new_limit, open=True) }}</template>
+      <div class="rule-list-foot"><button type="button" class="secondary-button" data-add-limit>Add limit</button></div>
     </div>
     <div class="form-grid form-grid-pair"{{ when('protocol', 'http https tcp') }}>
       <label><span class="field-title">Denied — groups <span class="optional">(optional)</span></span>

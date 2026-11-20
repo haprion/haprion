@@ -637,6 +637,7 @@ HTTP_ONLY_KEYS: Mapping[str, str] = MappingProxyType(
         "unavailable": "there is no way to answer a raw connection with a message",
         "headers": "a raw connection carries no headers",
         "deny_rules": "a raw connection carries no path, method or headers to refuse on",
+        "path_limits": "a raw connection carries no path to count",
         "max_request_body": "a raw connection has no request body",
         "waf": "the WAF engine inspects HTTP requests, and a raw connection is not one",
     }
@@ -1073,6 +1074,23 @@ class RateLimit:
 
 
 @dataclass(frozen=True, slots=True)
+class PathLimit:
+    """How often one source address may ask for one path, over a window (B517, 11; B520).
+
+    Counted on a table of its own, apart from the object's rate limit, so a
+    request on a limited path counts on both. The path reads as the access
+    rules read it: decoded, with its slashes merged, and in any case. Where
+    two limits hold for one request, the most specific counts - an exact path
+    before a prefix, a longer prefix before a shorter one.
+    """
+
+    path: str
+    path_match: str
+    max_requests: int
+    window: str
+
+
+@dataclass(frozen=True, slots=True)
 class DynamicBlock:
     """A source address blocked for a while once it asks too much (B271).
 
@@ -1304,6 +1322,9 @@ class Proxy:
 
     rate_limit: RateLimit | None = None
     """How much one source may ask of this object. None means no limit."""
+
+    path_limits: tuple[PathLimit, ...] = ()
+    """How much one source may ask of one path, on top of `rate_limit` (B520)."""
 
     dynamic_block: DynamicBlock | None = None
     """When a source is blocked for a while (B271). None means never."""
@@ -2127,6 +2148,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
     )
     deny_from = _deny_from(data.get("deny_from"), f"{name}.deny_from", listen.protocol)
     deny_rules = _deny_rules(data.get("deny_rules"), f"{name}.deny_rules")
+    path_limits = _path_limits(data.get("path_limits"), f"{name}.path_limits")
     if dynamic_block is None and any(rule.mode == "block" for rule in deny_rules):
         raise ModelError(
             f"{name}.deny_rules: a rule in block mode needs dynamic blocking on the object,"
@@ -2141,6 +2163,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         listen.protocol,
         rate_limit=rate_limit is not None,
         dynamic_block=dynamic_block is not None,
+        path_limits=bool(path_limits),
         handwritten=bool(handwritten),
     )
     if handwritten:
@@ -2158,6 +2181,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         headers=headers,
         backend=backend,
         rate_limit=rate_limit,
+        path_limits=path_limits,
         dynamic_block=dynamic_block,
         advanced=advanced,
         deny_from=deny_from,
@@ -2197,6 +2221,7 @@ def _advanced(
     *,
     rate_limit: bool,
     dynamic_block: bool = False,
+    path_limits: bool = False,
     handwritten: bool,
 ) -> Advanced | None:
     if value is None:
@@ -2214,6 +2239,7 @@ def _advanced(
         protocol=protocol,
         rate_limit=rate_limit,
         dynamic_block=dynamic_block,
+        path_limits=path_limits,
         handwritten=handwritten,
     )
     refused = placement.refused
@@ -2258,6 +2284,7 @@ def advanced_placement(name: str, document: bytes) -> advanced_config.Placement 
         protocol=str(protocol or ""),
         rate_limit=data.get("rate_limit") is not None,
         dynamic_block=data.get("dynamic_block") is not None,
+        path_limits=bool(data.get("path_limits")),
         handwritten=handwritten,
     )
 
@@ -2901,6 +2928,76 @@ def _deny_from(value: Any, location: str, protocol: str) -> DenyFrom | None:
     return DenyFrom(mode=mode, sources=sources)
 
 
+def _access_path(path: Any, location: str) -> str:
+    """A path as the access rules and path limits read it, or why it cannot be one."""
+
+    if not isinstance(path, str) or not ROUTE_PATH.fullmatch(path):
+        raise ModelError(f"{location} must be an absolute path")
+    #
+    # The rule reads the request's path decoded and with its slashes merged
+    # (review 2026-10-04 F2), so a path written any other way could never
+    # match - and a rule that silently matches nothing refuses nothing.
+    #
+    #
+    # And with `;parameters` and a segment's trailing dots cut (review
+    # 26-10-09, F1), so neither can be written either. Case is free: a
+    # rule matches whatever the case.
+    #
+    segments = path.split("/")[1:]
+    if (
+        "%" in path
+        or "//" in path
+        or ";" in path
+        or any(part in (".", "..") or part.endswith(".") for part in segments)
+    ):
+        raise ModelError(
+            f"{location} must be written as it reads decoded: no %, //, ;, . or .. "
+            f"and no segment ending in a dot (requests are matched after decoding)"
+        )
+    return path.rstrip("/") or "/"
+
+
+#
+# Each limit is a table and a section of its own on every node (B520), so the
+# list is held to what a site has paths worth limiting for.
+#
+MAX_PATH_LIMITS = 20
+
+
+def _path_limits(value: Any, location: str) -> tuple[PathLimit, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ModelError(f"{location} must be a list of limits")
+    if len(value) > MAX_PATH_LIMITS:
+        raise ModelError(f"{location} may hold at most {MAX_PATH_LIMITS} limits")
+    limits = tuple(_path_limit(item, f"{location}[{index}]") for index, item in enumerate(value))
+    #
+    # Compared as the request is read, in any case: `/Login` and `/login` are
+    # one path to the limit, and two limits on it would leave one unused.
+    #
+    paths = [(limit.path.lower(), limit.path_match) for limit in limits]
+    if len(set(paths)) != len(paths):
+        raise ModelError(f"{location} limits the same path twice")
+    return limits
+
+
+def _path_limit(value: Any, location: str) -> PathLimit:
+    data = _mapping(value, location)
+    _only_keys(data, {"path", "match", "max_requests", "window"}, location)
+    path = _access_path(data.get("path"), f"{location}.path")
+    match = data.get("match", "prefix")
+    if match not in MATCH_MODES:
+        raise ModelError(f"{location}.match must be one of: {', '.join(MATCH_MODES)}")
+    limit = data.get("max_requests")
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_RATE:
+        raise ModelError(f"{location}.max_requests must be a count from 1 to {MAX_RATE}")
+    window = data.get("window")
+    if not isinstance(window, str) or not ABUSE_WINDOW.fullmatch(window):
+        raise ModelError(f"{location}.window must be a duration such as 10s or 1m")
+    return PathLimit(path=path, path_match=str(match), max_requests=limit, window=window)
+
+
 def _deny_rules(value: Any, location: str) -> tuple[AccessRule, ...]:
     if value is None:
         return ()
@@ -2941,30 +3038,7 @@ def _deny_rule(value: Any, location: str) -> AccessRule:
     path = data.get("path")
     match = data.get("match", "prefix")
     if path is not None:
-        if not isinstance(path, str) or not ROUTE_PATH.fullmatch(path):
-            raise ModelError(f"{location}.path must be an absolute path")
-        #
-        # The rule reads the request's path decoded and with its slashes merged
-        # (review 2026-10-04 F2), so a path written any other way could never
-        # match - and a rule that silently matches nothing refuses nothing.
-        #
-        #
-        # And with `;parameters` and a segment's trailing dots cut (review
-        # 26-10-09, F1), so neither can be written either. Case is free: a
-        # rule matches whatever the case.
-        #
-        segments = path.split("/")[1:]
-        if (
-            "%" in path
-            or "//" in path
-            or ";" in path
-            or any(part in (".", "..") or part.endswith(".") for part in segments)
-        ):
-            raise ModelError(
-                f"{location}.path must be written as it reads decoded: no %, //, ;, . or .. "
-                f"and no segment ending in a dot (requests are matched after decoding)"
-            )
-        path = path.rstrip("/") or "/"
+        path = _access_path(path, f"{location}.path")
         if match not in MATCH_MODES:
             raise ModelError(f"{location}.match must be one of: {', '.join(MATCH_MODES)}")
     elif "match" in data:

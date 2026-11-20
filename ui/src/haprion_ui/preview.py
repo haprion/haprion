@@ -218,6 +218,13 @@ DEFAULTS = {
     "rule_source": [],
     "rule_methods": [],
     "rule_negate": [],
+    #
+    # Path limits (B517, 11; B520): a row of parallel lists each, in page order.
+    #
+    "limit_path": [],
+    "limit_match": [],
+    "limit_requests": [],
+    "limit_window": [],
     "maintenance": False,
     "maintenance_message": "",
     "unavailable_message": "",
@@ -931,6 +938,9 @@ def build_document(form: dict[str, object]) -> str:
         rules = [_rule_document(rule) for rule in access_rules(form)]
         if rules:
             document["deny_rules"] = rules
+        limits = [_limit_document(limit) for limit in path_limits(form)]
+        if limits:
+            document["path_limits"] = limits
         if text("max_request_body"):
             document["max_request_body"] = text("max_request_body")
 
@@ -1421,6 +1431,83 @@ def _rule_document(rule: Mapping[str, Any]) -> dict[str, Any]:
     return document
 
 
+LIMIT_FIELDS = ("path", "match", "requests", "window")
+
+
+def path_limits(form: Mapping[str, Any]) -> list[dict[str, str]]:
+    """The form's path limits as one mapping each, in page order (B520).
+
+    Read from the parallel lists the page posts, as `access_rules` reads the
+    rules; a list shorter than the others reads as empty for that row, and the
+    engine says what is missing.
+    """
+
+    def column(name: str) -> list[str]:
+        value = form.get(f"limit_{name}", ())
+        return [str(item) for item in value] if isinstance(value, (list, tuple)) else []
+
+    columns = {name: column(name) for name in LIMIT_FIELDS}
+    rows = max((len(values) for values in columns.values()), default=0)
+    limits: list[dict[str, str]] = []
+    for position in range(rows):
+        limit = {
+            name: (values[position].strip() if position < len(values) else "")
+            for name, values in columns.items()
+        }
+        limit["match"] = limit["match"] or "prefix"
+        limit["summary"] = limit_summary(limit)
+        limits.append(limit)
+    return limits
+
+
+def limit_summary(limit: Mapping[str, str]) -> str:
+    """The line a folded limit shows beside its path."""
+
+    return f"{limit['match']} · at most {limit['requests'] or '?'} per {limit['window'] or '?'}"
+
+
+def _limit_document(limit: Mapping[str, str]) -> dict[str, Any]:
+    requests = limit["requests"]
+    if not is_digits(requests):
+        raise ValueError(
+            f"the path limit on {limit['path'] or 'a path'} needs a number of requests"
+        )
+    document: dict[str, Any] = {"path": limit["path"]}
+    if limit["match"] == "exact":
+        document["match"] = "exact"
+    document["max_requests"] = int(requests)
+    document["window"] = limit["window"]
+    return document
+
+
+def _limit_fields(data: Mapping[str, Any]) -> dict[str, list[str]]:
+    """`path_limits` as the form's four lists."""
+
+    columns: dict[str, list[str]] = {f"limit_{name}": [] for name in LIMIT_FIELDS}
+    limits = data.get("path_limits")
+    for raw in limits if isinstance(limits, list) else []:
+        limit = raw if isinstance(raw, Mapping) else {}
+        columns["limit_path"].append(str(limit.get("path", "") or ""))
+        columns["limit_match"].append(str(limit.get("match", "prefix") or "prefix"))
+        columns["limit_requests"].append(str(limit.get("max_requests", "") or ""))
+        columns["limit_window"].append(str(limit.get("window", "") or ""))
+    return columns
+
+
+def _with_normalised_limits(data: Any) -> Any:
+    """The stored object with `match: prefix` left unsaid in its path limits, as the form writes it."""
+
+    if not isinstance(data, Mapping) or not isinstance(data.get("path_limits"), list):
+        return data
+    limits = [
+        {key: value for key, value in limit.items() if (key, value) != ("match", "prefix")}
+        if isinstance(limit, Mapping)
+        else limit
+        for limit in data["path_limits"]
+    ]
+    return {**data, "path_limits": limits}
+
+
 def _blocking_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str, Any]:
     """`dynamic_block` as the form holds it; the filled-in defaults when there is none."""
 
@@ -1503,7 +1590,13 @@ def _access_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[s
         methods += [f"{index}:{method}" for method in (found if isinstance(found, list) else [])]
         if rule.get("source_negate") is True:
             negated.append(index)
-    return {**fields, **columns, "rule_methods": methods, "rule_negate": negated}
+    return {
+        **fields,
+        **columns,
+        "rule_methods": methods,
+        "rule_negate": negated,
+        **_limit_fields(data),
+    }
 
 
 def _header_lines(edits: Any) -> str:
@@ -1576,10 +1669,12 @@ def form_from_document(document: str, *, networks: Collection[str] = ()) -> dict
         raise Unexpressible(str(exc)) from exc
     difference = _first_difference(
         _with_normalised_blocking(
-            _with_normalised_waf(
-                _with_normalised_advanced(
-                    _without_a_redundant_check_protocol(
-                        _with_an_unwritten_check_said(_without_saved_addresses(data))
+            _with_normalised_limits(
+                _with_normalised_waf(
+                    _with_normalised_advanced(
+                        _without_a_redundant_check_protocol(
+                            _with_an_unwritten_check_said(_without_saved_addresses(data))
+                        )
                     )
                 )
             ),

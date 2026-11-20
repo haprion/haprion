@@ -748,6 +748,11 @@ RATE_SLOT = 1
 # which is why a cluster with it needs `tune.stick-counters 5`.
 #
 BLOCK_SLOTS = (3, 4)
+#
+# And an object's path limits count on the sixth (B520), past them all, which
+# is why a cluster with them needs `tune.stick-counters 6`.
+#
+PATH_LIMIT_SLOT = 5
 TRACK = re.compile(r"^track-sc([0-9]+)$")
 COUNTER_ACTION = re.compile(r"^sc-[a-z0-9-]+(?:\(([^)]*)\))?$")
 STICK_RULES = frozenset({"on", "match", "store-request", "store-response"})
@@ -1046,6 +1051,7 @@ def _counter_problem(
     *,
     own_table: bool,
     dynamic_block: bool = False,
+    path_limits: bool = False,
 ) -> str:
     """Why this rule's stick counter cannot be the text's, or "".
 
@@ -1073,6 +1079,8 @@ def _counter_problem(
             return "sc1 is this object's rate limit; the text counts on sc2"
         if slot in BLOCK_SLOTS and dynamic_block:
             return f"sc{slot} is this object's dynamic blocking; the text counts on sc2"
+        if slot == PATH_LIMIT_SLOT and path_limits:
+            return f"sc{slot} is this object's path limits; the text counts on sc2"
         if table is None and not own_table:
             return (
                 "a counter here needs `table <name>` of a backend the text adds: "
@@ -1088,6 +1096,7 @@ def _counter_problem(
             "0" if counter[1] is None else counter[1].split(",")[-1],
             rate_limit=rate_limit,
             dynamic_block=dynamic_block,
+            path_limits=path_limits,
         )
         if problem:
             return problem
@@ -1106,7 +1115,10 @@ def _counter_problem(
             else:
                 continue
             problem = _changed_slot_problem(
-                written, rate_limit=rate_limit, dynamic_block=dynamic_block
+                written,
+                rate_limit=rate_limit,
+                dynamic_block=dynamic_block,
+                path_limits=path_limits,
             )
             if problem:
                 return problem
@@ -1122,7 +1134,9 @@ def _counter_problem(
 _SLOT = re.compile(r"[+-]?[0-9]{1,6}")
 
 
-def _changed_slot_problem(written: str, *, rate_limit: bool, dynamic_block: bool) -> str:
+def _changed_slot_problem(
+    written: str, *, rate_limit: bool, dynamic_block: bool, path_limits: bool = False
+) -> str:
     """Why a line may not change the counter in this slot, or ""."""
 
     written = written.strip()
@@ -1135,6 +1149,8 @@ def _changed_slot_problem(written: str, *, rate_limit: bool, dynamic_block: bool
         return "sc1 is this object's rate limit; the text may read it but not change it"
     if slot in BLOCK_SLOTS and dynamic_block:
         return f"sc{slot} is this object's dynamic blocking; the text may read it but not change it"
+    if slot == PATH_LIMIT_SLOT and path_limits:
+        return f"sc{slot} is this object's path limits; the text may read it but not change it"
     return ""
 
 
@@ -1253,6 +1269,7 @@ GENERATED_VARIABLES = frozenset(
         "txn.client",
         "txn.dynblock",
         "txn.hsts",
+        "txn.path_limit",
         "txn.rule",
         "txn.traffic_host",
         "txn.traffic_method",
@@ -1945,11 +1962,13 @@ def place(
     rate_limit: bool,
     handwritten: bool,
     dynamic_block: bool = False,
+    path_limits: bool = False,
 ) -> Placement:
     """Decide, line by line, where the text goes and what is refused.
 
     `rate_limit` is whether the form has the object's limit on (it owns sc1
-    then), `dynamic_block` whether its dynamic blocking is (sc3 and sc4), and
+    then), `dynamic_block` whether its dynamic blocking is (sc3 and sc4),
+    `path_limits` whether it has path limits (sc5), and
     `handwritten` whether the object's one pool is written here
     (B224). The answer covers every line, so the dialog and the CLI can show
     the whole text with what became of each.
@@ -2101,6 +2120,7 @@ def place(
                     rate_limit,
                     own_table=True,
                     dynamic_block=dynamic_block,
+                    path_limits=path_limits,
                 )
                 if not problem and keyword == ("stick-table",):
                     tables += 1
@@ -2142,7 +2162,13 @@ def place(
         problem = (
             _line_problem(tokens, keyword, own, own_table=False)
             or _counter_problem(
-                tokens, keyword, own, rate_limit, own_table=False, dynamic_block=dynamic_block
+                tokens,
+                keyword,
+                own,
+                rate_limit,
+                own_table=False,
+                dynamic_block=dynamic_block,
+                path_limits=path_limits,
             )
             or _stick_problem(tokens, keyword, own)
         )

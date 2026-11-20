@@ -35,6 +35,7 @@ names used below, that is a bug in the software, not in this guide.
 - [Features and advanced configuration](#features-and-advanced-configuration)
   - [What the advanced layer does, line by line](#what-the-advanced-layer-does-line-by-line)
 - [Access rules](#access-rules)
+  - [Path limits](#path-limits)
   - [Blocklists](#blocklists)
   - [A sign-in or bot check in front of an application](#a-sign-in-or-bot-check-in-front-of-an-application)
 - [Dynamic blocking](#dynamic-blocking)
@@ -366,6 +367,8 @@ the certificate does not cover.
   is refused.
 - *Rate limit* is the number of requests one source address may make within *Rate window* (`10s` when
   empty). Requests over the limit are answered 429; the rest are served.
+- *Path limits* are lower limits for single paths, such as a sign-in page. They are described in
+  [Path limits](#path-limits).
 - *Denied*, *Max request body* and *Deny rules* are described in [Access rules](#access-rules).
 - Blocking is described in [Dynamic blocking](#dynamic-blocking).
 - The WAF group is shown where the engine is offered or already in use. It is described in
@@ -1643,13 +1646,14 @@ path is:
 Behind a backend that does tell `/Admin` from `/admin`, a rule on one refuses both. The backend still
 receives the path exactly as it was sent.
 
-Two kinds of path are answered 400 on an object with a refusing path rule:
+Two kinds of path are answered 400 on an object with a refusing path rule or a [path limit](#path-limits):
 
 - a path with a `.` or `..` segment once decoded - `/./admin`, `/x/../admin`, `/%2e%2e/admin` - or with a
   backslash, which IIS and Windows read as a slash - `/admin\x`, `/admin%5Cx` - recorded `path-dots:deny`;
 - a path with a control character - `%00`, a line break - recorded `path-chars:deny`.
 
-When the object's path rules only look, these are recorded with `:log` instead. Browsers send neither.
+When the object's path rules only look, and it has no path limit, these are recorded with `:log` instead.
+Browsers send neither.
 
 Write a rule's own path decoded: without `%`, `//`, `;`, `.` or `..`, and with no segment ending in a dot.
 Its case does not matter.
@@ -1721,6 +1725,45 @@ A chunked request states no length, and HAProxy sees only what fits in its buffe
 through and marked `body-unbounded:log`. Browsers send the length with forms and uploads, so the mark shows
 whether anything else reaches the object. The hard limit for a chunked body is the backend server's own,
 such as nginx's `client_max_body_size`.
+
+### Path limits
+
+An object's *Rate limit* holds for every request to it. A sign-in page or an API often needs a much lower
+limit than the site's images and scripts: set low enough for the sign-in, the object's limit would refuse
+ordinary page loads. A path limit gives one path a limit of its own.
+
+*Path limits* are in the *Access* group, under *Rate limit* (http and https). *Add limit* adds one and
+*Remove limit* drops it. A limit has a *Path*, its *Path match* (*prefix* or *exact*), *Requests* and a
+*Window*, such as 5 requests per `10s` on `/login`. When the group is closed, its line counts the limits.
+
+- **Counted per source address**, as the rate limit is: behind a trusted proxy, the last element of
+  `X-Forwarded-For`. Requests over the limit are answered 429.
+- **A request counts on one path limit**: the most specific that holds. An exact path comes before a
+  prefix, and a longer path before a shorter one. With limits on `/api` and on exactly `/api/login`, a
+  request for `/api/login` counts only on the second. The order of the list does not matter.
+- **It also counts on the object's rate limit**, if the object has one, unless the path limit refused it.
+- **The path is read as a rule's path is read**: decoded, in any case, and without `;parameters`, so
+  `/LOGIN`, `/login/` and `/login;x` count as `/login`. A path with a `.` or `..` segment is answered 400.
+  Write the path decoded, as for a rule. A limit takes a path, never a pattern.
+- **Shared between the nodes** when the cluster shares counters, as the rate limit is.
+
+In the object's YAML:
+
+```yaml
+path_limits:                     # http only; at most 20
+  - path: /login
+    match: exact                 # prefix by default
+    max_requests: 5
+    window: 10s                  # required: 1s to 9999m
+  - path: /api
+    max_requests: 50
+    window: 1m
+```
+
+*Details:* each limit is a table of its own, in a backend with no servers, `mgd-<object>-pathlimit-<n>`.
+`show stat` lists them; the node status leaves them out. Path limits count on the sixth stick counter
+slot (`sc5`), so the cluster's `core/haproxy.cfg` needs `tune.stick-counters 6`. A publish that needs the
+line refuses with it, and with the `sudoedit` command for the file.
 
 ### Blocklists
 
@@ -1946,12 +1989,15 @@ block reaches the other nodes and survives a reload and a failover. Without them
 `mgd-<object>-dynblock`. `show stat` lists them; the node status leaves them out.
 
 **What the cluster's core configuration needs.** Dynamic blocking uses the fourth and fifth stick counter
-slots (`sc3` and `sc4`). HAProxy has three unless `global` says otherwise, so the cluster's
-`core/haproxy.cfg` needs:
+slots (`sc3` and `sc4`), and [path limits](#path-limits) the sixth (`sc5`). HAProxy has three unless
+`global` says otherwise, so the cluster's `core/haproxy.cfg` needs:
 
 ```
-    tune.stick-counters 5
+    tune.stick-counters 6
 ```
+
+A cluster made by `haprion-cluster` has the line. `5` is enough while no object on the cluster has a path
+limit.
 
 The nodes list and lift blocks on the admin socket that the core configuration names for drain and
 maintenance (`stats socket /run/haproxy/manager.sock mode 600 level admin`). Before anything is validated,
@@ -5837,6 +5883,9 @@ These gaps are not on the way to being filled. Each one is either impossible wit
 the manager does not own, or left out because the alternative is better done elsewhere. The details are
 in the section linked.
 
+- **A deny rule or a path limit takes a path, never a pattern.** A regular expression in front of every
+  request is easy to get wrong and hard to read back. A route, a rule and a limit say *prefix* or *exact*
+  instead ([Access rules](#access-rules), [Path limits](#path-limits)).
 - **A blocklist of AS numbers, domain names or web addresses is not read.** A cluster refuses visitors by
   their address. An AS number needs routing data to become networks, and a domain or a URL says where
   people go, not who visits ([Blocklists](#blocklists)).

@@ -120,6 +120,7 @@ def _returned_pool(name: str, data: Mapping[str, Any], text: str) -> dict[str, A
         protocol=protocol,
         rate_limit=data.get("rate_limit") is not None,
         dynamic_block=data.get("dynamic_block") is not None,
+        path_limits=bool(data.get("path_limits")),
         handwritten=True,
     )
     lines = [

@@ -95,6 +95,28 @@ class ReadingShowStat(unittest.TestCase):
         rows = [row(pxname=name, svname="BACKEND", status="UP") for name in block_tables("a-b")]
         self.assertEqual(self.stat(*rows)["servers"], [])
 
+    def test_a_path_limit_table_is_not_a_pool(self) -> None:
+        """B520: one section per limit, as the generator names it."""
+
+        from haprion.generate import path_limit_table
+
+        parsed = self.stat(
+            row(pxname=path_limit_table("a-b", 0), svname="BACKEND", status="UP"),
+            row(pxname=path_limit_table("a-b", 12), svname="BACKEND", status="UP"),
+            row(pxname="pathlimit-0", svname="BACKEND", status="UP"),
+        )
+        self.assertEqual([entry["backend"] for entry in parsed["servers"]], ["pathlimit-0"])
+
+    def test_the_node_and_the_manager_know_the_same_shape(self) -> None:
+        from haprion.generate import TABLE_SECTION
+
+        script = (
+            Path(__file__).resolve().parents[1] / "install/node/haprion-node-status"
+        ).read_text()
+        found = re.search(r'^BLOCK_TABLE = re\.compile\(r"(.*)"\)$', script, re.MULTILINE)
+        assert found is not None
+        self.assertEqual(found[1], TABLE_SECTION.pattern)
+
     def test_a_pool_member_keeps_its_verdict_and_gains_counters(self) -> None:
         parsed = self.stat(
             row(

@@ -602,6 +602,107 @@ class WhoMayReachAnObject(unittest.TestCase):
         self.assertTrue(blocklists.NAME.pattern.endswith("{0,39}$"))
 
 
+class HowOftenOnePathMayBeAskedFor(unittest.TestCase):
+    """`path_limits` (B517, 11; B520)."""
+
+    def load(self, block: str, document: bytes = MINIMAL) -> Any:
+        text = document.decode().replace("routes:", f"{block}\nroutes:", 1)
+        return load_proxy("shop", text.encode())
+
+    def refused(self, block: str, document: bytes = MINIMAL) -> str:
+        with self.assertRaises(ModelError) as raised:
+            self.load(block, document)
+        return str(raised.exception)
+
+    def test_a_limit_reads_its_path_as_the_rules_do(self) -> None:
+        proxy = self.load(
+            "path_limits:\n  - path: /login/\n    match: exact\n    max_requests: 5\n"
+            "    window: 10s\n  - path: /api\n    max_requests: 50\n    window: 1m"
+        )
+        self.assertEqual(
+            [
+                (limit.path, limit.path_match, limit.max_requests, limit.window)
+                for limit in proxy.path_limits
+            ],
+            [("/login", "exact", 5, "10s"), ("/api", "prefix", 50, "1m")],
+        )
+
+    def test_a_path_written_otherwise_than_it_reads_is_refused(self) -> None:
+        for path in ("/a%2fb", "//a", "/a;b", "/./a", "/a/..", "/a.", "a"):
+            with self.subTest(path=path):
+                problem = self.refused(
+                    f"path_limits:\n  - path: '{path}'\n    max_requests: 5\n    window: 10s"
+                )
+                self.assertIn("shop.path_limits[0].path", problem)
+
+    def test_the_count_and_the_window_are_both_needed(self) -> None:
+        self.assertIn(
+            "max_requests must be a count",
+            self.refused("path_limits:\n  - path: /a\n    window: 10s"),
+        )
+        self.assertIn(
+            "window must be a duration",
+            self.refused("path_limits:\n  - path: /a\n    max_requests: 5"),
+        )
+        self.assertIn(
+            "match must be one of",
+            self.refused(
+                "path_limits:\n  - path: /a\n    match: regex\n    max_requests: 5\n    window: 10s"
+            ),
+        )
+
+    def test_one_path_is_limited_once_whatever_its_case(self) -> None:
+        problem = self.refused(
+            "path_limits:\n  - path: /Login\n    max_requests: 5\n    window: 10s\n"
+            "  - path: /login\n    max_requests: 9\n    window: 1m"
+        )
+        self.assertIn("limits the same path twice", problem)
+        self.load(
+            "path_limits:\n  - path: /login\n    max_requests: 5\n    window: 10s\n"
+            "  - path: /login\n    match: exact\n    max_requests: 9\n    window: 1m"
+        )
+
+    def test_the_list_is_bounded(self) -> None:
+        many = "".join(
+            f"\n  - path: /p{index}\n    max_requests: 5\n    window: 10s" for index in range(21)
+        )
+        self.assertIn("at most 20 limits", self.refused(f"path_limits:{many}"))
+
+    def test_a_raw_port_has_no_path_to_count(self) -> None:
+        tcp = b"""schema: 1
+name: shop
+listen:
+  protocol: tcp
+  port: 5432
+backend: db
+backends:
+  db:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 192.0.2.10
+        port: 5432
+"""
+        with self.assertRaises(ModelError) as raised:
+            load_proxy(
+                "shop",
+                tcp.replace(
+                    b"backend: db\n",
+                    b"path_limits:\n  - path: /a\n    max_requests: 5\n    window: 10s\nbackend: db\n",
+                ),
+            )
+        self.assertIn("path_limits means nothing", str(raised.exception))
+
+    def test_the_advanced_text_may_not_count_on_the_limits_slot(self) -> None:
+        problem = self.refused(
+            "path_limits:\n  - path: /a\n    max_requests: 5\n    window: 10s\n"
+            "advanced: |\n  http-request track-sc5 src table shop-own\n"
+            "  backend shop-own\n    stick-table type ip size 1k store http_req_rate(10s)"
+        )
+        self.assertIn("sc5 is this object's path limits", problem)
+
+
 class WhoAndWhatAnObjectRefuses(unittest.TestCase):
     """`deny_from`, `deny_rules` and `max_request_body` (Fas 21, B227)."""
 

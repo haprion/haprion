@@ -175,8 +175,9 @@ global
     stats socket /run/haproxy/ui-status.sock mode 660 level user
 
     # Stick counter slots: dynamic blocking counts on the fourth and marks on
-    # the fifth (docs/user-manual.md, 'Dynamic blocking').
-    tune.stick-counters 5
+    # the fifth, path limits count on the sixth (docs/user-manual.md,
+    # 'Dynamic blocking' and 'Path limits').
+    tune.stick-counters 6
 
     # The TLS defaults the publish path checks this file against, written
     # from the same source (docs/user-manual.md, 'Directory layout').

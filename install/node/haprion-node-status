@@ -1511,11 +1511,12 @@ def shared_counters(
 #
 MAX_STAT_ROWS = 500
 #
-# The sections holding an object's dynamic blocking tables (B271): backends with
-# no servers that carry no traffic, so not pools. Named by the generator's
-# `block_tables`, in the `mgd-` space no pool may take.
+# The sections holding an object's tables - dynamic blocking (B271) and path
+# limits (B520): backends with no servers that carry no traffic, so not pools.
+# Named by the generator's `block_tables` and `path_limit_table`, in the `mgd-`
+# space no pool may take; `generate.TABLE_SECTION` is the same shape.
 #
-BLOCK_TABLE = re.compile(r"^mgd-.+-dynblock(-rate)?$")
+BLOCK_TABLE = re.compile(r"^mgd-.+-(?:dynblock(?:-rate)?|pathlimit-[0-9]+)$")
 
 #
 # Why the frontends are reported at all, when they carry no health check: a

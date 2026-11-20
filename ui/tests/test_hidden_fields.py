@@ -21,7 +21,7 @@ from tests.test_editor_page import EditorTestCase
 #
 # Fields hidden with their protocol that need no entry of their own: each is
 # written only beside the field named, which is in `HIDDEN_FOR`, or - the access
-# rules - only for http and https (`build_document`).
+# rules and the path limits - only for http and https (`build_document`).
 #
 DEPENDENT = {
     "hsts_max_age": "hsts",
@@ -39,6 +39,10 @@ DEPENDENT = {
     "rule_negate": "access rules",
     "rule_path": "access rules",
     "rule_source": "access rules",
+    "limit_path": "path limits",
+    "limit_match": "path limits",
+    "limit_requests": "path limits",
+    "limit_window": "path limits",
 }
 
 VOID = {"input", "br", "img", "hr", "meta", "link", "source", "wbr", "area", "base", "col"}

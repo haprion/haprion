@@ -377,3 +377,31 @@ class EnoughStickCountersForWhatIsGenerated(unittest.TestCase):
         self.assertEqual(tls_policy.MANAGER_SOCKET, MANAGER_SOCKET)
         core = seed_files("192.0.2.20")["core/haproxy.cfg"].decode()
         self.assertIsNone(self.problem(core))
+        self.assertIsNone(self.problem(core, self.LIMITED + self.GENERATED))
+
+    LIMITED = b"frontend fe\n    http-request track-sc5 src table mgd-shop-pathlimit-0\n"
+
+    def test_path_limits_need_six_and_say_so(self) -> None:
+        """B520: path limits count on the sixth slot."""
+
+        problem = self.problem(f"global\n    tune.stick-counters 5\n{self.SOCKET}", self.LIMITED)
+        assert problem is not None
+        self.assertIn("an object uses path limits, which needs 6 stick counters", problem)
+        self.assertIn("      tune.stick-counters 6\n", problem)
+        both = self.problem("global\n", self.LIMITED + self.GENERATED)
+        assert both is not None
+        self.assertIn("uses dynamic blocking and path limits, which needs 6", both)
+
+    def test_path_limits_alone_need_no_admin_socket(self) -> None:
+        """Nothing lists or lifts a count, so the socket blocks need is not asked for."""
+
+        self.assertIsNone(self.problem("global\n    tune.stick-counters 6\n", self.LIMITED))
+        self.assertIsNotNone(
+            self.problem("global\n    tune.stick-counters 6\n", self.LIMITED + self.GENERATED)
+        )
+
+    def test_the_path_limit_slot_is_the_generator_s(self) -> None:
+        from haprion import advanced, generate
+
+        self.assertEqual(tls_policy.PATH_LIMIT_SLOT, generate.PATH_LIMIT_COUNTER)
+        self.assertEqual(advanced.PATH_LIMIT_SLOT, generate.PATH_LIMIT_COUNTER)

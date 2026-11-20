@@ -109,6 +109,19 @@ def answering(**by_name: object) -> Callable[[Node], NodeResponse]:
 
 
 class CollectTests(unittest.TestCase):
+    def test_a_table_section_an_older_node_reports_is_no_pool(self) -> None:
+        """B520: the manager leaves path limit tables out of the pools itself."""
+
+        status = node_status("node-a", owner=True, release_hash="a" * 40)
+        status["servers"] = [
+            {"backend": "web", "server": "s1", "status": "UP"},
+            {"backend": "mgd-shop-pathlimit-0", "server": "BACKEND", "status": "UP"},
+            {"backend": "mgd-shop-dynblock", "server": "BACKEND", "status": "UP"},
+        ]
+        report = collect(NODES[:1], answering(**{"node-a": status}), target=TARGET)
+        servers = report.result["nodes"][0]["status"]["servers"]
+        self.assertEqual([entry["backend"] for entry in servers], ["web"])
+
     def both(
         self, *, hash_a: str | None, hash_b: str | None, version: object = "18"
     ) -> StatusReport:

@@ -54,7 +54,7 @@ from haprion.config import DeployIdentity, Node
 from haprion.deploy_plan import NodeObservation, ReleaseTarget, VipState
 from haprion.digits import is_digits
 from haprion.envelope import Message, envelope
-from haprion.generate import BLOCKLISTS_DIRECTORY
+from haprion.generate import BLOCKLISTS_DIRECTORY, is_table_section
 from haprion.object_manifest import (
     CURRENT,
     MANIFEST_FILE,
@@ -465,7 +465,7 @@ def _mapping(value: object) -> Mapping[str, Any]:
 
 
 def _normalised(status: Mapping[str, Any]) -> dict[str, Any]:
-    """The node's status, with a numeric release version made a number.
+    """The node's status, with a numeric release version made a number, and no table section as a pool.
 
     The frozen schema types `release.version` as an integer; the node writes the
     RELEASE stamp as text and reports the field as it read it, so a conforming
@@ -480,6 +480,20 @@ def _normalised(status: Mapping[str, Any]) -> dict[str, Any]:
     """
 
     copy = dict(status)
+    #
+    # A table section is no pool (B520). A node whose `haprion-node-status`
+    # predates path limits reports their sections as pools, and every page and
+    # command that reads pools here would show a card of a pool that never
+    # carries anything; the node's own script leaves them out once it knows
+    # the shape, and this keeps an older node's answer the same.
+    #
+    servers = copy.get("servers")
+    if isinstance(servers, list):
+        copy["servers"] = [
+            entry
+            for entry in servers
+            if not (isinstance(entry, Mapping) and is_table_section(str(entry.get("backend", ""))))
+        ]
     release = copy.get("release")
     if isinstance(release, Mapping):
         version = release.get("version")

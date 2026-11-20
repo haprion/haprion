@@ -94,14 +94,17 @@ def _access(form: Mapping[str, Any]) -> str:
     limit = _text(form, "rate_limit")
     window = _text(form, "rate_window") or DEFAULT_ABUSE_WINDOW
     body = _text(form, "max_request_body")
+    paths = sum(1 for path in form.get("limit_path", ()) or () if str(path).strip())
     #
     # A dns object has no rate limit to speak of: dnsdist serves it (Fas 19a B5).
     #
     dns = _text(form, "protocol") == "dns"
+    site = _text(form, "protocol") in ("http", "https")
     return _joined(
         [
             f"From {who}" if who else "From everywhere",
             "" if dns else f"at most {limit} per {window}" if limit else "no rate limit",
+            f"{paths} path limit{'s' if paths != 1 else ''}" if paths and site else "",
             f"body ≤ {body}" if body else "",
         ],
         "",
@@ -317,6 +320,10 @@ GROUPS: Mapping[str, FormGroup] = {
             "rule_header_value",
             "rule_source",
             "rule_negate",
+            "limit_path",
+            "limit_match",
+            "limit_requests",
+            "limit_window",
         ),
         _access,
         _access_badges,

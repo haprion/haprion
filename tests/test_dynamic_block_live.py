@@ -498,6 +498,18 @@ backends:
         self.assertEqual(self.get(a, PROXY, forwarded=NEIGHBOUR), 200, "the proxy is not blocked")
         self.assertEqual(list(self.blocked(a)), [BEHIND])
 
+    def test_a_blocking_rule_s_path_cannot_be_walked_around(self) -> None:
+        """A dot segment is refused where the rules only block, as where they deny (26-11-20).
+
+        Only `deny` rules turned the refusal on before, so `/./.env` passed a
+        rule that blocks: it reads as another path to the rule and as `/.env`
+        to a server that resolves it.
+        """
+
+        a = NODES[0][1]
+        self.assertEqual(self.get(a, "127.0.0.46", "/./.env"), 400)
+        self.assertEqual(self.get(a, "127.0.0.46", "/a/../.env"), 400)
+
     def test_an_exempt_address_is_never_blocked(self) -> None:
         a = NODES[0][1]
         self.assertEqual([self.get(a, EXEMPT) for _ in range(12)], [200] * 12)

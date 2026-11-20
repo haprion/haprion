@@ -32,6 +32,7 @@ from haprion.digits import is_digits
 from haprion.generate import GeneratorError, generate
 from haprion.proxy_model import (
     HTTP_METHODS,
+    MAX_PATH_LIMITS,
     WAF_ENGINE_ERROR_DEFAULT,
     ModelError,
     load_proxy,
@@ -53,6 +54,7 @@ from haprion_ui.preview import (
     access_rules,
     form_from_document,
     named_addresses,
+    path_limits,
     saved_document,
     unchecked_countries,
     vip_sources,
@@ -408,6 +410,10 @@ FIELD_LABELS: dict[str, str] = {
     "rule_source": "Rules",
     "rule_methods": "Rules",
     "rule_negate": "Rules",
+    "limit_path": "Path limits",
+    "limit_match": "Path limits",
+    "limit_requests": "Path limits",
+    "limit_window": "Path limits",
     "maintenance": "Maintenance page",
     "maintenance_message": "Maintenance message",
     "unavailable_message": "Unavailable message",
@@ -426,6 +432,12 @@ FIELD_LABELS: dict[str, str] = {
     "waf_large_bodies": "WAF large bodies",
 }
 RULES = "Rules"
+LIMITS = "Path limits"
+#
+# The fields that are rows of one list, each named once by what tells its rows
+# apart: a rule by its name, a limit by its path.
+#
+LISTED = {RULES: "rule_name", LIMITS: "limit_path"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -468,13 +480,14 @@ def moved(before: str, after: str, *, networks: Collection[str] = ()) -> tuple[M
         return (Moved("Settings the form does not show", "", "Changed"),)
     lines: list[Moved] = []
     for key, label in FIELD_LABELS.items():
-        if label == RULES:
+        if label in LISTED:
             continue
         if old.get(key) != new.get(key):
             lines.append(Moved(label, _shown(old.get(key)), _shown(new.get(key))))
-    rule_keys = [key for key, label in FIELD_LABELS.items() if label == RULES]
-    if any(old.get(key) != new.get(key) for key in rule_keys):
-        lines.append(Moved(RULES, _shown(old.get("rule_name")), _shown(new.get("rule_name"))))
+    for listed, named in LISTED.items():
+        keys = [key for key, label in FIELD_LABELS.items() if label == listed]
+        if any(old.get(key) != new.get(key) for key in keys):
+            lines.append(Moved(listed, _shown(old.get(named)), _shown(new.get(named))))
     return tuple(lines) or (Moved("Settings the form does not show", "", "Changed"),)
 
 
@@ -512,6 +525,9 @@ FORM_TEXT = 64 * 1024
 
 RuleList = Annotated[
     list[Annotated[str, StringConstraints(max_length=64)]], Field(max_length=MAX_RULES)
+]
+LimitList = Annotated[
+    list[Annotated[str, StringConstraints(max_length=64)]], Field(max_length=MAX_PATH_LIMITS)
 ]
 
 
@@ -627,6 +643,16 @@ class ObjectForm(BaseModel):
         list[Annotated[str, StringConstraints(max_length=16)]], Field(max_length=MAX_RULES * 9)
     ] = Field(default_factory=list)
     rule_negate: RuleList = Field(default_factory=list)
+    #
+    # Path limits (B520): four parallel lists, one entry per limit in page order.
+    #
+    limit_path: Annotated[
+        list[Annotated[str, StringConstraints(max_length=FORM_TEXT)]],
+        Field(max_length=MAX_PATH_LIMITS),
+    ] = Field(default_factory=list)
+    limit_match: LimitList = Field(default_factory=list)
+    limit_requests: LimitList = Field(default_factory=list)
+    limit_window: LimitList = Field(default_factory=list)
     maintenance: bool = False
     maintenance_message: Annotated[str, StringConstraints(max_length=200)] = ""
     unavailable_message: Annotated[str, StringConstraints(max_length=200)] = ""
@@ -698,4 +724,5 @@ class ObjectForm(BaseModel):
         values["deny_from"] = tuple(entry for entry in self.deny_from if entry)
         values["block_exempt_from"] = tuple(entry for entry in self.block_exempt_from if entry)
         values["deny_rules"] = access_rules(values)
+        values["path_limits"] = path_limits(values)
         return values

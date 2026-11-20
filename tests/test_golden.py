@@ -63,7 +63,7 @@ CORE = """
 global
     daemon
     default-path config
-    tune.stick-counters 5
+    tune.stick-counters 6
 resolvers cluster-dns
     nameserver ns1 192.0.2.53:53
     resolve_retries 3

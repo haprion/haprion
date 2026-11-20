@@ -355,6 +355,11 @@ class TheStreamThroughRealHAProxyAndRealRsyslog(unittest.TestCase):
 
         classic = self.classic_text()
         self.assertNotIn('{"schema"', classic)
-        self.assertIn("/?q=must-not-appear", classic)
+        #
+        # The classic line has the path without its query (B523), and the
+        # malformed request is there as before.
+        #
+        self.assertIn('"GET / HTTP/1.1"', classic)
+        self.assertNotIn("must-not-appear", classic)
         self.assertIn("<BADREQ>", classic)
         self.assertEqual(classic.count("stopped"), 2, classic)

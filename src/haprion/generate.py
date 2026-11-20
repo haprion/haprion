@@ -268,7 +268,11 @@ RETRIES = 3
 # (`tests/test_generator_level.py`): output that changes fails there until the
 # level has been decided.
 #
-GENERATOR_LEVEL = 1
+#
+# 2 (1.3.0, B523): every http frontend sends X-Request-ID and writes the request
+# ID and the client's TLS and HTTP version in the traffic record.
+#
+GENERATOR_LEVEL = 2
 
 # A second, opt-in stream. The ordinary `option httplog` output is deliberately
 # untouched: this profile applies only to the additional per-frontend log

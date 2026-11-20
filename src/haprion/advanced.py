@@ -1270,10 +1270,12 @@ GENERATED_VARIABLES = frozenset(
         "txn.dynblock",
         "txn.hsts",
         "txn.path_limit",
+        "txn.request_id",
         "txn.rule",
         "txn.traffic_host",
         "txn.traffic_method",
         "txn.traffic_path",
+        "txn.traffic_version",
         "txn.waf_body",
     }
 )

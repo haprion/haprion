@@ -463,7 +463,7 @@ blocking it. A response whose headers no longer fit HAProxy's 16 KiB buffer with
 
 `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` belong to the cluster, which writes
 them from what the connection actually was. `X-Request-ID` is the cluster's too: it is the request's ID in
-the traffic log ([Request ID](#request-id)). They are refused here.
+the traffic log ([Request ID](#a-basic-log-viewer-on-purpose)). They are refused here.
 
 **Health check.** *Type* `disabled` means no check. HAProxy then treats every server as always up, sends a
 server that has gone its share of the traffic all the same, and the object has no status lamp.
@@ -539,7 +539,7 @@ cluster do that work on every http and https object:
 - **The `Host` header reaches the servers as the visitor sent it.** There is no setting that replaces it
   with the server's own name.
 - **`X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` are always written**, from what the
-  connection actually was, and **`X-Request-ID`** with the request's ID ([Request ID](#request-id)).
+  connection actually was, and **`X-Request-ID`** with the request's ID ([Request ID](#a-basic-log-viewer-on-purpose)).
   *Headers* above says why they cannot be set by hand.
 - **Pages are not rewritten.** Headers can be changed, the content of an answer cannot
   ([What it does not do](#what-it-does-not-do)).
@@ -4250,7 +4250,7 @@ the path and the backend, and also a term that is a client address (`192.0.2.5`)
 or a configured destination: an address (`192.0.2.10`) finds the destination on that host and no
 other, `192.0.2.10:8080` or `[2001:db8::10]:443` the one destination, a network the destinations in it,
 and any other text a part of the destination's address or host name. A network finds the clients and
-destinations in it, however the log writes them. A [request ID](#request-id) finds its request, written
+destinations in it, however the log writes them. A [request ID](#a-basic-log-viewer-on-purpose) finds its request, written
 in full. `TLS1.2` (or `"TLS 1.2"`) finds the requests made over TLS 1.2, and `HTTP/2` those made over
 HTTP/2; `HTTP/1.1 NOT TLS1.3` finds what still arrives without TLS 1.3. The search understands AND, OR, NOT, parentheses
 and quoted phrases. A filter searches
@@ -4281,7 +4281,7 @@ without TLS), and the request's *ID*. A click on the ID selects all of it, for c
 a session that did not end normally, or a long ID from a trusted proxy, continues on a second line rather than
 being cut.
 
-<a id="request-id"></a>**Request ID.** Every request gets an ID, and the backend receives it in the
+**Request ID.** Every request gets an ID, and the backend receives it in the
 `X-Request-ID` header. An application that writes that header into its own log can be followed both ways: from
 a line in its log to the request here, by searching for the ID, and from a slow or refused request here to the
 application's line. A request refused before any backend - by an access rule, dynamic blocking or the WAF - has

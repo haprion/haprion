@@ -332,17 +332,22 @@ class AnUpdateIsRequiredOnlyWhenTheLevelSaysSo(unittest.TestCase):
 
     def test_a_higher_level_is_required_and_says_so(self) -> None:
         files = published_tree()
-        with self.another_generator(), mock.patch.object(regeneration, "GENERATOR_LEVEL", 2):
+        level = generate.GENERATOR_LEVEL
+        with (
+            self.another_generator(),
+            mock.patch.object(regeneration, "GENERATOR_LEVEL", level + 1),
+        ):
             result = regenerated(files)
 
         self.assertEqual((result["outcome"], result["required"]), ("changed", True))
         self.assertEqual(
-            result["causes"], [{"kind": "generator", "published": "1", "installed": "2"}]
+            result["causes"],
+            [{"kind": "generator", "published": str(level), "installed": str(level + 1)}],
         )
 
     def test_a_higher_level_with_nothing_different_is_unchanged(self) -> None:
         files = published_tree()
-        with mock.patch.object(regeneration, "GENERATOR_LEVEL", 2):
+        with mock.patch.object(regeneration, "GENERATOR_LEVEL", generate.GENERATOR_LEVEL + 1):
             result = regenerated(files)
 
         self.assertEqual((result["outcome"], result["required"]), ("unchanged", False))
@@ -352,7 +357,10 @@ class AnUpdateIsRequiredOnlyWhenTheLevelSaysSo(unittest.TestCase):
         document = json.loads(files["managed/manifest.json"])
         self.assertEqual(document.pop("generator_level"), generate.GENERATOR_LEVEL)
         files["managed/manifest.json"] = json.dumps(document).encode()
-        with self.another_generator():
+        #
+        # The baseline is 1, whatever the installed level is now.
+        #
+        with self.another_generator(), mock.patch.object(regeneration, "GENERATOR_LEVEL", 1):
             same = regenerated(files)
         with self.another_generator(), mock.patch.object(regeneration, "GENERATOR_LEVEL", 2):
             higher = regenerated(files)

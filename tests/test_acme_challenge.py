@@ -51,10 +51,16 @@ class TheChallengeIsLetThroughBeforeAnythingRefusesIt(unittest.TestCase):
         text = layer()
         for name in ("mgd-internal-http", "mgd-plain-http"):
             with self.subTest(frontend=name):
+                #
+                # What can refuse the request is what may not come first; a
+                # variable or the request ID's header (B523) refuses nothing.
+                #
                 rules = [
                     line.strip()
                     for line in frontend(text, name)
-                    if line.strip().startswith("http-request") and "set-var(" not in line
+                    if line.strip().startswith("http-request")
+                    and "set-var(" not in line
+                    and "set-header X-Request-ID" not in line
                 ]
                 self.assertEqual(rules[0], f"http-request allow if {CONDITION}")
                 self.assertIn(

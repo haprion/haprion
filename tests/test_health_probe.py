@@ -377,7 +377,22 @@ class WhatTheProbeRefuses(unittest.TestCase):
         """A v1.2.2 node read `method` as nothing and answered GET over HTTP/1.0, green."""
 
         git = shutil.which("git")
-        self.assertIsNotNone(git)
+        #
+        # The script comes from the tag, which a shallow checkout lacks (CI's
+        # fetches one commit and no tags). The local gate, which every push runs,
+        # has the history.
+        #
+        tagged = git is not None and (
+            sp.run(
+                [git, "rev-parse", "--verify", "--quiet", "v1.2.2^{commit}"],
+                cwd=SCRIPT.parents[2],
+                capture_output=True,
+                check=False,
+            ).returncode
+            == 0
+        )
+        if not tagged:
+            self.skipTest("the v1.2.2 tag is not in this checkout")
         old = sp.run(
             [str(git), "show", "v1.2.2:install/node/haprion-health-probe"],
             cwd=SCRIPT.parents[2],

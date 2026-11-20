@@ -11,6 +11,7 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
+from haprion.generate import _header_lines
 from haprion.proxy_model import (
     COMMON_KEYS,
     DNS_REFUSED_KEYS,
@@ -1509,6 +1510,30 @@ class EditingTheHeadersThatPassThrough(unittest.TestCase):
             with self.subTest(headers=headers), self.assertRaises(ModelError) as raised:
                 load_proxy("shop", self.headers(headers))
             self.assertIn("as the request's ID", str(raised.exception))
+
+    def test_the_cluster_writes_no_forwarded_header_or_id_in_a_response(self) -> None:
+        """Only the request side is reserved; an app's own copy may be changed in the response."""
+
+        proxy = load_proxy(
+            "shop",
+            self.headers(
+                "  response:\n    set:\n      X-Request-ID: mine\n"
+                "    add:\n      X-Forwarded-Host: a.example.com\n"
+                "    delete: [x-forwarded-for, X-Forwarded-Proto]"
+            ),
+        )
+
+        lines = _header_lines(proxy)
+        for expected in (
+            "http-response set-header X-Request-ID 'mine'",
+            "http-response add-header X-Forwarded-Host 'a.example.com'",
+            "http-response del-header x-forwarded-for",
+            "http-response del-header X-Forwarded-Proto",
+        ):
+            self.assertIn("    " + expected, lines)
+        for name in ("X-Request-ID", "X-Forwarded-Host"):
+            with self.subTest(name=name), self.assertRaises(ModelError):
+                load_proxy("shop", self.headers(f"  request:\n    add:\n      {name}: x"))
 
     def test_a_policy_with_quoted_keywords_and_a_few_kilobytes_is_kept(self) -> None:
         """A CSP quotes 'self' and runs long (B496, 2); the generator escapes the quote."""

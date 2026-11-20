@@ -463,7 +463,8 @@ blocking it. A response whose headers no longer fit HAProxy's 16 KiB buffer with
 
 `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` belong to the cluster, which writes
 them from what the connection actually was. `X-Request-ID` is the cluster's too: it is the request's ID in
-the traffic log ([Request ID](#a-basic-log-viewer-on-purpose)). They are refused here.
+the traffic log ([Request ID](#a-basic-log-viewer-on-purpose)). They are refused among the request's headers;
+a response may set, add or delete them.
 
 **Health check.** *Type* `disabled` means no check. HAProxy then treats every server as always up, sends a
 server that has gone its share of the traffic all the same, and the object has no status lamp.

@@ -421,6 +421,7 @@ CONTROL_IN_VALUE = re.compile(r"[\x00-\x1f\x7f]")
 # by the frontend from what the connection actually was; an object that set one
 # would be overwriting a measured fact with a guess. `X-Request-ID` is the ID the
 # traffic record carries (B523): one the object changed would find no record.
+# Reserved in `headers.request` only: the cluster writes none of them in a response.
 #
 RESERVED_HEADERS = ("x-forwarded-for", "x-forwarded-proto", "x-forwarded-host", "x-request-id")
 
@@ -2625,20 +2626,26 @@ def _headers(value: Any, location: str) -> Headers:
     data = _mapping(value, location)
     _only_keys(data, {"request", "response"}, location)
     return Headers(
-        request=_header_actions(data.get("request"), f"{location}.request"),
-        response=_header_actions(data.get("response"), f"{location}.response"),
+        request=_header_actions(data.get("request"), f"{location}.request", reserved=True),
+        response=_header_actions(data.get("response"), f"{location}.response", reserved=False),
     )
 
 
-def _header_actions(value: Any, location: str) -> HeaderActions:
+def _header_actions(value: Any, location: str, *, reserved: bool) -> HeaderActions:
+    """One direction's edits. `reserved` refuses the headers the cluster writes.
+
+    The cluster writes `RESERVED_HEADERS` in the request only and nothing reads
+    them in a response, so the response side may set, add and delete them.
+    """
+
     if value is None:
         return HeaderActions()
     data = _mapping(value, location)
     _only_keys(data, {"set", "add", "delete"}, location)
 
-    assign = _header_pairs(data.get("set"), f"{location}.set")
-    append = _header_pairs(data.get("add"), f"{location}.add")
-    remove = _header_names(data.get("delete"), f"{location}.delete")
+    assign = _header_pairs(data.get("set"), f"{location}.set", reserved)
+    append = _header_pairs(data.get("add"), f"{location}.add", reserved)
+    remove = _header_names(data.get("delete"), f"{location}.delete", reserved)
 
     #
     # One header named by two actions is an instruction that contradicts
@@ -2659,13 +2666,13 @@ def _header_actions(value: Any, location: str) -> HeaderActions:
     return HeaderActions(assign=assign, append=append, remove=remove)
 
 
-def _header_pairs(value: Any, location: str) -> tuple[tuple[str, str], ...]:
+def _header_pairs(value: Any, location: str, reserved: bool) -> tuple[tuple[str, str], ...]:
     if value is None:
         return ()
     data = _mapping(value, location)
     pairs = []
     for name in sorted(data):
-        _header_name(name, location)
+        _header_name(name, location, reserved)
         content = data[name]
         #
         # YAML reads `yes`, `no`, `on` and `off` as booleans, so a header value
@@ -2692,20 +2699,20 @@ def _header_pairs(value: Any, location: str) -> tuple[tuple[str, str], ...]:
     return tuple(pairs)
 
 
-def _header_names(value: Any, location: str) -> tuple[str, ...]:
+def _header_names(value: Any, location: str, reserved: bool) -> tuple[str, ...]:
     if value is None:
         return ()
     if not isinstance(value, list):
         raise ModelError(f"{location} must be a list of header names")
     for name in value:
-        _header_name(name, location)
+        _header_name(name, location, reserved)
     return tuple(sorted(value))
 
 
-def _header_name(name: Any, location: str) -> None:
+def _header_name(name: Any, location: str, reserved: bool) -> None:
     if not isinstance(name, str) or not HEADER_NAME.fullmatch(name):
         raise ModelError(f"{location} contains something that is not a header name: {name!r}")
-    if name.lower() in RESERVED_HEADERS:
+    if reserved and name.lower() in RESERVED_HEADERS:
         raise ModelError(
             f"{location} may not touch {name}: the cluster writes it from what the "
             f"connection actually was, or as the request's ID"

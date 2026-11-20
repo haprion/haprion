@@ -45,6 +45,14 @@ class TheClosedLineSaysWhatTheGroupHolds(unittest.TestCase):
 
         self.assertIn("server timeout 5m", summary)
 
+    def test_http2_and_the_method_are_named_on_the_closed_lines(self) -> None:
+        """B517 p. 3 and 14."""
+
+        states = form_groups(form(backend_http_version="2", health_method="HEAD"))
+        self.assertIn("HTTP/2", states["connections"].summary)
+        self.assertIn("HEAD", states["check"].summary)
+        self.assertNotIn("HTTP/2", form_groups(form())["connections"].summary)
+
     def test_empty_groups_say_so(self) -> None:
         states = form_groups(form())
 

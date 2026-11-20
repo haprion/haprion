@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import ipaddress
 import json
@@ -301,6 +302,7 @@ def read_request(stream: IO[bytes]) -> dict[str, Any]:
                 "path": text(entry, "path", PATH, required=False, default="/") or "/",
                 "host_header": text(entry, "host_header", HOST, required=False),
                 "method": method_of(entry),
+                "http2": flag(entry, "http2"),
                 "min_version": min_version_of(entry),
                 "ca": text(entry, "ca", CA_ID, required=False),
                 **(dns_question(entry) if kind == "dns" else {}),
@@ -521,7 +523,12 @@ def certificate_of(stream: socket.socket, timeout: float) -> dict[str, Any] | No
 
     if not isinstance(stream, ssl.SSLSocket):
         return None
-    der = stream.getpeercert(binary_form=True)
+    return certificate_read(stream.getpeercert(binary_form=True), stream.version() or "", timeout)
+
+
+def certificate_read(der: bytes | None, version: str, timeout: float) -> dict[str, Any] | None:
+    """The certificate's DER read by openssl, with the TLS version the handshake settled on."""
+
     binary = next((path for path in OPENSSL_COMMANDS if os.path.exists(path)), "")
     if not der or not binary:
         return None
@@ -568,8 +575,144 @@ def certificate_of(stream: socket.socket, timeout: float) -> dict[str, Any] | No
         "names": names,
         "issuer": attribute("issuer", "commonName", "organizationName"),
         "not_after": not_after,
-        "version": _printable(stream.version() or ""),
+        "version": _printable(version),
     }
+
+
+#
+# An HTTP/2 pool's check (B517 p. 14), asked with curl, which the node package
+# depends on: Python's own library speaks HTTP/1 alone. Fixed argv with no
+# shell; what comes from the request is a validated address, port, path, Host
+# and method, and the CA arrives on stdin. The request is the one HAProxy's
+# check sends - measured 26-11-20: no Host and no `:authority` unless the object
+# names one, no User-Agent or Accept, and a server name for SNI only where the
+# pool is verified - so the address is put in the URL otherwise.
+#
+CURL_COMMANDS = ("/usr/bin/curl", "/bin/curl")
+CURL_ANSWER = "%{exitcode}\t%{http_code}\t%{http_version}\t%{errormsg}\n%{certs}"
+TLS_LINE = re.compile(r"SSL connection using (TLSv1\.[0-3]|SSLv3) ")
+CERTIFICATE_CLOSING = "-" * 5 + "END CERTIFICATE" + "-" * 5
+PEM = re.compile(re.escape(CERTIFICATE_OPENING) + "(.+?)" + re.escape(CERTIFICATE_CLOSING), re.S)
+#
+# curl's exit codes that have a reading of their own (curl's libcurl-errors).
+#
+CURL_TIMEOUT = 28
+CURL_TLS_FAILED = (35, 58, 59, 66)
+CURL_NOT_VERIFIED = 60
+CURL_HTTP2 = 16
+
+
+def http2_check(target: dict[str, Any], timeout_ms: int, source: str | None) -> dict[str, Any]:
+    """The status of the check's request over HTTP/2, the certificate, and why it failed if it did.
+
+    An answer over HTTP/1.1 is a failure, not a pass: HAProxy speaks HTTP/1.1 to
+    a TLS server that does not take HTTP/2 by ALPN without saying so, and a
+    gRPC service behind it then fails while its check reads up.
+    """
+
+    found: dict[str, Any] = {"status": None, "ok": False, "error": None}
+    binary = next((path for path in CURL_COMMANDS if os.path.exists(path)), "")
+    if not binary:
+        found["error"] = "curl is not installed on this node"
+        return found
+    timeout = timeout_ms / 1000
+    host = target["host"]
+    if ":" in host:
+        address = host
+    else:
+        try:
+            ipaddress.ip_address(host)
+            address = host
+        except ValueError:
+            try:
+                address = socket.getaddrinfo(host, target["port"], socket.AF_INET)[0][4][0]
+            except OSError as error:
+                found["error"] = error.strerror or str(error)
+                return found
+    shown = f"[{address}]" if ":" in address else address
+    argv = [
+        binary, "--silent", "--verbose", "--globoff", "--path-as-is", "--noproxy", "*",
+        "--proto", "=http,https", "--output", "/dev/null", "--write-out", CURL_ANSWER,
+        "--connect-timeout", f"{timeout:.3f}", "--max-time", f"{3 * timeout:.3f}",
+        "--header", "User-Agent:", "--header", "Accept:",
+        "--header", f"Host: {target['host_header']}" if target["host_header"] else "Host:",
+    ]  # fmt: skip
+    if source:
+        argv += ["--interface", source]
+    if target["method"] == "HEAD":
+        argv.append("--head")
+    elif target["method"] != "GET":
+        argv += ["--request", target["method"]]
+    given = b""
+    if not target["tls"]:
+        argv += ["--http2-prior-knowledge", f"http://{shown}:{target['port']}{target['path']}"]
+    else:
+        argv += ["--http2", f"--tlsv{target['min_version'].removeprefix('TLSv')}"]
+        if MIN_VERSIONS[target["min_version"]] < ssl.TLSVersion.TLSv1_2:
+            argv += ["--ciphers", "DEFAULT@SECLEVEL=0"]
+        if target["verify"] and host != address:
+            #
+            # The name, for SNI and the certificate, reached at the address
+            # found above, as the check reaches it.
+            #
+            argv += ["--resolve", f"{host}:{target['port']}:{address}"]
+            argv.append(f"https://{host}:{target['port']}{target['path']}")
+        else:
+            argv.append(f"https://{shown}:{target['port']}{target['path']}")
+        if not target["verify"]:
+            argv.append("--insecure")
+        elif target["ca_pem"]:
+            argv += ["--cacert", "/dev/stdin"]
+            given = target["ca_pem"].encode()
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed argv, validated values, CA on stdin
+            argv, input=given, capture_output=True, check=False, timeout=4 * timeout + 1
+        )
+    except subprocess.TimeoutExpired:
+        found["error"] = f"no answer within {timeout_ms} ms"
+        return found
+    except OSError as error:
+        found["error"] = error.strerror or str(error)
+        return found
+    said = completed.stdout.decode("utf-8", "replace")
+    first, _, certificates = said.partition("\n")
+    parts = first.split("\t", 3)
+    if len(parts) != 4 or not _digits(parts[0]):
+        found["error"] = "curl gave no answer"
+        return found
+    code, status, version, message = int(parts[0]), parts[1], parts[2], parts[3].strip()
+    if target["tls"]:
+        pem = PEM.search(certificates)
+        handshake = TLS_LINE.search(completed.stderr.decode("utf-8", "replace"))
+        if pem:
+            try:
+                der = base64.b64decode("".join(pem.group(1).split()), validate=True)
+            except ValueError:
+                der = b""
+            found["certificate"] = certificate_read(
+                der, handshake.group(1) if handshake else "", timeout
+            )
+    if code == CURL_TIMEOUT:
+        found["error"] = f"no answer within {timeout_ms} ms"
+    elif code == CURL_NOT_VERIFIED:
+        found["error"] = f"TLS verification failed: {_printable(message) or 'not trusted'}"
+    elif code in CURL_TLS_FAILED:
+        found["error"] = f"TLS failed: {_printable(message) or 'no handshake'}"
+    elif code == CURL_HTTP2:
+        found["error"] = "no HTTP/2 answer: the server does not speak HTTP/2 here"
+    elif code != 0:
+        found["error"] = _printable(message) or f"curl stopped with {code}"
+    elif not _digits(status) or status == "000":
+        found["error"] = "no HTTP status was returned"
+    else:
+        found["status"] = int(status)
+        if version != "2":
+            found["error"] = f"answered {status} over HTTP/{version}, not HTTP/2"
+        elif not 200 <= found["status"] <= 399:
+            found["error"] = f"answered {status}"
+        else:
+            found["ok"] = True
+    return found
 
 
 def dns_ask(target: dict[str, Any], timeout: float, source: str | None) -> tuple[int, str | None]:
@@ -673,6 +816,10 @@ def probe(target: dict[str, Any], timeout_ms: int, source: str | None) -> dict[s
             result["status"] = rcode
             result["ok"] = problem is None
             result["error"] = problem
+            result["ms"] = int((time.monotonic() - started) * 1000)
+            return result
+        if target["type"] == "http" and target["http2"]:
+            result.update(http2_check(target, timeout_ms, source))
             result["ms"] = int((time.monotonic() - started) * 1000)
             return result
         stream = connect(target, timeout, source)

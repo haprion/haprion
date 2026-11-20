@@ -88,6 +88,8 @@ class EffectiveCheck:
     expect_body: str | None = None
     method: str = DEFAULT_HEALTH_METHOD
     """The http check's method (B517 p. 3): what the probe sends in its place too."""
+    http2: bool = False
+    """Whether the http check asks over HTTP/2 (B517 p. 14): the pool speaks it, and so must the probe."""
     send: str | None = None
     expect: str | None = None
     #
@@ -150,6 +152,7 @@ def effective_check(backend: Backend, server: Server) -> EffectiveCheck:
         expect_status=health.expect_status,
         expect_body=health.expect_body,
         method=health.method,
+        http2=health.type == "http" and backend.http_version == "2",
         send=health.send,
         expect=health.expect,
         query_name=health.query_name,

@@ -1228,6 +1228,46 @@ class TheHttpCheckChoosesItsMethod(unittest.TestCase):
         self.assertIn("method means nothing for a tcp health check", str(raised.exception))
 
 
+class APoolMaySpeakHttp2(unittest.TestCase):
+    """B517 p. 14: `http_version` 1.1 or 2, on an http or https object's pool only."""
+
+    def pool(self, line: str) -> bytes:
+        return with_lines(("    balance: roundrobin\n", f"    balance: roundrobin\n    {line}\n"))
+
+    def test_absent_is_http_1_1(self) -> None:
+        self.assertEqual(load_proxy("shop", MINIMAL).backends["web"].http_version, "1.1")
+
+    def test_text_or_number_is_one_choice(self) -> None:
+        for written, read in (
+            ('http_version: "2"', "2"),
+            ("http_version: 2", "2"),
+            ("http_version: 1.1", "1.1"),
+            ('http_version: "1.1"', "1.1"),
+        ):
+            with self.subTest(written=written):
+                pool = load_proxy("shop", self.pool(written)).backends["web"]
+                self.assertEqual(pool.http_version, read)
+
+    def test_any_other_version_is_refused(self) -> None:
+        for written in (
+            "http_version: 3",
+            "http_version: h2",
+            "http_version: true",
+            "http_version: 2.0",
+        ):
+            with self.subTest(written=written), self.assertRaises(ModelError) as raised:
+                load_proxy("shop", self.pool(written))
+            self.assertIn("http_version must be one of: 1.1, 2", str(raised.exception))
+
+    def test_a_tcp_object_s_pool_speaks_no_http(self) -> None:
+        document = TCP.replace(
+            b"    balance: leastconn\n", b'    balance: leastconn\n    http_version: "2"\n'
+        )
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("db", document)
+        self.assertIn("http_version is for an http or https object's pool", str(raised.exception))
+
+
 class TakingASiteOutOfServiceWithoutDeletingIt(unittest.TestCase):
     """`maintenance` keeps the object and stops serving it.
 

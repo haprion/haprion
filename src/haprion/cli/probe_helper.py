@@ -198,6 +198,7 @@ def _targets(
                 path=path,
                 host_header=header,
                 method=method,
+                http2=entry.get("http2") is True,
                 min_version=min_version,
                 ca=authority,
                 **(

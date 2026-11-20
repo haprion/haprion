@@ -543,6 +543,10 @@ DEFAULT_EXPECT_STATUS = "200-399"
 # so a check that sends it may not expect one.
 #
 HEALTH_METHODS = ("GET", "HEAD", "OPTIONS")
+#
+# What a pool may speak to its servers (B517 p. 14).
+#
+HTTP_VERSIONS = ("1.1", "2")
 DEFAULT_HEALTH_METHOD = "GET"
 
 DURATION = re.compile(r"^[1-9][0-9]{0,4}(ms|s|m)$")
@@ -836,6 +840,16 @@ class Backend:
     A limit protects the application behind it: a pool of servers that each
     take what they can serve keeps answering under a load that would otherwise
     make all of them slow at once. What does not fit waits in the pool's queue.
+    """
+
+    http_version: str = "1.1"
+    """The HTTP version spoken to the servers (B517 p. 14): `1.1`, or `2` for HTTP/2.
+
+    HTTP/2 is written `proto h2` on a plain pool and `alpn h2` on a TLS one, and
+    the health check follows the server line, as HAProxy's own check does
+    (measured on 3.4.8). gRPC needs it. Over TLS a server that offers no HTTP/2
+    is answered over HTTP/1.1 without a word from HAProxy, which is why
+    *Test health check* calls that answer a failure.
     """
 
     proxy_protocol: str | None = None
@@ -1719,6 +1733,7 @@ def _backend(name: str, value: Any, location: str) -> Backend:
             "server_timeout",
             "slow_start",
             "proxy_protocol",
+            "http_version",
         },
         location,
     )
@@ -1888,6 +1903,14 @@ def _backend(name: str, value: Any, location: str) -> Backend:
             f"{location}.proxy_protocol must be one of: {', '.join(PROXY_PROTOCOL_VERSIONS)}"
         )
 
+    #
+    # Read whether YAML made it text or a number: `2` and `"2"` are one choice,
+    # and so are `1.1` and `"1.1"`.
+    #
+    version = data.get("http_version", "1.1")
+    if isinstance(version, bool) or str(version) not in HTTP_VERSIONS:
+        raise ModelError(f"{location}.http_version must be one of: {', '.join(HTTP_VERSIONS)}")
+
     return Backend(
         name=name,
         balance=balance,
@@ -1900,6 +1923,7 @@ def _backend(name: str, value: Any, location: str) -> Backend:
         server_timeout=server_timeout,
         slow_start=slow_start,
         proxy_protocol=proxy_protocol,
+        http_version=str(version),
     )
 
 
@@ -2127,6 +2151,12 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
             _refuse_saved_addresses(backends, name, listen.protocol)
         if listen.protocol != "tcp":
             _refuse_proxy_protocol(backends, name, f"a {listen.protocol} object")
+        for key, pool in backends.items():
+            if pool.http_version != "1.1":
+                raise ModelError(
+                    f"{name}.backends.{key}.http_version is for an http or https object's pool, "
+                    f"not a {listen.protocol} object's"
+                )
     else:
         _refuse_proxy_protocol(
             backends, name, "an http or https object, whose pool has X-Forwarded-For"

@@ -63,6 +63,8 @@ class Target:
     host_header: str = ""
     method: str = "GET"
     """An http check's method (B517 p. 3): the request the node sends is the check's."""
+    http2: bool = False
+    """An http check over HTTP/2 (B517 p. 14): the node asks with curl and holds HTTP/1.1 a failure."""
     min_version: str = DEFAULT_MIN_VERSION
     """The oldest handshake this check may use, as HAProxy would name it.
 
@@ -98,6 +100,7 @@ class Target:
             "path": self.path,
             "host_header": self.host_header,
             "method": self.method,
+            "http2": self.http2,
             "min_version": self.min_version,
         }
         if self.ca:

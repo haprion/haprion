@@ -219,6 +219,7 @@ def targets_from(checks: Sequence[EffectiveCheck]) -> list[dict[str, Any]]:
             "path": check.path or "/",
             "host_header": check.host_header or "",
             "method": check.method,
+            "http2": check.http2,
             "min_version": check.min_version,
             #
             # The pool's own CA (B276): the probe trusts the file HAProxy does.

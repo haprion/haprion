@@ -4389,7 +4389,7 @@ def _backend(
         lines.append(
             f"    server {name} {server.host}:{server.port}"
             f" guid {server_guid(proxy.name, backend.name, server)}"
-            f"{_server_tls(backend, server)}{_server_address(server, resolvers)}"
+            f"{_server_tls(backend, server)}{_http2(backend)}{_server_address(server, resolvers)}"
             f"{_server_check(backend, server)}{_proxy_protocol(backend)}"
             f"{cookie}{weight}{backup}{limit}{ramp}"
         )
@@ -4593,6 +4593,31 @@ def _server_check(backend: Backend, server: Server) -> str:
         f" check{port}{encrypted}{named} inter {health.interval}{faster}"
         f" rise {health.rise} fall {health.fall}"
     )
+
+
+def _http2(backend: Backend) -> str:
+    """HTTP/2 to the servers (B517 p. 14): by ALPN over TLS, by prior knowledge in plain.
+
+    Measured on 3.4.8: the http check follows either, so it asks over HTTP/2 as
+    the traffic does. `alpn h2` offers HTTP/2 alone; a server that does not take
+    it is spoken to over HTTP/1.1, by the traffic and the check alike.
+    """
+
+    if backend.http_version != "2":
+        return ""
+    if backend.tls is not None:
+        #
+        # A plaintext check on a TLS pool does not follow the server's ALPN and
+        # spoke HTTP/1.1 (SOCKERR against an HTTP/2 port, measured 26-11-20).
+        #
+        plain_check = backend.health.type == "http" and backend.health.tls is False
+        return " alpn h2" + (" check-proto h2" if plain_check else "")
+    #
+    # A TLS check on a plain pool follows `proto h2`, measured; it offers h2 by
+    # ALPN as well, for a server that speaks HTTP/2 over TLS only by ALPN.
+    #
+    tls_check = backend.health.type == "http" and backend.health.tls is True
+    return " proto h2" + (" check-alpn h2" if tls_check else "")
 
 
 def _server_tls(backend: Backend, server: Server) -> str:

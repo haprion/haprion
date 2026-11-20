@@ -95,6 +95,15 @@ def answered(nodes: list[dict[str, object]], error: object = None) -> str:
 
 
 class WhatTheNodesAreAskedToTry(unittest.TestCase):
+    def test_an_http2_pool_is_asked_over_http2(self) -> None:
+        """B517 p. 14: the nodes ask as the check does; a tcp check needs no HTTP at all."""
+
+        self.assertEqual({entry["http2"] for entry in targets_from(checks())}, {False})
+        targets = targets_from(checks(backend_http_version="2"))
+        self.assertEqual({entry["http2"] for entry in targets}, {True})
+        tcp = targets_from(checks(backend_http_version="2", health_type="tcp"))
+        self.assertEqual({entry["http2"] for entry in tcp}, {False})
+
     def test_the_check_s_method_is_what_the_nodes_send(self) -> None:
         """B517 p. 3: the button sends the method the check does; none chosen is GET."""
 

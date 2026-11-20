@@ -382,6 +382,7 @@ FIELD_LABELS: dict[str, str] = {
     "backend_tls_policy": "Server TLS policy",
     "backend_tls_ca": "Server CA",
     "proxy_protocol": "PROXY protocol",
+    "backend_http_version": "Protocol to the servers",
     "listen_tls_policy": "TLS policy",
     "max_connections": "Connections per server",
     "server_timeout": "Server timeout",
@@ -589,14 +590,16 @@ class ObjectForm(BaseModel):
     """
 
     backend_tls_policy: Annotated[str, StringConstraints(max_length=16)] = ""
-    backend_tls_ca: Annotated[str, StringConstraints(max_length=255)] = ""
-    proxy_protocol: bool = False
     """How old a handshake to this backend may be. Empty means the default.
 
     Empty rather than the name itself, so a form that has never been touched
     and an object that never named one write the same document. What "the
     default" is belongs in one place, and that place is `tls_policy`.
     """
+    backend_tls_ca: Annotated[str, StringConstraints(max_length=255)] = ""
+    proxy_protocol: bool = False
+    backend_http_version: Annotated[str, StringConstraints(max_length=8)] = ""
+    """`2` for HTTP/2 to the servers (B517 p. 14); empty is HTTP/1.1, which is not written."""
     max_connections: Annotated[str, StringConstraints(max_length=8)] = ""
     server_timeout: Annotated[str, StringConstraints(max_length=8)] = ""
     slow_start: Annotated[str, StringConstraints(max_length=8)] = ""

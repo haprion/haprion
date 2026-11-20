@@ -417,6 +417,8 @@ the name metrics use. *Servers* is one server per line, with weights and backup 
 - *Backend TLS* and *CA* are described in [A pool over HTTPS](#a-pool-over-https). With HTTPS chosen,
   *Specific TLS for this backend only* is *Use default settings (TLS 1.2 and 1.3)*, *TLS 1.3 only*, or
   *TLS 1.1 and up — for old equipment*.
+- *Protocol to the servers* is *HTTP/1.1* or *HTTP/2*, described in
+  [HTTP/2 and gRPC to the servers](#http2-and-grpc-to-the-servers).
 - *Session cookie* keeps one visitor on one server. HAProxy adds the cookie to its answers and takes it off
   each request before the server sees it. It also marks the answer so that a shared cache does not hand one
   visitor's cookie to another. Empty means no persistence. The field suggests `hap_<name>`; a name is
@@ -613,6 +615,39 @@ backends:
       verify: ca
       ca: corp-root
 ```
+
+### HTTP/2 and gRPC to the servers
+
+A pool speaks HTTP/1.1 to its servers unless *Protocol to the servers* says *HTTP/2*. The visitor's side is
+not affected: a browser may arrive over HTTP/1.1, HTTP/2 or HTTP/3 either way.
+
+Choose HTTP/2 for a service that needs it, which is above all gRPC, and for one that serves many small
+requests better over one connection. Over plain HTTP the pool then opens every connection in HTTP/2 at once
+(*prior knowledge*); over HTTPS it offers HTTP/2 in the TLS handshake (ALPN). The health check asks the same
+way as the traffic, also when it has a port or a TLS setting of its own. The stored object says
+`http_version: "2"` in the pool:
+
+```yaml
+backends:
+  api:
+    http_version: "2"
+    tls:
+      verify: system
+```
+
+**A server must speak HTTP/2 the way the pool asks.** A plain server that speaks only HTTP/1.1 refuses the
+connections, and the check marks it down. A server over HTTPS that does not take HTTP/2 in the handshake is
+spoken to over HTTP/1.1 instead, by the traffic and the check alike, and HAProxy says nothing about it. A web
+page still works then, a gRPC call does not. *Test health check* asks over HTTP/2 from the node and reports
+such a server as *answered 200 over HTTP/1.1, not HTTP/2* rather than up. On the command line,
+`haprion-probe ... --http <path> --http2` does the same.
+
+**gRPC.** A gRPC service is an `https` or `http` object whose pool speaks HTTP/2; the route is `/` or the
+service's own prefix, such as `/helloworld.Greeter/`. The visitors' side needs HTTP/2 as well, which an
+`https` object offers by default; a gRPC client cannot use plain HTTP/1.1. A *Server timeout* longer than
+the longest call is needed for a streaming call that stays silent (see [A slow server](#a-slow-server)).
+The health check is an HTTP check of a path the service answers with a status; the gRPC health protocol
+itself, which answers in its body, is not spoken.
 
 ### The client's address on a tcp pool
 

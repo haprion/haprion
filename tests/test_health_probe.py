@@ -1153,3 +1153,128 @@ class AnExpiredCertificate(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(answer["results"][0]["ok"], answer)
         self.assertEqual(answer["results"][0]["certificate"]["not_after"], "2020-01-02T00:00:00Z")
+
+
+H2_SERVERS = """global
+{noreuseport}defaults
+    mode http
+    timeout connect 5s
+    timeout client 10s
+    timeout server 10s
+frontend plain
+    bind 127.0.0.1:{plain} proto h2
+    bind 127.0.0.1:{tls} ssl crt {pem} alpn h2
+    bind 127.0.0.1:{tls_h1} ssl crt {pem} alpn http/1.1
+    http-request return status 203 if METH_HEAD
+    http-request return status 204 if METH_OPTIONS
+    http-request return status 205 unless {{ req.hdr_cnt(host) gt 0 }}
+    http-request return status 404 if {{ req.hdr(user-agent) -m found }}
+    http-request return status 200
+"""
+
+
+@unittest.skipUnless(
+    shutil.which("haproxy") and shutil.which("curl"), "haproxy or curl is not installed here"
+)
+class AnHttp2PoolIsAskedOverHttp2(unittest.TestCase):
+    """B517 p. 14: the node asks with curl, as HAProxy's check asks, and HTTP/1.1 is a failure."""
+
+    directory: tempfile.TemporaryDirectory[str]
+    servers: sp.Popen[bytes]
+    plain: int
+    tls: int
+    tls_h1: int
+    http1: ThreadingHTTPServer
+    pem: str
+
+    @classmethod
+    @spawned.retry_on_taken_port
+    def setUpClass(cls) -> None:
+        from tests.test_generate_behaviour import self_signed
+
+        cls.directory = tempfile.TemporaryDirectory()
+        root = Path(cls.directory.name)
+        certificate, key = self_signed(root, "pool", expired=False, common_name="localhost")
+        cls.pem = certificate.read_text()
+        (root / "pool.pem").write_text(cls.pem + key.read_text())
+        cls.plain, cls.tls, cls.tls_h1 = free_port(), free_port(), free_port()
+        (root / "servers.cfg").write_text(
+            H2_SERVERS.format(
+                noreuseport=spawned.NOREUSEPORT,
+                plain=cls.plain,
+                tls=cls.tls,
+                tls_h1=cls.tls_h1,
+                pem=root / "pool.pem",
+            )
+        )
+        binary = shutil.which("haproxy")
+        assert binary is not None
+        cls.servers = spawned.start_haproxy(binary, ["-f", str(root / "servers.cfg")], cls.plain)
+        cls.http1 = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=cls.http1.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.servers.terminate()
+        cls.servers.wait(timeout=5)
+        cls.http1.shutdown()
+        cls.http1.server_close()
+        cls.directory.cleanup()
+
+    def probe(self, port: int, **fields: object) -> dict[str, Any]:
+        request: dict[str, object] = {
+            "schema_version": 1,
+            "targets": [target(port=port, http2=True, **fields)],
+        }
+        if fields.get("ca"):
+            request["authorities"] = {str(fields["ca"]): self.pem}
+        code, answer = ask(request)
+        self.assertEqual(code, 0, answer)
+        result: dict[str, Any] = answer["results"][0]
+        return result
+
+    def test_a_plain_server_that_speaks_http2_is_usable(self) -> None:
+        result = self.probe(self.plain, host_header="app.example.com")
+        self.assertEqual((result["ok"], result["status"], result["error"]), (True, 200, None))
+
+    def test_no_host_user_agent_or_accept_is_sent_unless_asked(self) -> None:
+        """As HAProxy's check sends it (measured 26-11-20): 205 is no Host, 404 a User-Agent."""
+
+        self.assertEqual(self.probe(self.plain)["status"], 205)
+
+    def test_the_method_is_the_check_s(self) -> None:
+        self.assertEqual(self.probe(self.plain, method="HEAD")["status"], 203)
+        self.assertEqual(self.probe(self.plain, method="OPTIONS")["status"], 204)
+
+    def test_a_plain_server_that_speaks_only_http1_is_not_usable(self) -> None:
+        result = self.probe(int(self.http1.server_address[1]))
+        self.assertFalse(result["ok"])
+        self.assertIn("does not speak HTTP/2", result["error"])
+
+    def test_a_tls_server_over_http2_is_usable_and_says_its_certificate(self) -> None:
+        result = self.probe(self.tls, tls=True, host_header="app.example.com")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["certificate"]["subject"], "localhost")
+        self.assertEqual(result["certificate"]["version"], "TLSv1.3")
+
+    def test_a_tls_server_that_answers_over_http1_is_not_usable(self) -> None:
+        """HAProxy would speak HTTP/1.1 to it without a word; a gRPC service then fails."""
+
+        result = self.probe(self.tls_h1, tls=True, host_header="app.example.com")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], 200)
+        self.assertIn("over HTTP/1.1, not HTTP/2", result["error"])
+
+    def test_a_verified_pool_is_held_to_its_own_ca_and_name(self) -> None:
+        trusted = self.probe(
+            self.tls,
+            tls=True,
+            verify=True,
+            ca="pool-ca",
+            host="localhost",
+            host_header="x.example.com",
+        )
+        self.assertTrue(trusted["ok"], trusted)
+        untrusted = self.probe(self.tls, tls=True, verify=True, host="localhost")
+        self.assertFalse(untrusted["ok"])
+        self.assertIn("TLS verification failed", untrusted["error"])

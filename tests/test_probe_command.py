@@ -399,6 +399,15 @@ class TheCheckSMethod(unittest.TestCase):
     def test_without_it_the_check_is_a_get(self) -> None:
         self.assertEqual(self.sent(["-c", "alpha", "-t", "192.0.2.1:80"])[0]["method"], "GET")
 
+    def test_http2_goes_with_every_target(self) -> None:
+        """B517 p. 14: the nodes ask over HTTP/2, as the form's test does for such a pool."""
+
+        targets = self.sent(["-c", "alpha", "-t", "192.0.2.1:50051", "--http", "/", "--http2"])
+        self.assertEqual([t["http2"] for t in targets], [True])
+        self.assertEqual(self.sent(["-c", "alpha", "-t", "192.0.2.1:80"])[0]["http2"], False)
+        with self.assertRaises(SystemExit), mock.patch.object(sys, "stdout", io.StringIO()):
+            probe._parse(["-c", "alpha", "-t", "192.0.2.1:80", "--http2"])
+
     def test_another_method_or_one_without_a_path_is_a_usage_error(self) -> None:
         for extra in (["--http", "/", "--method", "POST"], ["--method", "HEAD"]):
             with (

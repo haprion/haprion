@@ -37,7 +37,7 @@ ALLOWED_MIN_VERSIONS = frozenset(BACKEND_MIN_VERSION.values())
 USAGE = (
     "Usage:\n"
     "  haprion-probe -c <cluster> -t <host:port>[,<host:port>...] "
-    "[--http <path> [--method GET|HEAD|OPTIONS]] [--host <name>] "
+    "[--http <path> [--method GET|HEAD|OPTIONS] [--http2]] [--host <name>] "
     "[--tls [--verify [--ca <id>]] [--min-version <version>]] "
     "[--source <address>] [--json]\n"
     "  haprion-probe -c <cluster> -t <address:port>[,...] --udp [--json]\n"
@@ -46,6 +46,7 @@ USAGE = (
     "  haprion-probe -c alpha -t 198.51.100.10:8080\n"
     "  haprion-probe -c alpha -t 198.51.100.10:8443 --tls --http /healthz --json\n"
     "  haprion-probe -c alpha -t 198.51.100.10:8080 --http /healthz --method HEAD\n"
+    "  haprion-probe -c alpha -t 198.51.100.10:50051 --http /healthz --http2\n"
     "  haprion-probe -c alpha -t app.example.com:443 --tls --verify --ca example-ca\n"
     "  haprion-probe -c alpha -t 198.51.100.20:514 --udp\n"
 )
@@ -91,6 +92,7 @@ def _targets(
     ca: str = "",
     udp: bool = False,
     method: str = DEFAULT_HEALTH_METHOD,
+    http2: bool = False,
 ) -> list[dict[str, Any]]:
     targets = []
     for entry in written.split(","):
@@ -115,6 +117,7 @@ def _targets(
                 "path": path or "/",
                 "host_header": host,
                 "method": method,
+                "http2": http2,
                 **({"ca": ca} if ca else {}),
             }
         )
@@ -134,6 +137,7 @@ def _parse(argv: list[str]) -> dict[str, Any]:
         "ca": "",
         "min_version": DEFAULT_MIN_VERSION,
         "method": DEFAULT_HEALTH_METHOD,
+        "http2": False,
         "source": "",
         "udp": False,
         "json": False,
@@ -199,6 +203,13 @@ def _parse(argv: list[str]) -> dict[str, Any]:
                 usage(USAGE)
             options["method"] = argv[index + 1]
             index += 2
+        #
+        # A pool that speaks HTTP/2 (B517 p. 14): the nodes ask over it, and an
+        # answer over HTTP/1.1 is a failure, as in the form's test.
+        #
+        elif argument == "--http2":
+            options["http2"] = True
+            index += 1
         elif argument == "--json":
             options["json"] = True
             index += 1
@@ -210,7 +221,7 @@ def _parse(argv: list[str]) -> dict[str, Any]:
         usage(USAGE)
     if options["ca"] and not (options["tls"] and options["verify"]):
         usage(USAGE)
-    if options["method"] != DEFAULT_HEALTH_METHOD and not options["path"]:
+    if (options["method"] != DEFAULT_HEALTH_METHOD or options["http2"]) and not options["path"]:
         usage(USAGE)
     return options
 
@@ -267,6 +278,7 @@ def main(argv: list[str] | None = None, *, writer: TextIO | None = None) -> int:
             ca=options["ca"],
             udp=options["udp"],
             method=options["method"],
+            http2=options["http2"],
         ),
         source=options["source"],
         timeout_ms=UDP_WAIT_MS if options["udp"] else DEFAULT_TIMEOUT_MS,

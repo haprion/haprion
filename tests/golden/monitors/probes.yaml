@@ -63,6 +63,7 @@ backends:
         port: 8080
   http-content:
     balance: roundrobin
+    http_version: "2"
     health:
       type: http
       path: /healthz
@@ -74,6 +75,7 @@ backends:
         port: 8080
   https-content:
     balance: roundrobin
+    http_version: "2"
     health:
       type: http
       tls: true
@@ -88,6 +90,7 @@ backends:
         port: 8443
   https-check:
     balance: roundrobin
+    http_version: "2"
     health:
       type: http
       tls: true

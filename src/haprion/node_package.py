@@ -152,7 +152,7 @@ FILES: dict[str, int] = {
 #
 DEPENDS = (
     "python3, sudo, rsyslog, rsyslog-gnutls, haproxy, ipvsadm, keepalived, rsync, "
-    "openssh-client, openssh-server, iproute2, procps, passwd, openssl, systemd, apt, "
+    "openssh-client, openssh-server, iproute2, procps, passwd, openssl, curl, systemd, apt, "
     "mawk | awk, default-dbus-system-bus | dbus-system-bus, haprion-coraza-spoa, "
     "haprion-archive-keyring"
 )

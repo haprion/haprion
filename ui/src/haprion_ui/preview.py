@@ -186,6 +186,7 @@ DEFAULTS = {
     "backend_tls_policy": "",
     "backend_tls_ca": "",
     "proxy_protocol": False,
+    "backend_http_version": "",
     "listen_tls_policy": "",
     "max_connections": "",
     "server_timeout": "",
@@ -542,6 +543,7 @@ HIDDEN_FOR: Mapping[str, tuple[str, ...]] = {
         "hostnames",
         "certificate",
         "listen_tls_policy",
+        "backend_http_version",
         "redirect_http",
         "hsts",
         "max_request_body",
@@ -861,6 +863,12 @@ def build_document(form: dict[str, object]) -> str:
     #
     if protocol == "tcp" and flag("proxy_protocol"):
         backend["proxy_protocol"] = "v2"
+    #
+    # HTTP/2 to the servers (B517 p. 14), an http or https object's alone;
+    # HTTP/1.1 is the model's default and is not written.
+    #
+    if protocol in ("http", "https") and text("backend_http_version") == "2":
+        backend["http_version"] = "2"
     if text("max_connections"):
         limit = text("max_connections")
         if not is_digits(limit):
@@ -1824,6 +1832,7 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         "backend_tls_policy": str(_sub(backend, "tls").get("policy", "") or ""),
         "backend_tls_ca": str(_sub(backend, "tls").get("ca", "") or ""),
         "proxy_protocol": backend.get("proxy_protocol") == "v2",
+        "backend_http_version": "2" if str(backend.get("http_version", "")) == "2" else "",
         "max_connections": str(backend.get("max_connections", "") or ""),
         "server_timeout": str(backend.get("server_timeout", "") or ""),
         "slow_start": str(backend.get("slow_start", "") or ""),

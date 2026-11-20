@@ -669,6 +669,19 @@ class TheRateLimitTheObjectAsksFor(unittest.TestCase):
 
         self.assertIn("must be a number", str(raised.exception))
 
+    def test_http2_to_the_servers_is_written_only_when_chosen(self) -> None:
+        """B517 p. 14: `http_version: "2"`; HTTP/1.1 is the default and is not written."""
+
+        for protocol in ("http", "https"):
+            with self.subTest(protocol=protocol):
+                chosen = form(protocol=protocol, backend_http_version="2")
+                self.assertEqual(build_document(chosen).count("http_version: '2'"), 1)
+                reopened = form_from_document(build_document(chosen), networks=())
+                self.assertEqual(reopened["backend_http_version"], "2")
+        self.assertNotIn("http_version", build_document(form(backend_http_version="")))
+        tcp = form(protocol="tcp", tcp_port="5432", hostnames="", backend_http_version="2")
+        self.assertNotIn("http_version", build_document(tcp))
+
     def test_the_check_s_method_survives_a_round_trip(self) -> None:
         for method in ("", "HEAD", "OPTIONS"):
             with self.subTest(method=method):

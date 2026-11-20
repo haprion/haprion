@@ -227,6 +227,7 @@ def _connections(form: Mapping[str, Any]) -> str:
     return _joined(
         [
             tls,
+            "HTTP/2" if _text(form, "backend_http_version") == "2" else "",
             policy,
             f"from {source}" if source else "",
             f"cookie {cookie}" if cookie else "",
@@ -367,6 +368,7 @@ GROUPS: Mapping[str, FormGroup] = {
             "backend_tls",
             "backend_tls_policy",
             "backend_tls_ca",
+            "backend_http_version",
             "proxy_protocol",
             "cookie",
             "max_connections",

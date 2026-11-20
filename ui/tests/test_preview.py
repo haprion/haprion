@@ -817,6 +817,42 @@ class TheDynamicBlockTheObjectAsksFor(unittest.TestCase):
         self.assertEqual((reopened["block_window"], reopened["block_status"]), ("10s", "404"))
 
 
+class AStoredObjectMayWriteWhatTheFormLeavesUnsaid(unittest.TestCase):
+    """The same object, spelled another way, opens in the form as it does spelled the short way."""
+
+    def stored(self, pool_line: str = "", check_line: str = "") -> str:
+        return (
+            build_document(form(health_type="http", health_path="/up"))
+            .replace(
+                "    servers:",
+                f"{pool_line}    servers:",
+                1,
+            )
+            .replace("      path: /up\n", f"      path: /up\n{check_line}", 1)
+        )
+
+    def test_the_default_http_version_written_out_opens(self) -> None:
+        for written in ("    http_version: '1.1'\n", "    http_version: 1.1\n"):
+            with self.subTest(written=written):
+                reopened = form_from_document(self.stored(written))
+                self.assertEqual(reopened["backend_http_version"], "")
+
+    def test_http_version_2_written_as_a_number_opens(self) -> None:
+        reopened = form_from_document(self.stored("    http_version: 2\n"))
+
+        self.assertEqual(reopened["backend_http_version"], "2")
+
+    def test_the_default_check_method_written_out_opens(self) -> None:
+        reopened = form_from_document(self.stored(check_line="      method: GET\n"))
+
+        self.assertEqual(reopened["health_method"], "")
+
+    def test_another_check_method_still_comes_back(self) -> None:
+        reopened = form_from_document(self.stored(check_line="      method: HEAD\n"))
+
+        self.assertEqual(reopened["health_method"], "HEAD")
+
+
 class TheCheckTimingTheObjectAsksFor(unittest.TestCase):
     """Interval, rise and fall, which the form had no field for until now.
 

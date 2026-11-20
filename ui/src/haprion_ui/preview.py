@@ -1530,6 +1530,34 @@ def _with_normalised_limits(data: Any) -> Any:
     return {**data, "path_limits": limits}
 
 
+def _with_normalised_pool_defaults(data: Any) -> Any:
+    """The stored object with a pool's default `http_version` and check `method` left unsaid.
+
+    The engine takes `1.1` and `"1.1"` as one choice and `2` and `"2"` as
+    another, and `GET` is the check's method when none is given. The form writes
+    none of these defaults, so the same pool is read as the same.
+    """
+
+    backends = data.get("backends") if isinstance(data, Mapping) else None
+    if not isinstance(backends, Mapping):
+        return data
+    pools: dict[str, Any] = {}
+    for name, pool in backends.items():
+        if isinstance(pool, Mapping):
+            pool = dict(pool)
+            if "http_version" in pool:
+                version = str(pool["http_version"])
+                if version == "1.1":
+                    del pool["http_version"]
+                else:
+                    pool["http_version"] = version
+            health = pool.get("health")
+            if isinstance(health, Mapping) and health.get("method") == DEFAULT_HEALTH_METHOD:
+                pool["health"] = {k: v for k, v in health.items() if k != "method"}
+        pools[name] = pool
+    return {**data, "backends": pools}
+
+
 def _blocking_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str, Any]:
     """`dynamic_block` as the form holds it; the filled-in defaults when there is none."""
 
@@ -1694,8 +1722,10 @@ def form_from_document(document: str, *, networks: Collection[str] = ()) -> dict
             _with_normalised_limits(
                 _with_normalised_waf(
                     _with_normalised_advanced(
-                        _without_a_redundant_check_protocol(
-                            _with_an_unwritten_check_said(_without_saved_addresses(data))
+                        _with_normalised_pool_defaults(
+                            _without_a_redundant_check_protocol(
+                                _with_an_unwritten_check_said(_without_saved_addresses(data))
+                            )
                         )
                     )
                 )

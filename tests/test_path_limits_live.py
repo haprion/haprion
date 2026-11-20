@@ -35,23 +35,9 @@ from haprion.proxy_model import load_proxy
 from tests import spawned
 
 NODES = (("node-a", "127.0.0.1"), ("node-b", "127.0.0.2"))
+NODE_ADDRESSES = tuple(address for _, address in NODES)
 PROXY = "127.0.0.50"
 UNTIL = 5.0
-
-
-def _free_port() -> int:
-    """A port free on both node addresses."""
-
-    while True:
-        with socket.socket() as first:
-            first.bind((NODES[0][1], 0))
-            port = int(first.getsockname()[1])
-            with socket.socket() as second:
-                try:
-                    second.bind((NODES[1][1], port))
-                except OSError:
-                    continue
-            return port
 
 
 class _Application(BaseHTTPRequestHandler):
@@ -88,7 +74,10 @@ class TwoNodesLimitPaths(unittest.TestCase):
         threading.Thread(target=self.application.serve_forever, daemon=True).start()
         backend_port = int(self.application.server_address[1])
 
-        self.http_port, peers_port = _free_port(), _free_port()
+        self.http_port, peers_port = (
+            spawned.free_port(*NODE_ADDRESSES),
+            spawned.free_port(*NODE_ADDRESSES),
+        )
         shop = load_proxy(
             "shop",
             f"""schema: 1
@@ -149,7 +138,10 @@ backends:
                 [shop],
                 vips={"main": Vip(name="main", address=address)},
                 default_vip="main",
-                ports={"http": self.http_port, "https": _free_port()},
+                ports={
+                    "http": self.http_port,
+                    "https": spawned.free_port(*NODE_ADDRESSES),
+                },
                 settings=settings,
                 node_addresses=NODES,
                 trusted_proxies=(f"{PROXY}/32",),

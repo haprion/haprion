@@ -172,6 +172,18 @@ class AFreePortIsNeverHandedOutTwice(unittest.TestCase):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as datagram:
             datagram.bind(("127.0.0.1", port))
 
+    def test_the_port_is_free_on_every_address_named(self) -> None:
+        addresses = ("127.0.0.1", "127.0.0.2")
+        ports = [spawned.free_port(*addresses) for _ in range(20)]
+        self.assertEqual(len(set(ports)), len(ports))
+        for address in addresses:
+            with (
+                socket.socket(socket.AF_INET, socket.SOCK_STREAM) as stream,
+                socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as datagram,
+            ):
+                stream.bind((address, ports[0]))
+                datagram.bind((address, ports[0]))
+
     def test_the_engine_suite_has_one_helper(self) -> None:
         #
         # Copies drifted: four modules had their own, without the UDP check or
@@ -182,7 +194,7 @@ class AFreePortIsNeverHandedOutTwice(unittest.TestCase):
             path.name
             for path in sorted((ROOT / "tests").glob("*.py"))
             if path.name != "spawned.py"
-            and re.search(r"^def free_port\(", path.read_text(encoding="utf-8"), re.M)
+            and re.search(r"^def _?free_port\(", path.read_text(encoding="utf-8"), re.M)
         ]
         self.assertEqual(copies, [])
         stream = (ROOT / "ui" / "tests" / "test_traffic_stream_live.py").read_text()

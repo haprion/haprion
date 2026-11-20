@@ -54,26 +54,34 @@ def die_with_the_test_run() -> None:
 _HANDED_OUT: set[int] = set()
 
 
-def free_port() -> int:
+def free_port(*addresses: str) -> int:
     """A port free over both TCP and UDP, and never one this process handed out before.
 
     Both, since dnsdist and HAProxy's QUIC bind the number over the two at once:
     asking UDP alone lost one run in the full gate (2026-10-06), another test
     process held the same number over TCP. Free means free when asked; another
     process can still take it before it is bound (`retry_on_taken_port`).
+
+    `addresses` are the addresses the number must be free on, loopback by
+    default; a test with several node addresses names them all.
     """
 
+    held = addresses or ("127.0.0.1",)
     while True:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as stream:
-            stream.bind(("127.0.0.1", 0))
+            stream.bind((held[0], 0))
             port = int(stream.getsockname()[1])
             if port in _HANDED_OUT:
                 continue
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as datagram:
-                try:
-                    datagram.bind(("127.0.0.1", port))
-                except OSError:
-                    continue
+            try:
+                for address in held:
+                    for kind in (socket.SOCK_STREAM, socket.SOCK_DGRAM):
+                        if kind == socket.SOCK_STREAM and address == held[0]:
+                            continue
+                        with socket.socket(socket.AF_INET, kind) as probe:
+                            probe.bind((address, port))
+            except OSError:
+                continue
         _HANDED_OUT.add(port)
         return port
 

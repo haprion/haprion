@@ -46,7 +46,7 @@ from haprion.debian_package import package, write  # the path above comes first
 CORAZA_REVISION = "3"
 CRS_REVISION = "1"
 GO_VERSION = "go1.27.4"
-GOVULNCHECK_VERSION = "v1.9.0"
+GOVULNCHECK_VERSION = "v1.10.0"
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 DIGEST = re.compile(r"[0-9a-f]{64}")
 UNIT = "coraza-spoa.service"

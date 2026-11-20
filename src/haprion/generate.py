@@ -370,7 +370,7 @@ HTTP_TRAFFIC_LOG_FORMAT = (
     #
     # The request ID, and how the client spoke (B523).
     #
-    "%(request_id)[var(txn.request_id)] %(tls)[ssl_fc_protocol,bytes(0,16)] "
+    f"%(request_id)[var(txn.request_id)] %(tls)[ssl_fc_protocol,bytes(0,{TRAFFIC_TLS_BYTES})] "
     "%(http)[var(txn.traffic_version)] "
     #
     # What the WAF engine found (B233): the CRS rules it matched and the

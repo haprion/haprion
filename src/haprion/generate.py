@@ -4605,6 +4605,12 @@ def _http2(backend: Backend) -> str:
     Measured on 3.4.8: the http check follows either, so it asks over HTTP/2 as
     the traffic does. `alpn h2` offers HTTP/2 alone; a server that does not take
     it is spoken to over HTTP/1.1, by the traffic and the check alike.
+
+    `ws h1` keeps a WebSocket upgrade on HTTP/1.1 to the server. Without it
+    HAProxy sends the upgrade as an extended CONNECT (RFC 8441), which many
+    servers do not take, and the visitor gets a 502 while the pages and the
+    check stay green. Ordinary requests still go over HTTP/2; measured 26-11-20
+    on HAProxy 3.4.8, in plain (`proto h2 ws h1`) and over TLS (`alpn h2 ws h1`).
     """
 
     if backend.http_version != "2":
@@ -4615,13 +4621,13 @@ def _http2(backend: Backend) -> str:
         # spoke HTTP/1.1 (SOCKERR against an HTTP/2 port, measured 26-11-20).
         #
         plain_check = backend.health.type == "http" and backend.health.tls is False
-        return " alpn h2" + (" check-proto h2" if plain_check else "")
+        return " alpn h2 ws h1" + (" check-proto h2" if plain_check else "")
     #
     # A TLS check on a plain pool follows `proto h2`, measured; it offers h2 by
     # ALPN as well, for a server that speaks HTTP/2 over TLS only by ALPN.
     #
     tls_check = backend.health.type == "http" and backend.health.tls is True
-    return " proto h2" + (" check-alpn h2" if tls_check else "")
+    return " proto h2 ws h1" + (" check-alpn h2" if tls_check else "")
 
 
 def _server_tls(backend: Backend, server: Server) -> str:

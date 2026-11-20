@@ -629,8 +629,9 @@ not affected: a browser may arrive over HTTP/1.1, HTTP/2 or HTTP/3 either way.
 Choose HTTP/2 for a service that needs it, which is above all gRPC, and for one that serves many small
 requests better over one connection. Over plain HTTP the pool then opens every connection in HTTP/2 at once
 (*prior knowledge*); over HTTPS it offers HTTP/2 in the TLS handshake (ALPN). The health check asks the same
-way as the traffic, also when it has a port or a TLS setting of its own. The stored object says
-`http_version: "2"` in the pool:
+way as the traffic, also when it has a port or a TLS setting of its own. WebSockets keep going over
+HTTP/1.1 to the servers, so a server that does not take WebSockets over HTTP/2 still serves them. The stored
+object says `http_version: "2"` in the pool:
 
 ```yaml
 backends:

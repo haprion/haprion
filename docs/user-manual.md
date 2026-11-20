@@ -7212,9 +7212,9 @@ not at the manager. Three things must be in place:
 shown when the policy names a webroot. The page lists each cluster with where its challenges go: an address
 and port, or *Not sent - HTTP-01 cannot be used*. *Edit* opens the cluster's setting: tick *Send challenges to
 the manager*, give the manager's address, as seen from the cluster's nodes, and the port (80 unless nginx
-listens elsewhere), then *Save*. The nodes send the challenge from the VIP's source address (*Network*), the one that
-moves with the VIP, not from their own addresses. A firewall between the cluster and the manager must let that
-address reach the manager on that port and pass the request as it is: a web filter that answers in the manager's
+listens elsewhere), then *Save*. The nodes send the challenge from the VIP's source address when it has one (*Network*),
+the one that moves with the VIP, otherwise from the node's own address. A firewall between the cluster and the
+manager must let that address reach the manager on that port and pass the request as it is: a web filter that answers in the manager's
 place makes the challenge fail. Let's Encrypt in turn reaches the name over the internet, on port 80 at the
 cluster's VIP, from addresses it does not publish. A firewall that inspects plain HTTP on the way in must leave
 that traffic alone: one that resets the connection once it has read the request shows as *Connection reset by

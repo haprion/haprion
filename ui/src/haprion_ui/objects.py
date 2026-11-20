@@ -35,7 +35,7 @@ from haprion.proxy_model import (
 from haprion_ui.addresses import ObjectAddresses, from_entry
 from haprion_ui.cluster_identity import accent_index
 from haprion_ui.dashboard import observation_label
-from haprion_ui.db import ClusterObjects, Job
+from haprion_ui.db import ClusterInventory, ClusterObjects, Job
 from haprion_ui.history import VersionView
 from haprion_ui.jobs import ATTENTION, InFlight, busy_with, deploys, error_code, published
 from haprion_ui.proxies import ProxyView, Tone
@@ -289,8 +289,8 @@ def _names(value: Any) -> tuple[str, ...] | None:
     return tuple(name for name in value if isinstance(name, str) and name)
 
 
-def was_read(reading: ClusterObjects | None) -> bool:
-    """Whether this is a good reading of the cluster's objects.
+def was_read(reading: ClusterObjects | ClusterInventory | None) -> bool:
+    """Whether this is a good reading of the cluster's objects, or of its inventory.
 
     A reading the poller could not make is still a row, with an empty result;
     only `done` and no poll error says what the cluster holds.

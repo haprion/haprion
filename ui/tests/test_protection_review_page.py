@@ -8,10 +8,40 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest import mock
 
-from haprion_ui.db import ReviewAck, ReviewView
+from haprion_ui.db import ClusterInventory, ReviewAck, ReviewView
 from tests.test_editor_page import OBJECTS, EditorTestCase
 
 AT = datetime(2026, 11, 20, 9, 0, tzinfo=UTC)
+
+
+def inventory(*by_hand: str, poll_error: str | None = None) -> ClusterInventory:
+    """alpha's published frontends, with the proxies written by hand named."""
+
+    return ClusterInventory(
+        cluster="alpha",
+        observed_at=AT,
+        outcome="done",
+        result={
+            "version": "v9",
+            "proxies": [
+                {
+                    "name": name,
+                    "protocol": "http",
+                    "managed": False,
+                    "enabled": True,
+                    "hostnames": [f"{name}.example.com"],
+                    "ports": [80],
+                    "backend_count": 1,
+                }
+                for name in by_hand
+            ],
+        }
+        if poll_error is None
+        else {},
+        warnings=[],
+        error=None,
+        poll_error=poll_error,
+    )
 
 
 class TheReviewPage(EditorTestCase):
@@ -158,9 +188,27 @@ class TheReviewPage(EditorTestCase):
     def test_a_good_reading_without_the_object_forgets_its_acceptance(self) -> None:
         self.review_acks[("alpha", "old")] = ReviewAck(frozenset({"waf-off"}), "operator", AT)
 
-        self.assertEqual(self.editor().get("/proxies/review").status_code, 200)
+        with mock.patch("haprion_ui.db.cluster_inventories", return_value=[inventory()]):
+            self.assertEqual(self.editor().get("/proxies/review").status_code, 200)
 
         self.assertEqual(self.forgotten, [{("alpha", "old")}])
+
+    def test_a_failed_inventory_forgets_no_acceptance_of_a_proxy_written_by_hand(self) -> None:
+        self.review_acks[("alpha", "legacy")] = ReviewAck(frozenset({"waf-off"}), "operator", AT)
+        failed = inventory(poll_error="the helper did not answer")
+
+        with mock.patch("haprion_ui.db.cluster_inventories", return_value=[failed]):
+            self.assertEqual(self.editor().get("/proxies/review").status_code, 200)
+
+        self.assertEqual(self.forgotten, [])
+
+    def test_a_good_inventory_keeps_the_acceptance_of_a_proxy_written_by_hand(self) -> None:
+        self.review_acks[("alpha", "legacy")] = ReviewAck(frozenset({"waf-off"}), "operator", AT)
+
+        with mock.patch("haprion_ui.db.cluster_inventories", return_value=[inventory("legacy")]):
+            self.assertEqual(self.editor().get("/proxies/review").status_code, 200)
+
+        self.assertEqual(self.forgotten, [])
 
     def test_the_tab_is_on_the_proxies_page_too(self) -> None:
         page = self.editor().get("/proxies").text

@@ -434,9 +434,9 @@ def _review(
 ) -> protection_review.Review:
     """*Protection review* from what the page has read (B517, 12).
 
-    `read` is every name in each cluster with a good reading of its objects; an
-    acceptance of an object that reading no longer holds is forgotten when the
-    page is viewed. An object removed and made again under its name between two
+    `read` is every name in each cluster with good readings of its objects and
+    its inventory; an acceptance of an object they no longer hold is forgotten
+    when the page is viewed. An object removed and made again under its name between two
     views keeps its acceptance, and a changed weakness reopens the row anyway.
     """
 
@@ -474,9 +474,11 @@ def build_router(config: Config) -> APIRouter:
         """The clusters, their stored objects and their proxies written by hand."""
 
         clusters, inventory_rows = read_source(request, config, INVENTORY_SOURCE)
+        inventories = list(inventory_rows)
         overview = proxies.build_proxy_overview(
-            clusters, inventory_rows, stale_after=config.poller.stale_after
+            clusters, inventories, stale_after=config.poller.stale_after
         )
+        inventory = {reading.cluster: reading for reading in inventories}
         _, object_rows = read_source(request, config, OBJECTS_SOURCE)
         rows = {reading.cluster: reading for reading in object_rows}
         stored = {
@@ -492,7 +494,12 @@ def build_router(config: Config) -> APIRouter:
                 *(proxy.name for proxy in unmanaged[cluster]),
             ]
             for cluster in stored
-            if objects.was_read(rows.get(cluster))
+            #
+            # Both readings good, or the cluster is not read at all: the stored
+            # objects come from one, the proxies written by hand from the other,
+            # and a name missing from a failed one is not a name gone (26-11-20).
+            #
+            if objects.was_read(rows.get(cluster)) and objects.was_read(inventory.get(cluster))
         }
         return overview.clusters, stored, unmanaged, read
 

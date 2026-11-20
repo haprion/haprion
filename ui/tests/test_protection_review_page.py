@@ -9,7 +9,7 @@ from typing import Any
 from unittest import mock
 
 from haprion_ui.db import ReviewAck, ReviewView
-from tests.test_editor_page import EditorTestCase
+from tests.test_editor_page import OBJECTS, EditorTestCase
 
 AT = datetime(2026, 11, 20, 9, 0, tzinfo=UTC)
 
@@ -23,12 +23,14 @@ class TheReviewPage(EditorTestCase):
         self.undone: list[dict[str, Any]] = []
         self.views: list[ReviewView] = []
         self.audited: list[str] = []
+        self.forgotten: list[set[tuple[str, str]]] = []
         for target, side_effect in (
             ("review_state", lambda _c: (dict(self.review_acks), self.view)),
             ("accept_review", self._accept),
             ("undo_review", self._undo),
             ("set_review_view", self._set_view),
             ("record_audit_event", self._audit),
+            ("forget_review_acks", lambda _c, gone: self.forgotten.append(set(gone))),
         ):
             patch = mock.patch(f"haprion_ui.db.{target}", side_effect=side_effect)
             patch.start()
@@ -143,6 +145,22 @@ class TheReviewPage(EditorTestCase):
         self.assertNotIn("/edit?open=", page)
         self.assertNotIn(">Accept</button>", page)
         self.assertRegex(page, r'class="toggle-switch"[^>]*disabled')
+
+    def test_a_failed_reading_forgets_no_acceptance(self) -> None:
+        self.review_acks[("alpha", "shop")] = ReviewAck(frozenset({"waf-off"}), "operator", AT)
+        failed = replace(OBJECTS, outcome="unavailable", result={})
+
+        with mock.patch("haprion_ui.db.cluster_objects", return_value=[failed]):
+            self.assertEqual(self.editor().get("/proxies/review").status_code, 200)
+
+        self.assertEqual(self.forgotten, [])
+
+    def test_a_good_reading_without_the_object_forgets_its_acceptance(self) -> None:
+        self.review_acks[("alpha", "old")] = ReviewAck(frozenset({"waf-off"}), "operator", AT)
+
+        self.assertEqual(self.editor().get("/proxies/review").status_code, 200)
+
+        self.assertEqual(self.forgotten, [{("alpha", "old")}])
 
     def test_the_tab_is_on_the_proxies_page_too(self) -> None:
         page = self.editor().get("/proxies").text

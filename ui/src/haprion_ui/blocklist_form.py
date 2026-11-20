@@ -183,7 +183,7 @@ def _unread(connection: Any, readings: Sequence[db.ClusterObjects]) -> tuple[str
 
     listed = db.cluster_list(connection)
     clusters = set(listed) if listed is not None else {reading.cluster for reading in readings}
-    read = {r.cluster for r in readings if r.outcome == "done" and not r.poll_error}
+    read = {r.cluster for r in readings if objects.was_read(r)}
     return tuple(sorted(clusters - read))
 
 

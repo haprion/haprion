@@ -289,6 +289,16 @@ def _names(value: Any) -> tuple[str, ...] | None:
     return tuple(name for name in value if isinstance(name, str) and name)
 
 
+def was_read(reading: ClusterObjects | None) -> bool:
+    """Whether this is a good reading of the cluster's objects.
+
+    A reading the poller could not make is still a row, with an empty result;
+    only `done` and no poll error says what the cluster holds.
+    """
+
+    return reading is not None and reading.outcome == "done" and not reading.poll_error
+
+
 def cluster_object_views(reading: ClusterObjects | None) -> tuple[ObjectView, ...]:
     """Every readable entry in one cluster's cached objects, by name."""
 

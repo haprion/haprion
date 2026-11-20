@@ -434,9 +434,10 @@ def _review(
 ) -> protection_review.Review:
     """*Protection review* from what the page has read (B517, 12).
 
-    `read` is every name in each cluster whose objects could be read; an
-    acceptance of an object no longer in one is forgotten, so an object made
-    again under its name starts afresh.
+    `read` is every name in each cluster with a good reading of its objects; an
+    acceptance of an object that reading no longer holds is forgotten when the
+    page is viewed. An object removed and made again under its name between two
+    views keeps its acceptance, and a changed weakness reopens the row anyway.
     """
 
     with request.app.state.pool.connection() as connection:
@@ -491,7 +492,7 @@ def build_router(config: Config) -> APIRouter:
                 *(proxy.name for proxy in unmanaged[cluster]),
             ]
             for cluster in stored
-            if cluster in rows
+            if objects.was_read(rows.get(cluster))
         }
         return overview.clusters, stored, unmanaged, read
 

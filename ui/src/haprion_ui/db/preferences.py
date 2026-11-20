@@ -364,7 +364,7 @@ def undo_review(connection: Connection[Any], *, cluster: str, subject: str) -> b
 
 
 def forget_review_acks(connection: Connection[Any], gone: set[tuple[str, str]]) -> None:
-    """Remove the acceptances of objects that are gone, so one made again starts afresh."""
+    """Remove the acceptances of objects a good reading of their cluster no longer holds."""
 
     with connection.cursor() as cursor:
         for cluster, subject in sorted(gone):

@@ -19,6 +19,7 @@ from pathlib import Path
 from haprion.config import DeployIdentity, Node
 from haprion.health_probe import (
     MAX_TARGETS,
+    OLD_NODE_REFUSAL,
     Certificate,
     NodeAnswer,
     Target,
@@ -102,6 +103,19 @@ class TheRequestSentToANode(unittest.TestCase):
         self.assertEqual(request["source"], "192.0.2.25")
         self.assertEqual(request["targets"][0]["host"], "198.51.100.10")
 
+    def test_a_plain_get_is_asked_as_schema_one_and_anything_else_as_two(self) -> None:
+        """A node still on the older package answers 1 only, so 2 is sent only when needed."""
+
+        def version(*targets: Target) -> object:
+            return json.loads(build_request(list(targets)))["schema_version"]
+
+        plain = Target(host="198.51.100.10", port=8080)
+        self.assertEqual(version(plain), 1)
+        self.assertEqual(version(Target(host="198.51.100.10", port=8080, method="GET")), 1)
+        self.assertEqual(version(Target(host="198.51.100.10", port=8080, method="HEAD")), 2)
+        self.assertEqual(version(Target(host="198.51.100.10", port=8080, http2=True)), 2)
+        self.assertEqual(version(plain, Target(host="198.51.100.10", port=8081, http2=True)), 2)
+
     def test_more_targets_than_the_node_would_accept_are_refused_here_first(self) -> None:
         """Bounded on both sides. This bound protects the node from us."""
 
@@ -134,6 +148,16 @@ class WhatCameBackFromANode(unittest.TestCase):
         self.assertTrue(answer.reachable)
         self.assertEqual(answer.error, "host is not usable")
         self.assertEqual(answer.results, ())
+
+    def test_an_older_node_package_is_named_with_what_to_do(self) -> None:
+        refusal = json.dumps({"schema_version": 1, "ok": False, "error": OLD_NODE_REFUSAL})
+        answer = read_answer("node-a", completed(refusal, code=64))
+        self.assertTrue(answer.reachable)
+        self.assertEqual(
+            answer.error,
+            "node-a runs an older node package that cannot test HEAD, OPTIONS or HTTP/2 "
+            "health checks; upgrade haprion-node there",
+        )
 
     def test_something_that_is_not_json_is_not_a_verdict(self) -> None:
         answer = read_answer("node-a", completed("nologin\n"))

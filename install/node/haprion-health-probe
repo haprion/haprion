@@ -51,6 +51,17 @@ def _digits(text: str, limit: int = 18) -> bool:
     return 0 < len(text) <= limit and text.isascii() and text.isdigit()
 
 
+#
+# Version 1 is a request that only asks what every node since the first has
+# understood: a GET, over HTTP/1.x. Version 2 may also carry `method` other than
+# GET and `http2`. The manager asks for 2 only when a target needs it, so a node
+# on this script answers both, and a node older than this one refuses a 2
+# rather than reading the fields it does not know as a GET over HTTP/1.0 and
+# answering green (26-11-20). Under 1 the two fields are refused when they ask
+# for more than 1 means, so the two sides cannot drift: a request is either
+# one this version of the script can honour in full or it is refused.
+#
+SCHEMA_VERSIONS = (1, 2)
 SCHEMA_VERSION = 1
 
 # A request is small. The cap stops a client from making this read forever.
@@ -92,6 +103,9 @@ CERTIFICATE_OPENING = "-" * 5 + "BEGIN CERTIFICATE" + "-" * 5
 
 class Refused(Exception):
     """The request was not something this is willing to act on."""
+
+    #: The schema version the request asked for, when it got far enough to say.
+    schema_version = SCHEMA_VERSION
 
 
 def refuse(message: str) -> NoReturn:
@@ -201,8 +215,17 @@ def read_request(stream: IO[bytes]) -> dict[str, Any]:
         refuse("the request is not JSON")
     if not isinstance(payload, dict):
         refuse("the request is not an object")
-    if payload.get("schema_version") != SCHEMA_VERSION:
-        refuse(f"schema_version must be {SCHEMA_VERSION}")
+    version = payload.get("schema_version")
+    if isinstance(version, bool) or version not in SCHEMA_VERSIONS:
+        refuse("schema_version must be 1 or 2")
+    try:
+        return _read_checked(payload, int(version))
+    except Refused as refusal:
+        refusal.schema_version = int(version)
+        raise
+
+
+def _read_checked(payload: dict[str, Any], version: int) -> dict[str, Any]:
 
     timeout = payload.get("timeout_ms", DEFAULT_TIMEOUT_MS)
     if not isinstance(timeout, int) or isinstance(timeout, bool):
@@ -263,7 +286,17 @@ def read_request(stream: IO[bytes]) -> dict[str, Any]:
             return "GET"
         if asked not in METHODS:
             refuse(f"a target's method must be one of: {', '.join(METHODS)}")
+        if asked != "GET" and version < 2:
+            refuse("a method other than GET needs schema_version 2")
         return str(asked)
+
+    def http2_of(entry: dict[str, Any]) -> bool:
+        """Whether the check is over HTTP/2; a request that asks for it is schema 2."""
+
+        asked = flag(entry, "http2")
+        if asked and version < 2:
+            refuse("http2 needs schema_version 2")
+        return asked
 
     targets = payload.get("targets")
     if not isinstance(targets, list) or not targets:
@@ -302,7 +335,7 @@ def read_request(stream: IO[bytes]) -> dict[str, Any]:
                 "path": text(entry, "path", PATH, required=False, default="/") or "/",
                 "host_header": text(entry, "host_header", HOST, required=False),
                 "method": method_of(entry),
-                "http2": flag(entry, "http2"),
+                "http2": http2_of(entry),
                 "min_version": min_version_of(entry),
                 "ca": text(entry, "ca", CA_ID, required=False),
                 **(dns_question(entry) if kind == "dns" else {}),
@@ -312,7 +345,7 @@ def read_request(stream: IO[bytes]) -> dict[str, Any]:
         if target["ca"] and target["ca"] not in authorities:
             refuse(f"the CA {target['ca']} was named but not sent")
         target["ca_pem"] = authorities.get(target["ca"], "") if target["ca"] else ""
-    return {"timeout_ms": timeout, "source": source, "targets": read}
+    return {"schema_version": version, "timeout_ms": timeout, "source": source, "targets": read}
 
 
 #
@@ -891,7 +924,12 @@ def main(
         request = read_request(stdin)
     except Refused as refusal:
         json.dump(
-            {"schema_version": SCHEMA_VERSION, "ok": False, "error": str(refusal), "results": []},
+            {
+                "schema_version": refusal.schema_version,
+                "ok": False,
+                "error": str(refusal),
+                "results": [],
+            },
             stdout,
             separators=(",", ":"),
             sort_keys=True,
@@ -924,7 +962,7 @@ def main(
             )
     json.dump(
         {
-            "schema_version": SCHEMA_VERSION,
+            "schema_version": request["schema_version"],
             "ok": True,
             "node": socket.gethostname(),
             #

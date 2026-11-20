@@ -520,6 +520,11 @@ Rise and fall are 1 to 10. Intervals are written as `500ms`, `5s` or `1m`.
 stands on screen, once, now. It sends the same request as HAProxy's check. *What the nodes report* lists each node's verdict on each server. The rows
 the test tried are marked *tested*, and pointing at *Last check* shows HAProxy's own code.
 
+A node that runs an older node package cannot test a *HEAD* or *OPTIONS* check or an HTTP/2 pool. It
+refuses, and the test names it: *node-a runs an older node package that cannot test HEAD, OPTIONS or HTTP/2
+health checks; upgrade haprion-node there*. A check with *GET* still works against it. The same sentence
+appears on the command line.
+
 Over TLS, a tested server has a line under it with the certificate it presented: its name, who issued it,
 until when it is valid (*expired* in red once it has) and the TLS version. The line ends with what the pool
 holds the certificate to: the cluster's CA, the node's trusted CAs, or nothing (*not verified*, in yellow).

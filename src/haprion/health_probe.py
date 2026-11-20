@@ -31,7 +31,17 @@ from haprion.config import DeployIdentity, Node
 from haprion.ipvs_config import UDP_CONNECT_TIMEOUT
 from haprion.tls_policy import DEFAULT_MIN_VERSION
 
+#
+# Version 1 asks a GET over HTTP/1.x, which every node package understands.
+# Version 2 may also ask another method or HTTP/2, and is sent only when a target
+# does: a node on the older package ignores fields it does not know and would
+# answer a HEAD or HTTP/2 question as a plain GET, green. It refuses a version it
+# does not know instead (the text in `OLD_NODE_REFUSAL`), so plain GET checks keep
+# working against it and the others say why they cannot.
+#
 SCHEMA_VERSION = 1
+SCHEMA_VERSION_WITH_METHOD_AND_HTTP2 = 2
+OLD_NODE_REFUSAL = f"schema_version must be {SCHEMA_VERSION}"
 
 
 #
@@ -190,8 +200,9 @@ def build_request(
     sent = dict(authorities or {})
     if named - set(sent):
         raise ValueError(f"the CA {sorted(named - set(sent))[0]} is named but not sent")
+    needs_two = any(target.method != "GET" or target.http2 for target in targets)
     payload: dict[str, Any] = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": SCHEMA_VERSION_WITH_METHOD_AND_HTTP2 if needs_two else SCHEMA_VERSION,
         "source": source,
         "timeout_ms": timeout_ms,
         "targets": [target.request() for target in targets],
@@ -305,6 +316,11 @@ def read_answer(node: str, completed: subprocess.CompletedProcess[str]) -> NodeA
         )
     if payload.get("ok") is not True:
         refusal = _text(payload.get("error")) or "the node refused the request"
+        if refusal == OLD_NODE_REFUSAL:
+            refusal = (
+                f"{node} runs an older node package that cannot test HEAD, OPTIONS "
+                "or HTTP/2 health checks; upgrade haprion-node there"
+            )
         return NodeAnswer(node=node, reachable=True, error=refusal, results=())
 
     entries = payload.get("results")

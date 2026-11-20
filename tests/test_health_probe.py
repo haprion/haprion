@@ -27,6 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from haprion.health_probe import OLD_NODE_REFUSAL
 from tests import spawned
 from tests.spawned import free_port
 
@@ -102,7 +103,10 @@ class WhatTheProbeAnswers(unittest.TestCase):
         cls.server.server_close()
 
     def probe(self, **fields: object) -> dict[str, object]:
-        code, answer = ask({"schema_version": 1, "targets": [target(port=self.port, **fields)]})
+        version = 2 if fields.get("method", "GET") != "GET" else 1
+        code, answer = ask(
+            {"schema_version": version, "targets": [target(port=self.port, **fields)]}
+        )
         self.assertEqual(code, 0)
         result: dict[str, object] = answer["results"][0]
         return result
@@ -125,7 +129,7 @@ class WhatTheProbeAnswers(unittest.TestCase):
         for method in ("POST", "DELETE", "get", "GET /x HTTP/1.0\r\nX: y"):
             with self.subTest(method=method):
                 code, answer = ask(
-                    {"schema_version": 1, "targets": [target(port=self.port, method=method)]}
+                    {"schema_version": 2, "targets": [target(port=self.port, method=method)]}
                 )
                 self.assertNotEqual(code, 0)
                 self.assertIn("method must be one of", str(answer["error"]))
@@ -349,7 +353,47 @@ class WhatTheProbeRefuses(unittest.TestCase):
         return str(answer["error"])
 
     def test_another_schema_version_is_refused_rather_than_guessed(self) -> None:
-        self.assertIn("schema_version", self.refusal({"schema_version": 2, "targets": []}))
+        self.assertIn("schema_version", self.refusal({"schema_version": 3, "targets": []}))
+
+    def test_a_method_or_http2_is_schema_two_and_nothing_older(self) -> None:
+        for field in ({"method": "HEAD"}, {"http2": True}):
+            with self.subTest(field=field):
+                request = {"schema_version": 1, "targets": [target(port=1, **field)]}
+                self.assertIn("needs schema_version 2", self.refusal(request))
+
+    def test_the_answer_says_the_version_that_was_asked(self) -> None:
+        for version in (1, 2):
+            with self.subTest(version=version):
+                code, answer = ask({"schema_version": version, "targets": []})
+                self.assertEqual(code, 64)
+                self.assertEqual(answer["schema_version"], version)
+
+    def test_the_node_package_before_schema_two_refuses_a_head_question(self) -> None:
+        """A v1.2.2 node read `method` as nothing and answered GET over HTTP/1.0, green."""
+
+        git = shutil.which("git")
+        self.assertIsNotNone(git)
+        old = sp.run(
+            [str(git), "show", "v1.2.2:install/node/haprion-health-probe"],
+            cwd=SCRIPT.parents[2],
+            capture_output=True,
+            check=True,
+        ).stdout
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "haprion-health-probe"
+            script.write_bytes(old)
+            script.chmod(0o700)
+            completed = sp.run(
+                [str(script)],
+                input=json.dumps(
+                    {"schema_version": 2, "targets": [target(port=1, method="HEAD")]}
+                ).encode(),
+                capture_output=True,
+                check=False,
+            )
+        answer = json.loads(completed.stdout)
+        self.assertFalse(answer["ok"])
+        self.assertEqual(answer["error"], OLD_NODE_REFUSAL)
 
     def test_something_that_is_not_a_request(self) -> None:
         self.assertIn("not an object", self.refusal(["targets"]))
@@ -1223,7 +1267,7 @@ class AnHttp2PoolIsAskedOverHttp2(unittest.TestCase):
 
     def probe(self, port: int, **fields: object) -> dict[str, Any]:
         request: dict[str, object] = {
-            "schema_version": 1,
+            "schema_version": 2,
             "targets": [target(port=port, http2=True, **fields)],
         }
         if fields.get("ca"):

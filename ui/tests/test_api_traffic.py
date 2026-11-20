@@ -45,6 +45,9 @@ def entry(**changes: Any) -> Entry:
         "total_time": 33,
         "bytes": 512,
         "inserted_at": STORED,
+        "request_id": "01a1f943-7a70-7013-b09e-89c4f2706ed9",
+        "tls": "TLSv1.3",
+        "http": "2.0",
     }
     values.update(changes)
     values.setdefault("event", bytes([values["request"] % 256]) * 32)
@@ -76,6 +79,9 @@ EXPECTED_ROW = {
     "rule_action": "",
     "termination": "",
     "ended": "",
+    "request_id": "01a1f943-7a70-7013-b09e-89c4f2706ed9",
+    "tls": "TLSv1.3",
+    "http": "2.0",
 }
 
 

@@ -22,6 +22,7 @@ import psycopg
 
 from haprion import traffic_collector
 from haprion.traffic_collector import (
+    _TRAFFIC_COPY,
     CLOSED_DAY_GRACE,
     JOINING_SECONDS,
     RETENTION_DAYS,
@@ -60,6 +61,17 @@ REAL_INGEST = traffic_collector._ingest_database
 def no_waf(_target: NodeTarget, _cursor: str) -> bytes:
     """A node whose WAF journal has nothing to say."""
     return b'{"cursor":"","eof":true,"reset":false,"sent":0}\n'
+
+
+#
+# The row's columns by name, in the order the collector copies them: a test
+# that indexed the row from its end moved with every column added (0123).
+#
+COLUMNS = tuple(name.strip() for name in _TRAFFIC_COPY.split("(", 1)[1].split(")", 1)[0].split(","))
+
+
+def column(row: tuple[Any, ...], name: str) -> Any:
+    return row[COLUMNS.index(name)]
 
 
 class _Copy:
@@ -261,15 +273,27 @@ class TrafficCollectorTests(unittest.TestCase):
         #
         # `rule` (0050): absent and empty both mean no rule met the request.
         #
-        self.assertEqual(row[-5], "")
+        self.assertEqual(column(row, "rule"), "")
         self.assertEqual(
-            _database_row("alpha", "node-a", json.dumps(base | {"rule": "a:deny"}).encode())[-5],
+            column(
+                _database_row("alpha", "node-a", json.dumps(base | {"rule": "a:deny"}).encode()),
+                "rule",
+            ),
             "a:deny",
         )
         #
         # The WAF engine's fields (0051, 0052): absent means nothing found.
         #
-        self.assertEqual(row[-4:], ("", 0, "", ""))
+        self.assertEqual(
+            tuple(column(row, name) for name in ("waf_rules", "waf_score", "waf_id")), ("", 0, "")
+        )
+        #
+        # The request ID and the versions (0123): absent means a node with the older format.
+        #
+        self.assertEqual(
+            tuple(column(row, name) for name in ("termination", "request_id", "tls", "http")),
+            ("", "", "", ""),
+        )
         for change in (
             {"at": 2**62},
             {"at": 10**12},
@@ -347,7 +371,8 @@ class TrafficCollectorTests(unittest.TestCase):
         }
 
         def waf(**fields: object) -> tuple[Any, ...]:
-            return _database_row("alpha", "node-a", json.dumps(base | fields).encode())[-4:-2]
+            row = _database_row("alpha", "node-a", json.dumps(base | fields).encode())
+            return column(row, "waf_rules"), column(row, "waf_score")
 
         # As measured from HAProxy 3.4.6 and the engine (2026-10-02).
         self.assertEqual(waf(waf_rules="942100,949110", waf_score=5), ("942100,949110", 5))
@@ -385,9 +410,10 @@ class TrafficCollectorTests(unittest.TestCase):
         }
 
         def waf_id(value: object) -> object:
-            return _database_row("alpha", "node-a", json.dumps(base | {"waf_id": value}).encode())[
-                -2
-            ]
+            return column(
+                _database_row("alpha", "node-a", json.dumps(base | {"waf_id": value}).encode()),
+                "waf_id",
+            )
 
         identity = "shop.0b5e3c1a-7d42-4f0e-9c1b-2a6d8e4f7a90"
         self.assertEqual(waf_id(identity), identity)
@@ -453,7 +479,9 @@ class TrafficCollectorTests(unittest.TestCase):
         }
 
         def ended(record: dict[str, object]) -> object:
-            return _database_row("alpha", "node-a", json.dumps(record).encode())[-1]
+            return column(
+                _database_row("alpha", "node-a", json.dumps(record).encode()), "termination"
+            )
 
         self.assertEqual(ended(base), "")
         for kept in ("--", "CD", "SH", "PR"):
@@ -462,6 +490,64 @@ class TrafficCollectorTests(unittest.TestCase):
         for odd in ("", "cd", "CDX", "C", 7, None, "C;"):
             with self.subTest(odd=odd):
                 self.assertEqual(ended(base | {"termination": odd}), "")
+
+    def test_the_request_id_has_one_form_in_the_generator_the_collector_and_the_column(
+        self,
+    ) -> None:
+        from haprion import generate
+        from haprion.traffic_collector import REQUEST_ID
+
+        self.assertEqual(f"^{REQUEST_ID.pattern}$", generate.REQUEST_ID_FORM)
+        migration = (
+            Path(__file__).resolve().parents[1]
+            / "ui"
+            / "migrations"
+            / "versions"
+            / "0123_traffic_request_chain.py"
+        ).read_text()
+        self.assertIn(f"'^({REQUEST_ID.pattern})?$'", migration)
+
+    def test_the_request_id_and_the_versions_are_kept_when_they_have_their_form(self) -> None:
+        """0123, B523: what the generator and HAProxy write is kept; anything else is empty."""
+
+        base = {
+            "schema": 1,
+            "at": 1_700_000_000,
+            "client": "192.0.2.1",
+            "method": "GET",
+            "host": "a.example.test",
+            "path": "/",
+            "frontend": "fe",
+            "backend": "be",
+            "server": "s1",
+            "status": 200,
+            "request_time": 0,
+            "queue_time": 0,
+            "connect_time": 0,
+            "response_time": 0,
+            "total_time": 0,
+            "bytes": 0,
+        }
+
+        def read(name: str, value: object) -> object:
+            row = _database_row("alpha", "node-a", json.dumps(base | {name: value}).encode())
+            return column(row, name)
+
+        for name, kept, odd in (
+            (
+                "request_id",
+                ("01a1f943-7a70-7013-b09e-89c4f2706ed9", "edge-4711.a:b=c+d/e", "x" * 128),
+                ("", "x" * 129, "has space", "a,b", 'a"b', 7, None),
+            ),
+            ("tls", ("TLSv1.2", "TLSv1.3"), ("", "TLS v1.3", "x" * 17, 1.3)),
+            ("http", ("1.1", "2.0", "3.0"), ("", "2", "HTTP/2.0", "10.0", 2.0)),
+        ):
+            for value in kept:
+                with self.subTest(name=name, value=value):
+                    self.assertEqual(read(name, value), value)
+            for wrong in odd:
+                with self.subTest(name=name, odd=wrong):
+                    self.assertEqual(read(name, wrong), "")
 
     def test_the_margin_day_is_not_reported_as_older_than_the_database_keeps(self) -> None:
         """The mirror keeps one day below the oldest partition on purpose

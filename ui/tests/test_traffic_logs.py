@@ -122,7 +122,7 @@ def record(**overrides: object) -> bytes:
 
 
 class TheSearchNamesTheClientAndTheDestination(unittest.TestCase):
-    """A term is also a client address, a network and a destination (26-11-01); PostgreSQL's half is in test_database_integration."""
+    """A term is also a client address, a network, a destination (26-11-01) and a request ID (B523); PostgreSQL's half is in test_database_integration."""
 
     ADDRESSES = {
         ("alpha", "be-shop", "s1"): "198.51.100.7:8080",
@@ -146,7 +146,9 @@ class TheSearchNamesTheClientAndTheDestination(unittest.TestCase):
                 statement, parameters = self.built(term)
                 self.assertIn("ilike", statement)
                 self.assertEqual(parameters[0], "%Straße%")
-        self.assertEqual(self.built("API AND NOT Health")[1], ["%API%", "%Health%"])
+        self.assertEqual(
+            self.built("API AND NOT Health")[1], ["%API%", "API", "%Health%", "Health"]
+        )
         self.assertEqual(traffic_logs.like_pattern("Été_100%"), "%Été\\_100\\%%")
 
     def test_an_address_is_the_client_in_either_form_and_still_text(self) -> None:
@@ -161,10 +163,10 @@ class TheSearchNamesTheClientAndTheDestination(unittest.TestCase):
     def test_a_network_is_the_clients_in_it_in_both_forms(self) -> None:
         statement, parameters = self.built("192.0.2.77/24")
         self.assertEqual(statement.count("traffic_log_client_inet(client) <<= %s::inet"), 2)
-        self.assertEqual(parameters[1:], ["192.0.2.0/24", "::ffff:192.0.2.0/120"])
+        self.assertEqual(parameters[1:3], ["192.0.2.0/24", "::ffff:192.0.2.0/120"])
         # A mapped network is the IPv4 one, and an IPv6 network has the one form.
-        self.assertEqual(self.built("::ffff:192.0.2.0/120")[1][1:], parameters[1:])
-        self.assertEqual(self.built("2001:db8::/32")[1][1:], ["2001:db8::/32"])
+        self.assertEqual(self.built("::ffff:192.0.2.0/120")[1][1:3], parameters[1:3])
+        self.assertEqual(self.built("2001:db8::/32")[1][1:2], ["2001:db8::/32"])
 
     def test_a_network_with_a_zone_is_refused_and_an_address_with_one_is_text(self) -> None:
         # Review 26-11-01, P3-1: PostgreSQL cannot read it, so it was a 500.
@@ -182,12 +184,28 @@ class TheSearchNamesTheClientAndTheDestination(unittest.TestCase):
         self.assertIsNotNone(reading.filter_error)
         self.assertEqual(reading.entries, ())
 
-    def test_what_is_no_address_is_text_only(self) -> None:
+    def test_what_is_no_address_is_text_and_perhaps_a_request_id(self) -> None:
         for term in ("shop", "192.0.2", "192.0.2.300", "192.0.2.0/33", "/health"):
             with self.subTest(term=term):
                 statement, parameters = self.built(term)
                 self.assertNotIn("client", statement)
-                self.assertEqual(len(parameters), 1)
+                self.assertEqual(parameters, [f"%{term}%", term])
+        statement, parameters = self.built('"two words"')
+        self.assertNotIn("request_id", statement)
+        self.assertEqual(parameters, ["%two words%"])
+
+    def test_a_request_id_is_asked_for_exactly(self) -> None:
+        statement, parameters = self.built("01a1f943-7a70-7013-b09e-89c4f2706ed9")
+        self.assertIn("request_id = %s", statement)
+        self.assertEqual(parameters[-1], "01a1f943-7a70-7013-b09e-89c4f2706ed9")
+
+    def test_a_protocol_is_asked_for_by_its_column(self) -> None:
+        statement, parameters = self.built("TLS1.2")
+        self.assertIn('"tls" = %s', statement)
+        self.assertEqual(parameters[-1], "TLSv1.2")
+        statement, parameters = self.built('"HTTP/2"')
+        self.assertIn('"http" = %s', statement)
+        self.assertEqual(parameters[-1], "2.0")
 
     def test_a_term_that_names_a_destination_asks_for_its_servers(self) -> None:
         statement, parameters = self.built("198.51.100.7", self.ADDRESSES)
@@ -250,7 +268,7 @@ class TheSearchNamesTheClientAndTheDestination(unittest.TestCase):
         for given in (None, {}):
             statement, parameters = self.built("198.51.100.7", given)
             self.assertNotIn("= any(%s::text[])", statement)
-            self.assertEqual(len(parameters), 2)
+            self.assertEqual(len(parameters), 3)
 
     def test_or_is_one_condition_among_the_filters(self) -> None:
         # Joined with `and`, a bare `a or b` would be `x and a or b`: the first
@@ -1061,6 +1079,48 @@ class TheTrafficLogPage(LoginTestCase):
         fine = page.split(">/fine<")[1].split("</tr>")[0]
         self.assertIn('title="The client ended it while the data was sent"', gone)
         self.assertNotIn("ended it", fine)
+
+    def test_the_timings_say_the_protocol_and_the_request_id(self) -> None:
+        """0123, B523: how the client spoke and the ID, in the request's timing line; an older row says neither."""
+
+        request_id = "01a1f943-7a70-7013-b09e-89c4f2706ed9"
+        with (self.root / "alpha--node-a.jsonl").open("wb") as mirror:
+            mirror.write(record(path="/new", request_id=request_id, tls="TLSv1.3", http="2.0"))
+            mirror.write(record(path="/older"))
+        page = self.page()
+
+        new = page.split(">/new<")[1].split('class="log-timings"')[1].split("</tr>")[0]
+        older = page.split(">/older<")[1].split('class="log-timings"')[1].split("</tr>")[0]
+        self.assertIn("<span>HTTP/2 · TLS 1.3</span>", new)
+        self.assertIn(f'<em>ID</em><span class="log-request-id">{request_id}</span>', new)
+        self.assertNotIn("HTTP/", older)
+        self.assertNotIn("<em>ID</em>", older)
+        self.assertIn(f'data-export-request-id="{request_id}"', page)
+
+    def test_the_protocol_reads_as_its_name(self) -> None:
+        def entry(http: str, tls: str) -> traffic_logs.Entry:
+            return parse(record(http=http, tls=tls), "alpha", "node-a")
+
+        self.assertEqual(entry("1.1", "").protocol, "HTTP/1.1")
+        self.assertEqual(entry("2.0", "TLSv1.2").protocol, "HTTP/2 · TLS 1.2")
+        self.assertEqual(entry("3.0", "TLSv1.3").protocol, "HTTP/3 · TLS 1.3")
+        self.assertEqual(entry("", "").protocol, "")
+
+    def test_a_protocol_term_names_its_column(self) -> None:
+        match = traffic_logs.protocol_match
+        for term, said in (
+            ("TLS1.2", ("tls", "TLSv1.2")),
+            ("tlsv1.3", ("tls", "TLSv1.3")),
+            ("TLS 1.0", ("tls", "TLSv1.0")),
+            ("HTTP/2", ("http", "2.0")),
+            ("http/3.0", ("http", "3.0")),
+            ("HTTP/1.1", ("http", "1.1")),
+        ):
+            with self.subTest(term=term):
+                self.assertEqual(match(term), said)
+        for nothing in ("TLS", "TLS1.4", "HTTP/4", "http2", "shop.example.com"):
+            with self.subTest(nothing=nothing):
+                self.assertIsNone(match(nothing))
 
     def test_the_two_letters_read_as_a_sentence(self) -> None:
         said = traffic_logs.ended_in_words

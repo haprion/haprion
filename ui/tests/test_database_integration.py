@@ -11170,14 +11170,18 @@ class TheTrafficLogPageReadsWhatPostgresqlMatches(unittest.TestCase):
             "server": "srv1",
             "status": 200,
             "rule": "",
+            "request_id": "",
+            "tls": "",
+            "http": "",
         } | fields
         with psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_COLLECTOR_ROLE']}") as c:
             c.execute(
                 "insert into traffic_log (event_id, cluster, node, occurred_at, request_number,"
                 " client, method, host, path, frontend, backend, server, status, request_time,"
-                " queue_time, connect_time, response_time, total_time, bytes, rule)"
+                " queue_time, connect_time, response_time, total_time, bytes, rule,"
+                " request_id, tls, http)"
                 " values (%s, %s, 'node-a', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
-                " 0, 0, 0, 0, 0, 0, %s)",
+                " 0, 0, 0, 0, 0, 0, %s, %s, %s, %s)",
                 (
                     uuid4().bytes * 2,
                     self.cluster,
@@ -11192,6 +11196,9 @@ class TheTrafficLogPageReadsWhatPostgresqlMatches(unittest.TestCase):
                     row["server"],
                     row["status"],
                     row["rule"],
+                    row["request_id"],
+                    row["tls"],
+                    row["http"],
                 ),
             )
 
@@ -11436,6 +11443,63 @@ class TheTrafficLogPageReadsWhatPostgresqlMatches(unittest.TestCase):
         plan = self.search_plan("2001:db8::/120")
         for day in days:
             self.assertIn(f"traffic_log_{day:%Y%m%d}_client", plan)
+
+    def test_a_request_id_finds_its_request_and_the_row_carries_the_protocol(self) -> None:
+        """0123, B523: the ID exactly, not a part of it; the versions as the row shows them."""
+
+        self.store(
+            path="/one",
+            request_id="01a1f943-7a70-7013-b09e-89c4f2706ed9",
+            tls="TLSv1.3",
+            http="2.0",
+        )
+        self.store(
+            path="/two",
+            request_id="01a1f943-7a80-7e03-b4f8-d60b0817b577",
+            tls="TLSv1.2",
+            http="1.1",
+        )
+        self.store(path="/plain", http="1.1")
+
+        self.assertEqual(self.paths(substring="01a1f943-7a70-7013-b09e-89c4f2706ed9"), ["/one"])
+        self.assertEqual(self.paths(substring="01a1f943-7a70"), [])
+        one = self.read(substring="01a1f943-7a70-7013-b09e-89c4f2706ed9").entries[0]
+        self.assertEqual(
+            (one.request_id, one.tls, one.http),
+            ("01a1f943-7a70-7013-b09e-89c4f2706ed9", "TLSv1.3", "2.0"),
+        )
+        self.assertEqual(one.protocol, "HTTP/2 · TLS 1.3")
+
+    def test_a_protocol_is_searched_by_the_name_a_reader_gives_it(self) -> None:
+        self.store(path="/old", tls="TLSv1.2", http="1.1")
+        self.store(path="/new", tls="TLSv1.3", http="2.0")
+        self.store(path="/quic", tls="TLSv1.3", http="3.0")
+        self.store(path="/plain", http="1.1")
+
+        for term, paths in (
+            ("TLS1.2", ["/old"]),
+            ('"TLS 1.2"', ["/old"]),
+            ("tlsv1.3", ["/quic", "/new"]),
+            ("HTTP/2", ["/new"]),
+            ("http/3.0", ["/quic"]),
+            ("HTTP/1.1 not TLS1.2", ["/plain"]),
+        ):
+            with self.subTest(term=term):
+                self.assertEqual(self.paths(substring=term), paths)
+
+    def test_a_request_id_or_a_protocol_over_many_days_uses_their_indexes(self) -> None:
+        """0123: each day is read through the column's index, not row by row."""
+
+        days = self.fill_days(3, "'192.0.2.' || i %% 250")
+        for term, index in (
+            ("01a1f943-7a70-7013-b09e-89c4f2706ed9", "request_id"),
+            ("TLS1.2", "tls"),
+            ("HTTP/2", "http"),
+        ):
+            plan = self.search_plan(term)
+            for day in days:
+                with self.subTest(term=term, day=day):
+                    self.assertIn(f"traffic_log_{day:%Y%m%d}_{index}", plan)
 
     def test_a_destination_that_starts_like_an_address_does_not_scan_the_log(self) -> None:
         """`192.0.2.1` with a server on `192.0.2.10`: the client's index, as without the server."""
@@ -11975,6 +12039,9 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
 
     def test_a_dump_at_0121_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
         self.restored_from("0121", grants_differ="0121 has no protection review tables to grant on")
+
+    def test_a_dump_at_0122_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
+        self.restored_from("0122", grants_differ="0122 has no request_id, tls or http to grant on")
 
 
 class EveryRevisionADumpCanBeAtIsRestored(unittest.TestCase):

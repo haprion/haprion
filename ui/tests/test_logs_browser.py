@@ -134,6 +134,8 @@ class LogControlsInABrowser(unittest.TestCase):
                   data-export-host="app.example.com" data-export-path="/admin"
                   data-export-status="403" data-export-destination="app.example:8080"
                   data-export-bytes="0" data-export-rule="block-admin" data-export-mode="denied"
+                  data-export-protocol="HTTP/2 · TLS 1.3"
+                  data-export-request-id="01a1f943-7a70-7013-b09e-89c4f2706ed9"
                   ><td><input type="checkbox" data-log-select></td></tr>
             </tbody></table>
             </div>
@@ -146,8 +148,12 @@ class LogControlsInABrowser(unittest.TestCase):
         content = pending.value.path().read_text(encoding="utf-8-sig").splitlines()
 
         self.assertTrue(pending.value.suggested_filename.startswith("waf-logs-"))
-        self.assertTrue(content[0].endswith('"Bytes","Rule","Mode"'))
-        self.assertTrue(content[1].endswith('"0","block-admin","denied"'))
+        self.assertTrue(content[0].endswith('"Bytes","Rule","Mode","Protocol","Request ID"'))
+        self.assertTrue(
+            content[1].endswith(
+                '"0","block-admin","denied","HTTP/2 · TLS 1.3","01a1f943-7a70-7013-b09e-89c4f2706ed9"'
+            )
+        )
 
     def test_filter_and_clear_replace_only_the_log_region_and_update_the_address(self) -> None:
         def markup(value: str) -> str:

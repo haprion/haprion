@@ -138,6 +138,9 @@ def _request(entry: traffic_logs.Entry) -> dict[str, Any]:
         "rule_action": ("denied" if mode == "deny" else "logged") if entry.rule else "",
         "termination": entry.termination,
         "ended": entry.ended,
+        "request_id": entry.request_id,
+        "tls": entry.tls,
+        "http": entry.http,
     }
 
 

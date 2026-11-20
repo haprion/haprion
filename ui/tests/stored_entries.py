@@ -38,4 +38,7 @@ def entry_of(line: bytes, cluster: str, node: str) -> Entry:
         bytes=value["bytes"],
         rule=value.get("rule", ""),
         termination=value.get("termination", ""),
+        request_id=value.get("request_id", ""),
+        tls=value.get("tls", ""),
+        http=value.get("http", ""),
     )

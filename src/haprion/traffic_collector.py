@@ -1143,6 +1143,9 @@ def _database_row(cluster: str, node: str, line: bytes) -> tuple[Any, ...]:
         _waf_score(value.get("waf_score")),
         _waf_id(value.get("waf_id")),
         _termination(value.get("termination")),
+        _matching(REQUEST_ID, value.get("request_id")),
+        _matching(TLS_VERSION, value.get("tls")),
+        _matching(HTTP_VERSION, value.get("http")),
     )
 
 
@@ -1217,6 +1220,23 @@ def _termination(item: Any) -> str:
 
 
 #
+# The request's ID and how the client spoke (migration 0123, B523), read as
+# leniently: a record from a node with the older format has none of them, and
+# a value out of form is kept as none. The ID's form is the generator's
+# (`REQUEST_ID_FORM`); the versions are HAProxy's names, `TLSv1.3` and `2.0`.
+#
+REQUEST_ID = re.compile(r"[A-Za-z0-9._:=+/-]{1,128}")
+TLS_VERSION = re.compile(r"[A-Za-z0-9.]{1,16}")
+HTTP_VERSION = re.compile(r"[0-9][.][0-9]")
+
+
+def _matching(form: re.Pattern[str], item: Any) -> str:
+    if not isinstance(item, str) or form.fullmatch(item) is None:
+        return ""
+    return item
+
+
+#
 # The column's own bound (migration 0050). A longer value is no rule this
 # installation wrote.
 #
@@ -1227,7 +1247,7 @@ copy traffic_log
     (event_id, cluster, node, occurred_at, request_number, client, method, host,
      path, frontend, backend, server, status, request_time, queue_time,
      connect_time, response_time, total_time, bytes, rule, waf_rules, waf_score, waf_id,
-     termination)
+     termination, request_id, tls, http)
 from stdin
 """
 

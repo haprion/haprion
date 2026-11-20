@@ -14,7 +14,7 @@
       "description": "The requests in the window, newest first.",
       "items": {
         "type": "object",
-        "required": ["time", "inserted_at", "node", "request_number", "client", "method", "host", "path", "frontend", "backend", "server", "status", "request_time", "queue_time", "connect_time", "response_time", "total_time", "bytes", "rule", "rule_name", "rule_action", "termination", "ended"],
+        "required": ["time", "inserted_at", "node", "request_number", "client", "method", "host", "path", "frontend", "backend", "server", "status", "request_time", "queue_time", "connect_time", "response_time", "total_time", "bytes", "rule", "rule_name", "rule_action", "termination", "ended", "request_id", "tls", "http"],
         "properties": {
           "time": { "$ref": "definitions.schema.json#/$defs/timestamp", "description": "Value. When the request was accepted." },
           "inserted_at": { "$ref": "definitions.schema.json#/$defs/nullable_timestamp", "description": "Value. When the request reached the manager's database: a minute or so after time, hours after it from a node that was behind. Give it as inserted_after to read what arrived since. Null only for a row read without it." },
@@ -38,7 +38,10 @@
           "rule_name": { "type": "string", "description": "Value. The rule's name; empty where none. A request refused by dynamic blocking has dynamic-block, or dynamic-block/ and the reason (requests, errors, connections or manual) for requests logged since the reason was recorded, so match on the prefix dynamic-block. A request the WAF engine gave no answer for has waf-engine; waf-engine/interrupted is one whose client left before the engine answered, so match on the prefix waf-engine." },
           "rule_action": { "enum": ["", "denied", "logged"], "description": "Code. What the rule did: denied the request, logged it, or empty where no rule applied." },
           "termination": { "type": "string", "pattern": "^[A-Za-z-]{0,4}$", "description": "Code. HAProxy's termination state, two letters for who ended the session and where (-- normally); empty where not recorded. Its values are HAProxy's, not this API's." },
-          "ended": { "type": "string", "description": "Text. The termination state in words; empty where the session ended normally. Match on termination instead." }
+          "ended": { "type": "string", "description": "Text. The termination state in words; empty where the session ended normally. Match on termination instead." },
+          "request_id": { "type": "string", "pattern": "^([A-Za-z0-9._:=+/-]{1,128})?$", "description": "Value. The ID the proxy gave the request and sent to the backend in X-Request-ID: a UUID version 7, or the ID a trusted proxy sent. Empty for a request recorded before the field existed." },
+          "tls": { "type": "string", "pattern": "^([A-Za-z0-9.]{1,16})?$", "description": "Code. The client's TLS version as HAProxy names it, such as TLSv1.3; empty without TLS or where not recorded. Its values are HAProxy's, not this API's." },
+          "http": { "type": "string", "pattern": "^([0-9][.][0-9])?$", "description": "Code. The client's HTTP version as HAProxy names it: 1.1, 2.0 or 3.0; empty where not recorded." }
         },
         "additionalProperties": true
       }

@@ -136,6 +136,8 @@
         "Bytes",
         "Rule",
         "Mode",
+        "Protocol",
+        "Request ID",
       ];
       const fields = [
         "exportTime",
@@ -150,6 +152,8 @@
         "exportBytes",
         "exportRule",
         "exportMode",
+        "exportProtocol",
+        "exportRequestId",
       ];
       const lines = [headings.map(csvCell).join(",")];
       selectedRows().forEach((row) => {

@@ -1406,6 +1406,17 @@ class EditingTheHeadersThatPassThrough(unittest.TestCase):
 
         self.assertIn("the connection actually was", str(raised.exception))
 
+    def test_the_request_id_belongs_to_the_cluster(self) -> None:
+        """B523: the traffic record carries the ID the cluster gave; an object's would find none."""
+
+        for headers in (
+            "  request:\n    set:\n      X-Request-ID: mine",
+            "  request:\n    delete: [x-request-id]",
+        ):
+            with self.subTest(headers=headers), self.assertRaises(ModelError) as raised:
+                load_proxy("shop", self.headers(headers))
+            self.assertIn("as the request's ID", str(raised.exception))
+
     def test_a_policy_with_quoted_keywords_and_a_few_kilobytes_is_kept(self) -> None:
         """A CSP quotes 'self' and runs long (B496, 2); the generator escapes the quote."""
 

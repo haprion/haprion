@@ -419,9 +419,10 @@ CONTROL_IN_VALUE = re.compile(r"[\x00-\x1f\x7f]")
 #
 # The headers the cluster decides and an object may not touch. They are written
 # by the frontend from what the connection actually was; an object that set one
-# would be overwriting a measured fact with a guess.
+# would be overwriting a measured fact with a guess. `X-Request-ID` is the ID the
+# traffic record carries (B523): one the object changed would find no record.
 #
-RESERVED_HEADERS = ("x-forwarded-for", "x-forwarded-proto", "x-forwarded-host")
+RESERVED_HEADERS = ("x-forwarded-for", "x-forwarded-proto", "x-forwarded-host", "x-request-id")
 
 MAX_HEADER_VALUE = 200
 
@@ -2659,7 +2660,7 @@ def _header_name(name: Any, location: str) -> None:
     if name.lower() in RESERVED_HEADERS:
         raise ModelError(
             f"{location} may not touch {name}: the cluster writes it from what the "
-            f"connection actually was"
+            f"connection actually was, or as the request's ID"
         )
 
 

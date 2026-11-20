@@ -313,6 +313,36 @@ TRAFFIC_PATH_BYTES = 512
 #
 TRAFFIC_LOG_LENGTH = 8192
 #
+# The request ID (B517 p. 1, B523): one per request, in the record and in the
+# header the backend receives, so a line in the application's own log and a
+# row in the traffic log can be found from each other. Generated as UUID
+# version 7, which sorts by the millisecond it was made and needs nothing shared
+# between nodes to stay unique. An ID that arrives is kept only from a trusted proxy, only when it
+# came once - `req.hdr` splits on commas and takes the last part - and only in
+# this form; any other is replaced, as a visitor could otherwise choose the ID
+# an operator searches for.
+#
+REQUEST_ID_HEADER = "X-Request-ID"
+REQUEST_ID_FORM = r"^[A-Za-z0-9._:=+/-]{1,128}$"
+#
+# HAProxy's own names in the record, `TLSv1.3` and `2.0`: the client's TLS
+# version, empty without TLS, and its HTTP version (B517 p. 6). Measured on
+# 3.4.8: QUIC reports `TLSv1.3` and `3.0`.
+#
+TRAFFIC_TLS_BYTES = 16
+#
+# What the core's own `log` targets get from a generated frontend, when its
+# `global` has one: HAProxy's `httplog` with the path in place of the request
+# target, so the query string a site keeps out of the traffic log is kept out
+# of the classic one too (B523). Connection errors - a failed TLS handshake, a
+# malformed request - keep their own format there; the structured stream
+# drops them. A malformed request reads `<BADREQ>` once for each of the three.
+#
+CLASSIC_LOG_FORMAT = (
+    '"%ci:%cp [%tr] %ft %b/%s %TR/%Tw/%Tc/%Tr/%Ta %ST %B %CC %CS %tsc '
+    '%ac/%fc/%bc/%sc/%rc %sq/%bq %hr %hs \\"%HM %HPO %HV\\""'
+)
+#
 # The structured stream goes to a socket of its own, held by the node's traffic
 # socket unit and writable by the haproxy account alone. The node's rsyslog
 # marks what arrives there as HAProxy's, and only a marked line is forwarded or
@@ -333,6 +363,11 @@ HTTP_TRAFFIC_LOG_FORMAT = (
     # response on 2026-10-31 had nothing else to say which side stopped.
     #
     "%(termination)ts %(rule)[var(txn.rule)] "
+    #
+    # The request ID, and how the client spoke (B523).
+    #
+    "%(request_id)[var(txn.request_id)] %(tls)[ssl_fc_protocol,bytes(0,16)] "
+    "%(http)[var(txn.traffic_version)] "
     #
     # What the WAF engine found (B233): the CRS rules it matched and the
     # request's anomaly score, exactly as it reported them. Cut at the
@@ -2083,6 +2118,7 @@ def _frontend_file(
             *(
                 (
                     "    option httplog",
+                    f"    log-format {CLASSIC_LOG_FORMAT}",
                     f"    log {TRAFFIC_LOG_SOCKET} len {TRAFFIC_LOG_LENGTH} format local profile {TRAFFIC_LOG_PROFILE} local2",
                 )
                 if structured
@@ -2094,6 +2130,7 @@ def _frontend_file(
                     "    http-request set-var(txn.traffic_host) "
                     f"req.hdr(host),cut_crlf,bytes(0,{TRAFFIC_HOST_BYTES})",
                     f"    http-request set-var(txn.traffic_path) path,bytes(0,{TRAFFIC_PATH_BYTES})",
+                    "    http-request set-var(txn.traffic_version) req.ver,bytes(0,8)",
                 )
                 if structured
                 else ()
@@ -2106,6 +2143,7 @@ def _frontend_file(
                 else ()
             ),
             f"    timeout client {TIMEOUT_CLIENT}",
+            *_request_id_rules(trusted_proxies),
             *_acme_rules(acme if protocol == "http" else None),
             *_hsts_rules(members, protocol),
             *_forwarded_rules(protocol, trusted_proxies),
@@ -2460,17 +2498,43 @@ def _forwarded_rules(protocol: str, trusted_proxies: Sequence[str]) -> list[str]
     trusted proxy the address it adds extends the chain.
     """
 
-    lines = []
-    condition = ""
-    if trusted_proxies:
-        lines.extend(_value_lines(f"    acl {TRUSTED_ACL} src", sorted(trusted_proxies)))
-        condition = f" unless {TRUSTED_ACL}"
-    return lines + [
+    # The acl itself is declared with the request ID's rules, which come first.
+    condition = f" unless {TRUSTED_ACL}" if trusted_proxies else ""
+    return [
         f"    http-request del-header X-Forwarded-For{condition}",
         f"    http-request del-header X-Forwarded-Proto{condition}",
         f"    http-request del-header X-Forwarded-Host{condition}",
         f"    http-request set-header X-Forwarded-Proto {protocol}{condition}",
         f"    http-request set-header X-Forwarded-Host %[req.hdr(host),field(1,:),lower]{condition}",
+    ]
+
+
+def _request_id_rules(trusted_proxies: Sequence[str]) -> list[str]:
+    """The request's ID, set before any rule can answer it (B523).
+
+    First among the decisions, before the ACME challenge's `allow`, which ends
+    the `http-request` rules: a request refused by an access rule, a block or
+    the WAF carries its ID in the record too. The trusted proxies' acl is
+    declared here, as the first rule that names it. `set-header` replaces every
+    `X-Request-ID` the client sent, so the backend sees one, and it is this.
+    """
+
+    header = REQUEST_ID_HEADER
+    lines: list[str] = []
+    if trusted_proxies:
+        lines.extend(_value_lines(f"    acl {TRUSTED_ACL} src", sorted(trusted_proxies)))
+        lines.append(
+            f"    http-request set-var(txn.request_id) req.fhdr({header}) if {TRUSTED_ACL} "
+            f"{{ req.fhdr_cnt({header}) eq 1 }} {{ req.fhdr({header}) -m reg {REQUEST_ID_FORM} }}"
+        )
+    #
+    # Without a trusted proxy there is no ID to keep, and none is asked about.
+    #
+    kept = " unless { var(txn.request_id) -m found }" if trusted_proxies else ""
+    return [
+        *lines,
+        f"    http-request set-var(txn.request_id) uuid(7){kept}",
+        f"    http-request set-header {header} %[var(txn.request_id)]",
     ]
 
 

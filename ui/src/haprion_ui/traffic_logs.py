@@ -60,6 +60,12 @@ class Entry:
     """The access rule the request met, as `name:log` or `name:deny`; empty if none."""
     termination: str = ""
     """HAProxy's two letters for how the session ended (0106); `--` normally."""
+    request_id: str = ""
+    """The ID the frontend gave the request and sent to its backend as `X-Request-ID` (0123, B523)."""
+    tls: str = ""
+    """HAProxy's name for the client's TLS version, `TLSv1.3`; empty without TLS or in an older row (0123)."""
+    http: str = ""
+    """The client's HTTP version as HAProxy says it, `1.1`, `2.0` or `3.0`; empty in an older row (0123)."""
     event: builtins.bytes = b""
     """The row's own identity (its 32-byte `event_id`): the last tie-break in the order (0111)."""
     inserted_at: datetime | None = None
@@ -70,6 +76,14 @@ class Entry:
         """How the session ended, in words; empty when it ended normally or is not known."""
 
         return ended_in_words(self.termination)
+
+    @property
+    def protocol(self) -> str:
+        """How the client spoke, as a reader says it: `HTTP/2 · TLS 1.3`; empty in an older row."""
+
+        return " · ".join(
+            part for part in (http_in_words(self.http), tls_in_words(self.tls)) if part
+        )
 
     @property
     def transfer_time(self) -> int:
@@ -161,6 +175,20 @@ _ENDED_WHILE = {
     "L": " while the last data went out",
     "T": " while it was held back",
 }
+
+
+def http_in_words(version: str) -> str:
+    """`2.0` as `HTTP/2`, `1.1` as `HTTP/1.1`: the names the protocols go by."""
+
+    if not version:
+        return ""
+    return f"HTTP/{version.removesuffix('.0')}"
+
+
+def tls_in_words(version: str) -> str:
+    """`TLSv1.3` as `TLS 1.3`; a name of another form as HAProxy wrote it."""
+
+    return version.replace("TLSv", "TLS ", 1) if version.startswith("TLSv") else version
 
 
 def ended_in_words(termination: str) -> str:
@@ -507,6 +535,26 @@ def _ip_term(value: str) -> _Ip | _Net | None:
         return None
 
 
+#
+# The request ID's form, the generator's and the collector's (B523).
+#
+REQUEST_ID_TERM = re.compile(r"[A-Za-z0-9._:=+/-]{1,128}")
+_TLS_TERM = re.compile(r"tls ?v?1\.([0-3])")
+_HTTP_TERM = re.compile(r"http/(1\.[01]|[23](?:\.0)?)")
+
+
+def protocol_match(value: str) -> tuple[str, str] | None:
+    """The column and value a protocol term names: `tls1.2` is `("tls", "TLSv1.2")`, `HTTP/2` is `("http", "2.0")`."""
+
+    term = value.strip().lower()
+    if tls := _TLS_TERM.fullmatch(term):
+        return "tls", f"TLSv1.{tls.group(1)}"
+    if http := _HTTP_TERM.fullmatch(term):
+        version = http.group(1)
+        return "http", version if "." in version else f"{version}.0"
+    return None
+
+
 def client_match(value: str) -> tuple[str, list[str]] | None:
     """How a term names a client: `("address", texts)` or `("network", [cidr, ...])`, else None.
 
@@ -628,6 +676,18 @@ def _search_sql(
         # subplan per term made the planner's cost pass the point where
         # PostgreSQL compiles the query, which cannot be cancelled (P2-1).
         #
+        #
+        # A request ID, found exactly (0123's index); and a protocol a reader
+        # names - `TLS1.2`, `"TLS 1.2"`, `HTTP/2` - as the value its column
+        # holds (B523).
+        #
+        if REQUEST_ID_TERM.fullmatch(expression.value):
+            found.append(sql.SQL("request_id = %s"))
+            parameters.append(expression.value)
+        protocol = protocol_match(expression.value)
+        if protocol is not None:
+            found.append(sql.SQL("{} = %s").format(sql.Identifier(protocol[0])))
+            parameters.append(protocol[1])
         servers = _destinations(expression.value, destinations) if destinations else []
         if servers:
             found.append(sql.SQL("(cluster || ' ' || backend || ' ' || server) = any(%s::text[])"))
@@ -933,7 +993,7 @@ def read_database(
         select cluster, node, occurred_at as at, request_number as request,
                client, method, host, path, frontend, backend, server, status,
                request_time, queue_time, connect_time, response_time, total_time, bytes,
-               rule, termination, event_id as event, inserted_at
+               rule, termination, event_id as event, inserted_at, request_id, tls, http
           from traffic_log_read
          where {}
          order by occurred_at desc, request_number desc, node desc, event_id desc

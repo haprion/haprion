@@ -460,7 +460,8 @@ policy can stop an application from working; `Content-Security-Policy-Report-Onl
 blocking it. A response whose headers no longer fit HAProxy's 16 KiB buffer with the added ones is answered with a 500.
 
 `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` belong to the cluster, which writes
-them from what the connection actually was. They are refused here.
+them from what the connection actually was. `X-Request-ID` is the cluster's too: it is the request's ID in
+the traffic log ([Request ID](#request-id)). They are refused here.
 
 **Health check.** *Type* `disabled` means no check. HAProxy then treats every server as always up, sends a
 server that has gone its share of the traffic all the same, and the object has no status lamp.
@@ -531,7 +532,8 @@ cluster do that work on every http and https object:
 - **The `Host` header reaches the servers as the visitor sent it.** There is no setting that replaces it
   with the server's own name.
 - **`X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` are always written**, from what the
-  connection actually was. *Headers* above says why they cannot be set by hand.
+  connection actually was, and **`X-Request-ID`** with the request's ID ([Request ID](#request-id)).
+  *Headers* above says why they cannot be set by hand.
 - **Pages are not rewritten.** Headers can be changed, the content of an answer cannot
   ([What it does not do](#what-it-does-not-do)).
 
@@ -4208,7 +4210,9 @@ the path and the backend, and also a term that is a client address (`192.0.2.5`)
 or a configured destination: an address (`192.0.2.10`) finds the destination on that host and no
 other, `192.0.2.10:8080` or `[2001:db8::10]:443` the one destination, a network the destinations in it,
 and any other text a part of the destination's address or host name. A network finds the clients and
-destinations in it, however the log writes them. The search understands AND, OR, NOT, parentheses
+destinations in it, however the log writes them. A [request ID](#request-id) finds its request, written
+in full. `TLS1.2` (or `"TLS 1.2"`) finds the requests made over TLS 1.2, and `HTTP/2` those made over
+HTTP/2; `HTTP/1.1 NOT TLS1.3` finds what still arrives without TLS 1.3. The search understands AND, OR, NOT, parentheses
 and quoted phrases. A filter searches
 every day the database holds. The page then shows the newest matches: at most `max_lines` of them, 500 by
 default and 10 000 at most.
@@ -4222,7 +4226,8 @@ and the size - nothing more. A dash in *Status* means no answer was sent: the cl
 node closed the connection; the export leaves that cell empty. When the WAF matched a rule, the *Request* cell starts with a badge naming
 the rule: red when the rule refused the request, amber when it only logged it. Rows can be ticked and
 saved with *Export selected (.csv)*. The file has the row's columns plus *Rule* and *Mode* (`denied` or
-`logged`), empty when no rule matched; from *WAF logs* it is named `waf-logs-…`.
+`logged`), empty when no rule matched, and *Protocol* and *Request ID*; from *WAF logs* it is named
+`waf-logs-…`.
 
 **Where the time went.** The arrow beside a row's tick box opens the request's timings under it, and the arrow
 in the heading opens or closes them for every request on every page. They come in the order
@@ -4231,7 +4236,26 @@ the request went through them: *Request received*, *Queue*, *Connect*, *Server r
 client after that, so the steps add up to *Total*. A step the request never reached shows a dash, not zero: a request refused by a rule has no *Connect*, and one that
 waited out the queue has no server response. When the session did not end normally, the line ends with how
 it ended, such as *The server's timeout ran out while waiting for the server's headers*. The same sentence is
-the title of the row's status.
+the title of the row's status. Then come the client's protocol, such as *HTTP/2 · TLS 1.3* (*HTTP/1.1* alone
+without TLS), and the request's *ID*. A click on the ID selects all of it, for copying. The line fits 1280 pixels;
+a session that did not end normally, or a long ID from a trusted proxy, continues on a second line rather than
+being cut.
+
+<a id="request-id"></a>**Request ID.** Every request gets an ID, and the backend receives it in the
+`X-Request-ID` header. An application that writes that header into its own log can be followed both ways: from
+a line in its log to the request here, by searching for the ID, and from a slow or refused request here to the
+application's line. A request refused before any backend - by an access rule, dynamic blocking or the WAF - has
+an ID too; no backend saw it. The ID is a UUID version 7: it begins with the millisecond it was made, so IDs
+sort by time, and the rest is random, so two nodes never make the same one.
+
+An `X-Request-ID` sent by a visitor is replaced: otherwise a visitor could choose the ID an operator searches
+for. One sent by a [trusted proxy](#cluster-definitions) is kept, so the chain through it shares one ID, but only
+when it came once and is 1 to 128 of the characters `A-Z a-z 0-9 . _ : = + / -`. Any other is replaced. The ID
+is not sent back to the client.
+
+TLS and HTTP are what the client used towards this cluster. Behind another proxy they describe that proxy's
+connection, not the visitor's. A connection that failed its TLS handshake made no request, and is not in the
+traffic log; see [Query strings](#mirroring-node-traffic-logs) for where it is logged.
 
 What a client chooses is cut in the log, not left out of it: a method after 16 characters, a host after 253
 bytes and a path (without its query) after 512 bytes. The path is the one the client asked for, as the
@@ -6358,8 +6382,11 @@ the message is still logged, as `alert`. A `core/` without a `log` line - as `ha
 is not affected.
 
 **Add `option httplog` together with a `log` line.** With a `log` line of your own, put `option httplog`
-under `defaults` to get HTTP request lines there. Without a `log` line, leave it out: HAProxy warns on every
-load about a log format with nowhere to go. The traffic log sets its own format either way.
+under `defaults` to get HTTP request lines there from what you wrote by hand. Without a `log` line, leave it
+out: HAProxy warns on every load about a log format with nowhere to go. The traffic log sets its own format
+either way. A generated frontend that writes the traffic log sends your `log` line HAProxy's HTTP format with
+the path in place of the request target, so no query string: the same requests as the traffic log, and the
+failed TLS handshakes and malformed requests the traffic log leaves out.
 
 **An HTTPS object may override its VIP's TLS policy.** The generated certificate list then has an explicit
 row, filtered by SNI, for every object, so several names can use the same wildcard certificate with
@@ -9061,10 +9088,12 @@ interface keeps the collector's node list up to date. A node added to `clusters.
 platform step 13 again, and `check-compatibility` refuses a running traffic-log view while the
 collector's installed node list differs.
 
-**Query strings.** Only the structured log stream removes query strings, and only that stream is
-mirrored to the manager and shown in the interface. HAProxy's ordinary `haproxy.log` on the node is
-unchanged, and its traditional HTTP log line holds the complete request target, query string
-included. Treat that local file accordingly when choosing retention, backup and access controls.
+**Query strings.** Neither log stream holds a query string from a generated frontend. The structured
+stream, which is mirrored to the manager and shown in the interface, records the path. HAProxy's ordinary log
+gets lines only where the cluster's `core/haproxy.cfg` has a `log` line of its own under `global`; a generated
+frontend then writes HAProxy's HTTP format there with the path in place of the request target, and also the
+failed TLS handshakes and malformed requests that the structured stream leaves out. A frontend you wrote by
+hand in `core/` logs as you wrote it.
 
 **How the collector imports.** It loads complete records with PostgreSQL `COPY` and moves its local
 checkpoint forward only after the database transaction commits. Repeating a batch is safe, because

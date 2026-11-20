@@ -218,6 +218,25 @@ class TheFormatIsOneAddressToALine(unittest.TestCase):
             self.assertEqual(caught.exception.code, "empty")
             self.assertEqual(str(caught.exception), f"the list holds {kind}, not addresses")
 
+    def test_a_hosts_or_adblock_list_of_domains_says_domain_names(self) -> None:
+        lists = {
+            "hosts": b"# hosts\n127.0.0.1 localhost\n::1 localhost\n"
+            b"0.0.0.0 ads.example.com\n0.0.0.0 track.example.net\n",
+            "hosts, ::": b":: ads.example.com\n:: track.example.net\n",
+            "adblock": b"! Title: a filter\n[Adblock Plus 2.0]\n"
+            b"||ads.example.com^\n||track.example.net^$third-party\n",
+        }
+        for name, body in lists.items():
+            with self.subTest(name=name), self.assertRaises(BlocklistError) as caught:
+                blocklists.parse(body)
+            self.assertEqual(caught.exception.code, "empty")
+            self.assertEqual(str(caught.exception), "the list holds domain names, not addresses")
+
+    def test_an_address_list_is_still_read_as_addresses(self) -> None:
+        body = b"0.0.0.0\n127.0.0.1 # loopback\n192.0.2.0/24\n198.51.100.7\nads.example.com\n"
+        self.assertEqual(blocklists._holds(body.decode()), None)
+        self.assertEqual(len(blocklists.parse(body).networks), 3)
+
     def test_a_list_too_large_says_what_its_start_holds(self) -> None:
         record = (
             b'  {\n    "RegisterPositionId": 1,\n    "DomainAddress": "phish.example.com",\n  },\n'

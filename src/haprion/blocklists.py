@@ -302,6 +302,8 @@ _DOMAIN = re.compile(
     r"^(?=.{1,253}$)(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$",
     re.IGNORECASE,
 )
+_HOSTS_SINKS = ("0.0.0.0", "127.0.0.1", "::", "::1")  # noqa: S104
+_ADBLOCK = re.compile(r"^\|\|([^/^$|\s]+)\^")
 # A pretty-printed JSON member, `"DomainAddress": "example.com",`.
 _MEMBER = re.compile(r'^"[^"]*"\s*:\s*"([^"]*)"')
 
@@ -322,6 +324,17 @@ def _kind(line: str) -> str | None:
     else:
         member = _MEMBER.match(line)
         values = [member.group(1)] if member else [re.split(r"[\s#;]", line, maxsplit=1)[0]]
+        #
+        # A hosts file puts a sink address before the name (`0.0.0.0 name`) and
+        # an adblock filter wraps it (`||name^`): domain lists, whatever the
+        # first word looks like. `127.0.0.1 localhost` says nothing.
+        #
+        words = line.split()
+        if len(words) > 1 and words[0] in _HOSTS_SINKS and not words[1].startswith("#"):
+            return "domain" if _DOMAIN.fullmatch(words[1]) else None
+        adblock = _ADBLOCK.match(line)
+        if adblock:
+            return "domain" if _DOMAIN.fullmatch(adblock.group(1)) else None
     for value in values:
         if _network(value) is not None:
             return "address"

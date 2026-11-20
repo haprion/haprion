@@ -1101,6 +1101,7 @@ class TheTrafficLogPage(LoginTestCase):
         def entry(http: str, tls: str) -> traffic_logs.Entry:
             return parse(record(http=http, tls=tls), "alpha", "node-a")
 
+        self.assertEqual(entry("1.0", "").protocol, "HTTP/1.0")
         self.assertEqual(entry("1.1", "").protocol, "HTTP/1.1")
         self.assertEqual(entry("2.0", "TLSv1.2").protocol, "HTTP/2 · TLS 1.2")
         self.assertEqual(entry("3.0", "TLSv1.3").protocol, "HTTP/3 · TLS 1.3")

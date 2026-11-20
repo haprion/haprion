@@ -178,11 +178,15 @@ _ENDED_WHILE = {
 
 
 def http_in_words(version: str) -> str:
-    """`2.0` as `HTTP/2`, `1.1` as `HTTP/1.1`: the names the protocols go by."""
+    """`2.0` as `HTTP/2`, `1.0` as `HTTP/1.0`: the names the protocols go by.
+
+    Only 2 and 3 are named by their major number; HTTP/1.0 and HTTP/1.1 are two
+    protocols, and a row must not show one as the other.
+    """
 
     if not version:
         return ""
-    return f"HTTP/{version.removesuffix('.0')}"
+    return {"2.0": "HTTP/2", "3.0": "HTTP/3"}.get(version, f"HTTP/{version}")
 
 
 def tls_in_words(version: str) -> str:

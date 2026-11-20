@@ -61,6 +61,8 @@ class Target:
     verify: bool = False
     path: str = "/"
     host_header: str = ""
+    method: str = "GET"
+    """An http check's method (B517 p. 3): the request the node sends is the check's."""
     min_version: str = DEFAULT_MIN_VERSION
     """The oldest handshake this check may use, as HAProxy would name it.
 
@@ -95,6 +97,7 @@ class Target:
             "verify": self.verify,
             "path": self.path,
             "host_header": self.host_header,
+            "method": self.method,
             "min_version": self.min_version,
         }
         if self.ca:

@@ -12,7 +12,9 @@ actually opened the connection.
 
 from __future__ import annotations
 
+import ast
 import json
+import re
 import shutil
 import socket
 import ssl
@@ -32,9 +34,22 @@ SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-hea
 
 
 class Handler(BaseHTTPRequestHandler):
+    def do_HEAD(self) -> None:  # the name is the library's
+        self.answer_method(203)
+
+    def do_OPTIONS(self) -> None:  # the name is the library's
+        self.answer_method(204)
+
+    def answer_method(self, status: int) -> None:
+        """`/method` says which method arrived, by its status (B517 p. 3)."""
+
+        self.send_response(status if self.path == "/method" else 404)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_GET(self) -> None:  # the name is the library's
         body = b"served"
-        status = {"/healthz": 200, "/moved": 302}.get(self.path, 404)
+        status = {"/healthz": 200, "/moved": 302, "/method": 200}.get(self.path, 404)
         self.send_response(status)
         self.send_header("Content-Length", str(len(body)))
         try:
@@ -97,6 +112,30 @@ class WhatTheProbeAnswers(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["status"], 200)
         self.assertIsNone(result["error"])
+
+    def test_the_check_s_method_is_the_one_sent(self) -> None:
+        """B517 p. 3: HEAD and OPTIONS as the check sends them; none is GET, as an older manager asks."""
+
+        self.assertEqual(self.probe(path="/method")["status"], 200)
+        self.assertEqual(self.probe(path="/method", method="GET")["status"], 200)
+        self.assertEqual(self.probe(path="/method", method="HEAD")["status"], 203)
+        self.assertEqual(self.probe(path="/method", method="OPTIONS")["status"], 204)
+
+    def test_a_method_with_side_effects_is_refused(self) -> None:
+        for method in ("POST", "DELETE", "get", "GET /x HTTP/1.0\r\nX: y"):
+            with self.subTest(method=method):
+                code, answer = ask(
+                    {"schema_version": 1, "targets": [target(port=self.port, method=method)]}
+                )
+                self.assertNotEqual(code, 0)
+                self.assertIn("method must be one of", str(answer["error"]))
+
+    def test_the_node_and_the_engine_know_the_same_methods(self) -> None:
+        from haprion.proxy_model import HEALTH_METHODS
+
+        written = re.search(r"^METHODS = (\(.*\))$", SCRIPT.read_text(), re.M)
+        assert written is not None
+        self.assertEqual(ast.literal_eval(written.group(1)), HEALTH_METHODS)
 
     def test_a_redirect_counts_as_usable(self) -> None:
         """The range HAProxy's own check accepts, so the two agree."""

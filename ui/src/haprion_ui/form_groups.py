@@ -260,13 +260,15 @@ def _headers(form: Mapping[str, Any]) -> str:
 
 
 def _check(form: Mapping[str, Any]) -> str:
-    port, host, body = (
+    method, port, host, body = (
+        _text(form, "health_method"),
         _text(form, "health_port"),
         _text(form, "health_host"),
         _text(form, "health_expect_body"),
     )
     return _joined(
         [
+            method,
             f"port {port}" if port else "",
             f"Host {host}" if host else "",
             f"body contains {body}" if body else "",
@@ -380,7 +382,9 @@ GROUPS: Mapping[str, FormGroup] = {
     ),
     "headers": FormGroup("Headers", ("request_headers", "response_headers"), _headers),
     "check": FormGroup(
-        "Check details", ("health_port", "health_host", "health_expect_body"), _check
+        "Check details",
+        ("health_method", "health_port", "health_host", "health_expect_body"),
+        _check,
     ),
     "timing": FormGroup(
         "Timing",

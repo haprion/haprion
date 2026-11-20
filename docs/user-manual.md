@@ -490,8 +490,13 @@ A type somebody chose stays. The types:
   `. _ : / + = @ -` - with `\r` and `\n` as the only escapes. This suits a line protocol that answers once a
   line has ended, such as `PING\r\n` to a Redis server.
 
-*Check details* holds three fields:
+*Check details* holds four fields:
 
+- *Method* is `GET` unless chosen: `HEAD` asks for the headers only, and `OPTIONS` for what the path allows,
+  for an application that logs every `GET` or answers its health page slowly. No other method can be chosen,
+  since the check is repeated every few seconds against every server and a method that changes something
+  would repeat the change. `HEAD` has no body, so a check with *Expected body* cannot use it. *Test health
+  check* sends the same method; on the command line, `haprion-probe ... --http <path> --method HEAD`.
 - *Port* is the server's own port when empty. Set it for a health endpoint on a management port.
 - *Host header* is for a backend that serves several names, or one that insists on a Host. Without it, the
   check is sent as HTTP/1.0 with no headers at all. A backend may then answer with a 404 or a redirect, or

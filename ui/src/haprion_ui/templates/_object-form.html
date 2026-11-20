@@ -417,6 +417,11 @@
     <div class="form-groups">
     {% call group(groups.check, when('health_type', 'http https tcp tcp-tls')) %}
     <div class="form-grid">
+      <label{{ when('health_type', 'http https') }}>Method
+        <select name="health_method">
+          {% for value, label in choices.health_methods %}<option value="{{ value }}"{% if form.health_method == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </label>
       <label><span class="field-title">Port <span class="optional">(optional)</span></span><input name="health_port" value="{{ form.health_port }}" placeholder="the server's own"></label>
       <label{{ when('health_type', 'http https') }}><span class="field-title">Host header <span class="optional">(optional)</span></span><input name="health_host" value="{{ form.health_host }}" placeholder="app.example.com"><small>When the backend serves several names.</small></label>
       <label{{ when('health_type', 'http https') }}><span class="field-title">Expected body <span class="optional">(optional)</span></span><input name="health_expect_body" value="{{ form.health_expect_body }}" placeholder="ok"><small>Checked as well as the status.</small></label>

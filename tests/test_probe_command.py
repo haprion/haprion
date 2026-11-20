@@ -379,6 +379,36 @@ class ThePersonsUdpCheck(unittest.TestCase):
         )
 
 
+class TheCheckSMethod(unittest.TestCase):
+    """`haprion-probe --method`: the command sends what the form's test sends (B517 p. 3)."""
+
+    def sent(self, argv: list[str]) -> list[dict[str, object]]:
+        with mock.patch.object(probe, "run_probe_helper") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+            with mock.patch.object(sys, "stderr", io.StringIO()):
+                probe.main(argv, writer=io.StringIO())
+        targets: list[dict[str, object]] = run.call_args.args[2]
+        return targets
+
+    def test_the_method_goes_with_every_target(self) -> None:
+        targets = self.sent(
+            ["-c", "alpha", "-t", "192.0.2.1:80,192.0.2.2:80", "--http", "/", "--method", "HEAD"]
+        )
+        self.assertEqual([t["method"] for t in targets], ["HEAD", "HEAD"])
+
+    def test_without_it_the_check_is_a_get(self) -> None:
+        self.assertEqual(self.sent(["-c", "alpha", "-t", "192.0.2.1:80"])[0]["method"], "GET")
+
+    def test_another_method_or_one_without_a_path_is_a_usage_error(self) -> None:
+        for extra in (["--http", "/", "--method", "POST"], ["--method", "HEAD"]):
+            with (
+                self.subTest(extra=extra),
+                self.assertRaises(SystemExit),
+                mock.patch.object(sys, "stdout", io.StringIO()),
+            ):
+                probe._parse(["-c", "alpha", "-t", "192.0.2.1:80", *extra])
+
+
 class ThePersonsPoolCa(unittest.TestCase):
     """`haprion-probe --ca`: the command trusts a pool's own CA as the form does (B276)."""
 

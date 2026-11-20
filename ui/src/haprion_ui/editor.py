@@ -47,6 +47,7 @@ from haprion_ui.network import NetworkClusterView
 from haprion_ui.preview import (
     BALANCE_CHOICES,
     CHECK_TYPES,
+    HEALTH_METHOD_CHOICES,
     MAX_RULES,
     QUERY_TYPES,
     Preview,
@@ -213,6 +214,7 @@ def choices(cluster: EditorCluster) -> dict[str, object]:
         "balances": BALANCE_CHOICES,
         "health_types": CHECK_TYPES,
         "query_types": QUERY_TYPES,
+        "health_methods": HEALTH_METHOD_CHOICES,
         "methods": sorted(HTTP_METHODS, key=METHOD_ORDER.index),
     }
 
@@ -366,6 +368,7 @@ FIELD_LABELS: dict[str, str] = {
     "health_port": "Health check port",
     "health_expect_status": "Expected status",
     "health_expect_body": "Expected body",
+    "health_method": "Health check method",
     "health_send": "Health check send",
     "health_expect": "Health check expect",
     "health_query_name": "Query name",
@@ -572,6 +575,7 @@ class ObjectForm(BaseModel):
     #
     health_expect_status: Annotated[str, StringConstraints(max_length=7)] = ""
     health_expect_body: Annotated[str, StringConstraints(max_length=255)] = ""
+    health_method: Annotated[str, StringConstraints(max_length=8)] = ""
     health_send: Annotated[str, StringConstraints(max_length=255)] = ""
     health_expect: Annotated[str, StringConstraints(max_length=255)] = ""
     health_query_name: Annotated[str, StringConstraints(max_length=254)] = ""

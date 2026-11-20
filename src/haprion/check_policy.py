@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from haprion.proxy_model import Backend, Health, Proxy, Server
+from haprion.proxy_model import DEFAULT_HEALTH_METHOD, Backend, Health, Proxy, Server
 from haprion.tls_policy import BACKEND_MIN_VERSION, DEFAULT_MIN_VERSION
 
 DISABLED = "disabled"
@@ -86,6 +86,8 @@ class EffectiveCheck:
     # able to say which parts of it they did not run.
     #
     expect_body: str | None = None
+    method: str = DEFAULT_HEALTH_METHOD
+    """The http check's method (B517 p. 3): what the probe sends in its place too."""
     send: str | None = None
     expect: str | None = None
     #
@@ -147,6 +149,7 @@ def effective_check(backend: Backend, server: Server) -> EffectiveCheck:
         host_header=health.host,
         expect_status=health.expect_status,
         expect_body=health.expect_body,
+        method=health.method,
         send=health.send,
         expect=health.expect,
         query_name=health.query_name,

@@ -17,6 +17,7 @@ from typing import Any, ClassVar
 
 import yaml
 from haprion.cluster_settings import AcmeChallenge, ClusterSettings, Metrics, Peers
+from haprion.proxy_model import ModelError, load_proxy
 from haprion.reservations import Reservations
 
 from haprion_ui import editor
@@ -668,6 +669,13 @@ class TheRateLimitTheObjectAsksFor(unittest.TestCase):
 
         self.assertIn("must be a number", str(raised.exception))
 
+    def test_the_check_s_method_survives_a_round_trip(self) -> None:
+        for method in ("", "HEAD", "OPTIONS"):
+            with self.subTest(method=method):
+                written = form(health_type="http", health_path="/healthz", health_method=method)
+                reopened = form_from_document(build_document(written), networks=())
+                self.assertEqual(reopened["health_method"], method)
+
     def test_the_limit_survives_a_round_trip_for_both_shapes(self) -> None:
         for written in (
             form(rate_limit="100"),
@@ -946,6 +954,27 @@ class EverythingTheModelAllowsInOneRouteAndOnePool(unittest.TestCase):
         health = document["backends"]["web"]["health"]
 
         self.assertEqual((health["expect_status"], health["expect_body"]), ("204", "ok"))
+
+    def test_an_http_check_may_choose_its_method(self) -> None:
+        """B517 p. 3: written only when it is not GET, so an object that never chose keeps its document."""
+
+        for chosen, written in (
+            ("", None),
+            ("GET", None),
+            ("HEAD", "HEAD"),
+            ("OPTIONS", "OPTIONS"),
+        ):
+            with self.subTest(chosen=chosen):
+                health = self.document(health_type="http", health_method=chosen)["backends"]["web"][
+                    "health"
+                ]
+                self.assertEqual(health.get("method"), written)
+
+    def test_head_with_an_expected_body_is_refused_by_the_engine(self) -> None:
+        document = self.document(health_type="http", health_method="HEAD", health_expect_body="ok")
+        with self.assertRaises(ModelError) as refused:
+            load_proxy("shop", yaml.safe_dump(document).encode())
+        self.assertIn("cannot be checked with HEAD", str(refused.exception))
 
     def test_a_range_is_as_good_an_answer_as_a_status(self) -> None:
         document = self.document(health_type="http", health_expect_status="200-299")

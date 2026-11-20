@@ -80,6 +80,7 @@ backends:
       path: /healthz
       host: app.example.com
       expect_status: "200"
+      method: HEAD
     tls:
       verify: system
     servers:
@@ -102,6 +103,7 @@ backends:
       tls: false
       path: /healthz
       port: 8080
+      method: OPTIONS
     tls:
       verify: none
     servers:

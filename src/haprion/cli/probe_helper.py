@@ -50,10 +50,12 @@ from haprion.helper_protocol import (
     write_failure,
 )
 from haprion.proxy_model import (
+    DEFAULT_HEALTH_METHOD,
     DEFAULT_QUERY_NAME,
     DEFAULT_QUERY_TYPE,
     DNS_NAME,
     DNS_QUERY_TYPES,
+    HEALTH_METHODS,
     HOSTNAME,
 )
 from haprion.tls_policy import BACKEND_MIN_VERSION, DEFAULT_MIN_VERSION
@@ -162,6 +164,12 @@ def _targets(
             raise HelperProtocolError(
                 "a target's host header is not a name", exit_code=exit_codes.REFUSED
             )
+        method = entry.get("method", DEFAULT_HEALTH_METHOD) or DEFAULT_HEALTH_METHOD
+        if method not in HEALTH_METHODS:
+            raise HelperProtocolError(
+                f"a target's method must be one of: {', '.join(HEALTH_METHODS)}",
+                exit_code=exit_codes.REFUSED,
+            )
         #
         # Refused here as well as on the node. The node's own refusal would
         # arrive as a probe that answered nothing, from four nodes at once, and
@@ -189,6 +197,7 @@ def _targets(
                 verify=entry.get("verify") is True,
                 path=path,
                 host_header=header,
+                method=method,
                 min_version=min_version,
                 ca=authority,
                 **(

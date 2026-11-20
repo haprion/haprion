@@ -95,6 +95,13 @@ def answered(nodes: list[dict[str, object]], error: object = None) -> str:
 
 
 class WhatTheNodesAreAskedToTry(unittest.TestCase):
+    def test_the_check_s_method_is_what_the_nodes_send(self) -> None:
+        """B517 p. 3: the button sends the method the check does; none chosen is GET."""
+
+        self.assertEqual({entry["method"] for entry in targets_from(checks())}, {"GET"})
+        targets = targets_from(checks(health_method="OPTIONS"))
+        self.assertEqual({entry["method"] for entry in targets}, {"OPTIONS"})
+
     def test_one_target_per_server_in_the_backend(self) -> None:
         targets = targets_from(checks())
         self.assertEqual([entry["host"] for entry in targets], ["198.51.100.10", "198.51.100.11"])

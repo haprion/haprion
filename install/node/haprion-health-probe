@@ -67,6 +67,11 @@ DEFAULT_TIMEOUT_MS = 2000
 
 HOST = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9._-]{0,253}[A-Za-z0-9])?$")
 PATH = re.compile(r"^/[!-~]{0,1023}$")
+#
+# The methods an http check sends (the engine's HEALTH_METHODS): none with a
+# side effect, since the probe is a check sent on someone's behalf.
+#
+METHODS = ("GET", "HEAD", "OPTIONS")
 HEADER_VALUE = re.compile(r"^[!-~]([ -~]{0,253}[!-~])?$")
 #
 # A pool verified against one of the cluster's own CAs (B276) names it, and the
@@ -249,6 +254,16 @@ def read_request(stream: IO[bytes]) -> dict[str, Any]:
             refuse(f"a target's min_version must be one of: {', '.join(MIN_VERSIONS)}")
         return asked
 
+    def method_of(entry: dict[str, Any]) -> str:
+        """The http check's method; absent is GET, which a manager older than the field sends."""
+
+        asked = entry.get("method")
+        if asked is None:
+            return "GET"
+        if asked not in METHODS:
+            refuse(f"a target's method must be one of: {', '.join(METHODS)}")
+        return str(asked)
+
     targets = payload.get("targets")
     if not isinstance(targets, list) or not targets:
         refuse("targets must be a non-empty list")
@@ -285,6 +300,7 @@ def read_request(stream: IO[bytes]) -> dict[str, Any]:
                 "verify": flag(entry, "verify"),
                 "path": text(entry, "path", PATH, required=False, default="/") or "/",
                 "host_header": text(entry, "host_header", HOST, required=False),
+                "method": method_of(entry),
                 "min_version": min_version_of(entry),
                 "ca": text(entry, "ca", CA_ID, required=False),
                 **(dns_question(entry) if kind == "dns" else {}),
@@ -433,7 +449,7 @@ def connect(target: dict[str, Any], timeout: float, source: str | None) -> socke
 def http_status(
     stream: socket.socket, target: dict[str, Any], timeout: float, deadline: float
 ) -> int | None:
-    """The status line of a GET, and nothing else that came back.
+    """The status line of the check's request, and nothing else that came back.
 
     The body is not read and never reported. This runs on a proxy node with a
     key somebody else holds, and a probe that returned what a backend said
@@ -441,13 +457,13 @@ def http_status(
     """
 
     #
-    # The bytes HAProxy's `http-check send meth GET uri ... [hdr Host ...]`
+    # The bytes HAProxy's `http-check send meth <method> uri ... [hdr Host ...]`
     # sends, and nothing else: HTTP/1.0, and a Host header only where the
     # object names one. This sent HTTP/1.1 with the server's name as Host, and
     # a backend that answers 400 to a request without one was reported up
     # here and down on the node (26-11-03).
     #
-    request = f"GET {target['path']} HTTP/1.0\r\n"
+    request = f"{target['method']} {target['path']} HTTP/1.0\r\n"
     if target["host_header"]:
         request += f"host: {target['host_header']}\r\n"
     request += "\r\n"

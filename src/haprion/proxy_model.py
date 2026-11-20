@@ -536,6 +536,14 @@ DEFAULT_DOWN_INTERVAL = "1s"
 # application gives.
 #
 DEFAULT_EXPECT_STATUS = "200-399"
+#
+# The methods an http check may send (B517 p. 3): GET, and the two that ask for
+# no body. No free text: a check is sent every few seconds to every server, and
+# a method with side effects would repeat them. HEAD has no body to look in,
+# so a check that sends it may not expect one.
+#
+HEALTH_METHODS = ("GET", "HEAD", "OPTIONS")
+DEFAULT_HEALTH_METHOD = "GET"
 
 DURATION = re.compile(r"^[1-9][0-9]{0,4}(ms|s|m)$")
 
@@ -740,6 +748,7 @@ class Health:
     host: str | None = None
     expect_status: str | None = None
     expect_body: str | None = None
+    method: str = DEFAULT_HEALTH_METHOD
     send: str | None = None
     expect: str | None = None
     query_name: str | None = None
@@ -1459,7 +1468,7 @@ def _server(value: Any, location: str) -> Server:
     )
 
 
-_HTTP_ONLY = ("path", "host", "expect_status", "expect_body")
+_HTTP_ONLY = ("path", "host", "expect_status", "expect_body", "method")
 _TCP_ONLY = ("send", "expect")
 _DNS_ONLY = ("query_name", "query_type")
 _TIMING = ("tls", "port", "interval", "fast_interval", "down_interval", "rise", "fall")
@@ -1524,12 +1533,21 @@ def _health(value: Any, location: str) -> Health:
         status = data.get("expect_status", DEFAULT_EXPECT_STATUS)
         if not isinstance(status, str) or not STATUS_RANGE.fullmatch(status):
             raise ModelError(f"{location}.expect_status must be a status or range, such as 200-299")
+        method = data.get("method", DEFAULT_HEALTH_METHOD)
+        if method not in HEALTH_METHODS:
+            raise ModelError(f"{location}.method must be one of: {', '.join(HEALTH_METHODS)}")
+        expect_body = _probe(data, "expect_body", location)
+        if method == "HEAD" and expect_body is not None:
+            raise ModelError(
+                f"{location}.expect_body cannot be checked with HEAD, which asks for no body"
+            )
         return Health(
             type=kind,
             path=path,
             host=host,
             expect_status=status,
-            expect_body=_probe(data, "expect_body", location),
+            expect_body=expect_body,
+            method=method,
             tls=tls,
             port=port,
             interval=interval,

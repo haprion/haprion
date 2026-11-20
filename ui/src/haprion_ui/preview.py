@@ -31,8 +31,10 @@ from haprion.generate import countries_named
 from haprion.proxy_model import (
     BALANCE,
     DEFAULT_BLOCK_STATUS,
+    DEFAULT_HEALTH_METHOD,
     DNS_BALANCE,
     DNS_QUERY_TYPES,
+    HEALTH_METHODS,
     MAX_DENY_RULES,
     OWN_PORT,
     STATUS_RANGE,
@@ -165,6 +167,7 @@ DEFAULTS = {
     "health_port": "",
     "health_expect_status": "",
     "health_expect_body": "",
+    "health_method": "",
     "health_send": "",
     "health_expect": "",
     #
@@ -308,6 +311,14 @@ BALANCE_CHOICES = tuple(
 # The question a dns check asks: dnsdist's default first, written as nothing.
 #
 QUERY_TYPES = (("", "default (A)"), *((name, name) for name in DNS_QUERY_TYPES))
+#
+# An http check's method (B517 p. 3); empty is the model's GET, and is what the
+# form writes for it, so an object that never chose one keeps its document.
+#
+HEALTH_METHOD_CHOICES = (
+    ("", DEFAULT_HEALTH_METHOD),
+    *((name, name) for name in HEALTH_METHODS if name != DEFAULT_HEALTH_METHOD),
+)
 #
 # The port an empty field means, for the shapes that name their own: a resolver
 # is asked on 53 and syslog over UDP is sent to 514 everywhere but a lab.
@@ -804,6 +815,8 @@ def build_document(form: dict[str, object]) -> str:
             health["expect_status"] = status
         if text("health_expect_body"):
             health["expect_body"] = text("health_expect_body")
+        if text("health_method") and text("health_method") != DEFAULT_HEALTH_METHOD:
+            health["method"] = text("health_method")
     if kind == "tcp":
         #
         # A tcp check that sends nothing is a connect check, which is what the
@@ -1301,6 +1314,7 @@ def choices(cluster: Cluster) -> dict[str, object]:
         "balances": BALANCE_CHOICES,
         "health_types": CHECK_TYPES,
         "query_types": QUERY_TYPES,
+        "health_methods": HEALTH_METHOD_CHOICES,
     }
 
 
@@ -1786,6 +1800,11 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         "health_port": str(health.get("port", "") or ""),
         "health_expect_status": str(health.get("expect_status", "") or ""),
         "health_expect_body": str(health.get("expect_body", "") or ""),
+        "health_method": (
+            ""
+            if health.get("method", DEFAULT_HEALTH_METHOD) == DEFAULT_HEALTH_METHOD
+            else str(health.get("method"))
+        ),
         "health_send": str(health.get("send", "") or ""),
         "health_expect": str(health.get("expect", "") or ""),
         "health_query_name": str(health.get("query_name", "") or ""),

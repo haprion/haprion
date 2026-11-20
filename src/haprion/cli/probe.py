@@ -26,6 +26,7 @@ from haprion.envelope import new_request_id
 from haprion.health_probe import DEFAULT_TIMEOUT_MS, UDP_WAIT_MS
 from haprion.helper_protocol import write_document
 from haprion.probe_socket import build_request
+from haprion.proxy_model import DEFAULT_HEALTH_METHOD, HEALTH_METHODS
 from haprion.tls_policy import BACKEND_MIN_VERSION, DEFAULT_MIN_VERSION
 
 HELPER = "/opt/haprion/current/bin/haprion-probe-helper"
@@ -36,13 +37,15 @@ ALLOWED_MIN_VERSIONS = frozenset(BACKEND_MIN_VERSION.values())
 USAGE = (
     "Usage:\n"
     "  haprion-probe -c <cluster> -t <host:port>[,<host:port>...] "
-    "[--http <path>] [--host <name>] [--tls [--verify [--ca <id>]] [--min-version <version>]] "
+    "[--http <path> [--method GET|HEAD|OPTIONS]] [--host <name>] "
+    "[--tls [--verify [--ca <id>]] [--min-version <version>]] "
     "[--source <address>] [--json]\n"
     "  haprion-probe -c <cluster> -t <address:port>[,...] --udp [--json]\n"
     "\n"
     "Examples:\n"
     "  haprion-probe -c alpha -t 198.51.100.10:8080\n"
     "  haprion-probe -c alpha -t 198.51.100.10:8443 --tls --http /healthz --json\n"
+    "  haprion-probe -c alpha -t 198.51.100.10:8080 --http /healthz --method HEAD\n"
     "  haprion-probe -c alpha -t app.example.com:443 --tls --verify --ca example-ca\n"
     "  haprion-probe -c alpha -t 198.51.100.20:514 --udp\n"
 )
@@ -87,6 +90,7 @@ def _targets(
     min_version: str,
     ca: str = "",
     udp: bool = False,
+    method: str = DEFAULT_HEALTH_METHOD,
 ) -> list[dict[str, Any]]:
     targets = []
     for entry in written.split(","):
@@ -110,6 +114,7 @@ def _targets(
                 "min_version": min_version,
                 "path": path or "/",
                 "host_header": host,
+                "method": method,
                 **({"ca": ca} if ca else {}),
             }
         )
@@ -128,6 +133,7 @@ def _parse(argv: list[str]) -> dict[str, Any]:
         "verify": False,
         "ca": "",
         "min_version": DEFAULT_MIN_VERSION,
+        "method": DEFAULT_HEALTH_METHOD,
         "source": "",
         "udp": False,
         "json": False,
@@ -184,6 +190,15 @@ def _parse(argv: list[str]) -> dict[str, Any]:
                 usage(USAGE)
             options["min_version"] = asked
             index += 2
+        #
+        # The method an object's http check may send (B517 p. 3), so the
+        # command asks what the form's test asks.
+        #
+        elif argument == "--method" and index + 1 < len(argv):
+            if argv[index + 1] not in HEALTH_METHODS:
+                usage(USAGE)
+            options["method"] = argv[index + 1]
+            index += 2
         elif argument == "--json":
             options["json"] = True
             index += 1
@@ -194,6 +209,8 @@ def _parse(argv: list[str]) -> dict[str, Any]:
     if options["udp"] and (options["path"] or options["host"] or options["tls"]):
         usage(USAGE)
     if options["ca"] and not (options["tls"] and options["verify"]):
+        usage(USAGE)
+    if options["method"] != DEFAULT_HEALTH_METHOD and not options["path"]:
         usage(USAGE)
     return options
 
@@ -249,6 +266,7 @@ def main(argv: list[str] | None = None, *, writer: TextIO | None = None) -> int:
             min_version=options["min_version"],
             ca=options["ca"],
             udp=options["udp"],
+            method=options["method"],
         ),
         source=options["source"],
         timeout_ms=UDP_WAIT_MS if options["udp"] else DEFAULT_TIMEOUT_MS,

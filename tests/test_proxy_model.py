@@ -1175,6 +1175,59 @@ class TheHealthCheckMayUseItsOwnPort(unittest.TestCase):
         self.assertIsNone(load_proxy("shop", document).backends["web"].health.port)
 
 
+class TheHttpCheckChoosesItsMethod(unittest.TestCase):
+    """B517 p. 3: GET, HEAD or OPTIONS; no free text, and HEAD looks in no body."""
+
+    def check(self, lines: str) -> bytes:
+        return with_lines(
+            (
+                "    health:\n      type: disabled",
+                f"    health:\n      type: http\n      path: /{lines}",
+            )
+        )
+
+    def test_absent_is_get(self) -> None:
+        self.assertEqual(load_proxy("shop", self.check("")).backends["web"].health.method, "GET")
+
+    def test_head_and_options_are_kept(self) -> None:
+        for method in ("GET", "HEAD", "OPTIONS"):
+            with self.subTest(method=method):
+                health = (
+                    load_proxy("shop", self.check(f"\n      method: {method}"))
+                    .backends["web"]
+                    .health
+                )
+                self.assertEqual(health.method, method)
+
+    def test_any_other_method_is_refused(self) -> None:
+        for method in ("POST", "DELETE", "get", "7"):
+            with self.subTest(method=method), self.assertRaises(ModelError) as raised:
+                load_proxy("shop", self.check(f"\n      method: {method}"))
+            self.assertIn("method must be one of: GET, HEAD, OPTIONS", str(raised.exception))
+
+    def test_head_with_an_expected_body_is_refused(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", self.check("\n      method: HEAD\n      expect_body: ready"))
+        self.assertIn("cannot be checked with HEAD", str(raised.exception))
+        health = (
+            load_proxy("shop", self.check("\n      method: OPTIONS\n      expect_body: ready"))
+            .backends["web"]
+            .health
+        )
+        self.assertEqual((health.method, health.expect_body), ("OPTIONS", "ready"))
+
+    def test_a_tcp_check_has_no_method(self) -> None:
+        document = with_lines(
+            (
+                "    health:\n      type: disabled",
+                "    health:\n      type: tcp\n      method: HEAD",
+            )
+        )
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", document)
+        self.assertIn("method means nothing for a tcp health check", str(raised.exception))
+
+
 class TakingASiteOutOfServiceWithoutDeletingIt(unittest.TestCase):
     """`maintenance` keeps the object and stops serving it.
 

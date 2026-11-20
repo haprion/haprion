@@ -4459,7 +4459,7 @@ def _health_lines(health: Health) -> list[str]:
     lines = ["    option httpchk"]
     if health.tls is True:
         lines.append("    http-check connect ssl")
-    send = f"    http-check send meth GET uri {health.path}"
+    send = f"    http-check send meth {health.method} uri {health.path}"
     if health.host is not None:
         #
         # Without this a backend doing name-based virtual hosting answers the

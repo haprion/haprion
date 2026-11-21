@@ -8252,7 +8252,8 @@ HAProxy's own `server-state-file` is not used: it carries a server's old port ov
 configuration (haproxy/haproxy#3296).
 
 The same script replaces certificates HAProxy already holds without a reload (`update-certs`), and
-lifts an object's dynamic block on addresses, from its blocked table and its count (`unblock`).
+lifts an object's blocks on addresses, dynamic blocking's and its deny rules', from every table it
+blocks in and from its count (`unblock`).
 
 It needs a socket at level `admin` that only root can open - one line in the cluster's
 `core/haproxy.cfg`:

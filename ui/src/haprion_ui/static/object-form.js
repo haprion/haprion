@@ -557,9 +557,9 @@
       const mode = rule.querySelector("select[name='rule_mode']").value;
       const deny = mode !== "log";
       const badge = rule.querySelector("[data-rule-badge]");
-      const time = rule.querySelector("input[name='rule_block_for']").value.trim() || list.dataset.defaultBlockFor;
+      const time = rule.querySelector("input[name='rule_block_for']").value.trim();
       badge.textContent =
-        mode === "block" ? `Blocking ${time}` : { log: "Logging", deny: "Denying" }[mode] || "Logging";
+        mode === "block" ? `Blocking ${time}`.trim() : { log: "Logging", deny: "Denying" }[mode] || "Logging";
       badge.classList.toggle("status-badge-unknown", deny);
       badge.classList.toggle("status-badge-warning", !deny);
       rule.classList.toggle("rule-blocking", mode === "block");

@@ -988,7 +988,7 @@ def build_router(config: Config) -> APIRouter:
         csrf_token: Annotated[str, Form(max_length=128)],
         idempotency_key: Annotated[str, Form(max_length=64)],
     ) -> Response:
-        """Queue lifting the object's dynamic block on the ticked addresses (B271).
+        """Queue lifting the object's blocks on the ticked addresses (B271, B525).
 
         The helper reads each address and the object's newest version again
         before a node is asked; what is checked here is the shape only.

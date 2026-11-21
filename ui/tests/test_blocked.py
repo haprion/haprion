@@ -170,6 +170,21 @@ class TheCard(unittest.TestCase):
         )
         self.assertEqual((card.count, card.more), (2, 0))
 
+    def test_one_node_holding_an_address_in_two_tables_counts_it_once(self) -> None:
+        """Review 26-11-21, UU02: the node's count is per table; a full listing is counted anew."""
+
+        rows = [
+            reading(
+                ("node-a", {"shop": held(2, ("192.0.2.7", 600000), ("192.0.2.7", 3000000))}),
+            )
+        ]
+
+        card = blocked.object_card(rows, cluster="alpha", name="shop", now=OBSERVED)
+        if card is None:
+            self.fail("a blocked address has a card")
+        self.assertEqual((card.count, card.more), (1, 0))
+        self.assertEqual(blocked.cluster_counts(rows, cluster="alpha", now=OBSERVED), {"shop": 1})
+
     def test_past_the_listing_limit_the_nodes_sum_stays_the_upper_bound(self) -> None:
         card = blocked.object_card(
             [

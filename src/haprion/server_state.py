@@ -422,11 +422,14 @@ def read_unblocked(
     completed: subprocess.CompletedProcess[str],
     *,
     verb: str = UNBLOCK_VERB,
+    blocks: bool = True,
 ) -> Unblocked:
     """What the node said, or why nothing usable came back (as `read_answer`).
 
     The same answer for `block`: each address `done` when the node reads it
-    back as the verb wanted it, there or gone.
+    back as the verb wanted it, there or gone. `blocks` says whether the
+    object's newest version blocks at all: only then is deploying it advice
+    for a node that runs no blocking for it (review 26-11-21, UU03).
     """
 
     document: object = None
@@ -455,10 +458,14 @@ def read_unblocked(
             node, "failed", message=f"the node could not be reached ({reason})", reached=False
         )
     if completed.returncode == NODE_UNKNOWN_SERVER:
+        #
+        # `block` places in dynamic blocking's table alone; a node running only
+        # the object's rule tables refuses it too.
+        #
+        runs = "dynamic blocking" if verb == BLOCK_VERB else "blocking"
+        advice = "; deploy the newest version to it" if blocks else ""
         return Unblocked(
-            node,
-            "refused",
-            message="the node runs no blocking for this object; deploy the newest version to it",
+            node, "refused", message=f"the node runs no {runs} for this object{advice}"
         )
     said = document.get("message")
     message = said[:300] if isinstance(said, str) and said else None
@@ -506,10 +513,13 @@ def unblock(
     """
 
     request = " ".join((UNBLOCK_VERB, proxy.name, *wanted))
+    blocks = proxy.dynamic_block is not None or any(
+        rule.mode == "block" for rule in proxy.deny_rules
+    )
 
     def one(node: Node) -> Unblocked:
         try:
-            return read_unblocked(node.name, wanted, ask(node, identity, request))
+            return read_unblocked(node.name, wanted, ask(node, identity, request), blocks=blocks)
         except subprocess.TimeoutExpired:
             return Unblocked(
                 node.name, "failed", message="the node did not answer in time", reached=False

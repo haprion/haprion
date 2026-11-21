@@ -550,6 +550,42 @@ class EveryNodeLiftsTheBlockTwice(HelperFixture):
         self.assertEqual(nodes[self.nodes[0]]["outcome"], "refused")
         self.assertIn("deploy", nodes[self.nodes[0]]["message"])
 
+    def test_an_object_whose_newest_version_blocks_nothing_is_not_said_to_need_a_deploy(
+        self,
+    ) -> None:
+        """Review 26-11-21, UU03: the nodes are asked, but deploying it would block nothing."""
+
+        def ask(
+            node: Node, identity: DeployIdentity, request: str
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                ["ssh"], 65, json.dumps({"outcome": "refused", "message": "no"}) + "\n", ""
+            )
+
+        _, document, _ = self.run_unblock("shop", ["203.0.113.7"], ask)
+
+        assert document is not None
+        for node in document["result"]["nodes"]:  # type: ignore[index]
+            self.assertEqual(node["outcome"], "refused")
+            self.assertEqual(node["message"], "the node runs no blocking for this object")
+
+    def test_a_refused_block_names_dynamic_blocking(self) -> None:
+        """Review 26-11-21, UU03: `block` places in dynamic blocking's table alone."""
+
+        refused = subprocess.CompletedProcess(
+            ["ssh"], 65, json.dumps({"outcome": "refused", "message": "no"}) + "\n", ""
+        )
+
+        answer = server_state.read_unblocked(
+            "node-a", ["203.0.113.7"], refused, verb=server_state.BLOCK_VERB
+        )
+
+        self.assertEqual(answer.outcome, "refused")
+        self.assertEqual(
+            answer.message,
+            "the node runs no dynamic blocking for this object; deploy the newest version to it",
+        )
+
     def test_a_node_with_an_older_trigger_is_reached_and_said_to_need_its_release(self) -> None:
         """Review 26-10-10, F1: answered by a trigger from before `unblock`, not unreachable."""
 

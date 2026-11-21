@@ -167,6 +167,11 @@ class TheFormWritesTheRules(EditorTestCase):
         self.assertEqual(answer.status_code, 200)
         self.assertIn("Block for needs a time, such as 30m (rule env-probe)", answer.text)
         self.assertEqual(self.saved, [])
+        # Review 26-11-21, UU01: the page that refuses it leaves the field
+        # empty, so the next Save does not write a time nobody chose.
+        self.assertIn('name="rule_block_for" value="" ', answer.text)
+        self.assertIn("data-rule-badge>Blocking</span>", answer.text)
+        self.assertNotIn("data-rule-badge>Blocking 30m<", answer.text)
 
     def test_the_rule_card_shows_block_for_only_for_a_blocking_rule(self) -> None:
         from haprion_ui.preview import DEFAULTS, build_document, form_from_document
@@ -342,6 +347,9 @@ class AddingAndRemovingRulesInTheBrowser(EditorTestCase):
         self.assertTrue(block_for.is_visible())
         block_for.fill("2h")
         self.assertEqual(badge.inner_text(), "Blocking 2h")
+        # UU01: an emptied time names none, as the server refuses it.
+        block_for.fill("")
+        self.assertEqual(badge.inner_text(), "Blocking")
         rule.locator("select[name=rule_mode]").select_option("log")
         self.assertFalse(block_for.is_visible())
         self.assertEqual(badge.inner_text(), "Logging")

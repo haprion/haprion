@@ -73,10 +73,10 @@ configuration names it, and the reload that brings one reads the file.
 **`block` places addresses in an object's blocked table** (B412), as going over
 the object's limit would, for the table's own `block_for`; another system (an
 intrusion detector) asks for it through the manager. The answer reads the table
-back. **`unblock` lifts an object's dynamic block on addresses** (B271): each is
-cleared from the object's blocked table and from its count, and the blocked
-table is read again. The count too, or the address is blocked again by its
-first request inside the window (measured). A `clear` is not shared with the
+back. **`unblock` lifts an object's blocks on addresses** (B271, B525), dynamic
+blocking's and its deny rules': each is cleared from every table the object
+blocks in and from its count, and the tables are read again. The count too, or
+the address is blocked again by its first request inside the window (measured). A `clear` is not shared with the
 other nodes, and another node can send the entry back, so the manager asks
 every node and asks again where an address is still there; this answers for
 this node only.

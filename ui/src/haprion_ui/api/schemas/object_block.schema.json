@@ -31,7 +31,7 @@
         "required": ["node", "outcome", "message", "addresses"],
         "properties": {
           "node": { "type": "string", "description": "Value. The node's name." },
-          "outcome": { "enum": ["done", "refused", "failed"], "description": "Code. done: the node holds every address blocked. refused: the node runs no blocking for the object yet. failed: the node did not take every address, or could not be reached." },
+          "outcome": { "enum": ["done", "refused", "failed"], "description": "Code. done: the node holds every address blocked. refused: the node runs no dynamic blocking for the object yet. failed: the node did not take every address, or could not be reached." },
           "message": { "type": ["string", "null"], "description": "Text. Why the node did not take them; null where it did, and for a token below the write level." },
           "addresses": {
             "type": "array",

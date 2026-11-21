@@ -26,7 +26,6 @@
   // view as it was. A browser that refuses storage gets the closed list.
   //
   const VIEW = "haprion.backups.archive-view";
-  const POSITION = "haprion.backups.position";
 
   const readViews = () => {
     try {
@@ -41,31 +40,6 @@
       const views = readViews();
       views[cluster] = view;
       sessionStorage.setItem(VIEW, JSON.stringify(views));
-    } catch (error) {
-      // As above.
-    }
-  };
-
-  //
-  // The form's redirect lands at the top; this puts the reader back.
-  //
-  const keepPosition = (form) => {
-    form.addEventListener("submit", () => {
-      try {
-        sessionStorage.setItem(POSITION, String(window.scrollY));
-      } catch (error) {
-        // As above.
-      }
-    });
-  };
-
-  const restorePosition = () => {
-    try {
-      const saved = sessionStorage.getItem(POSITION);
-      sessionStorage.removeItem(POSITION);
-      if (saved !== null && Number.isFinite(Number(saved))) {
-        window.scrollTo(0, Number(saved));
-      }
     } catch (error) {
       // As above.
     }
@@ -139,12 +113,8 @@
   const wireAll = () => {
     document.querySelectorAll("[data-schedule-form]").forEach(wire);
     document.querySelectorAll("[data-archive-list]").forEach(page);
-    document.querySelectorAll("[data-backup-now]").forEach(keepPosition);
   };
 
-  window.addEventListener("DOMContentLoaded", () => {
-    wireAll();
-    restorePosition();
-  });
+  window.addEventListener("DOMContentLoaded", wireAll);
   document.addEventListener("haprion:redrawn", wireAll);
 })();

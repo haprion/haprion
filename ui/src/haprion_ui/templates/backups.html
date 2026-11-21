@@ -52,7 +52,7 @@
       {% if editable %}
       <div class="backup-now">
         {% if running %}{{ busy_badge(running, cluster.cluster) }}{% else %}
-        <form method="post" action="/operations" class="inline-form" data-backup-now>
+        <form method="post" action="/operations" class="inline-form" data-keep-place>
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="backup_run"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="backups">
           <button class="secondary-button" type="submit">Back up now</button>
         </form>

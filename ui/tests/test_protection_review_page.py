@@ -9,6 +9,7 @@ from typing import Any
 from unittest import mock
 
 from haprion_ui.db import ClusterInventory, ReviewAck, ReviewView
+from haprion_ui.templates import STATIC_DIRECTORY
 from tests.test_editor_page import OBJECTS, EditorTestCase
 
 AT = datetime(2026, 11, 20, 9, 0, tzinfo=UTC)
@@ -209,6 +210,20 @@ class TheReviewPage(EditorTestCase):
             self.assertEqual(self.editor().get("/proxies/review").status_code, 200)
 
         self.assertEqual(self.forgotten, [])
+
+    def test_every_form_on_the_page_keeps_the_reader_s_place(self) -> None:
+        """Pass U: Accept, Undo and the switches redirect back; page.js puts the reader back."""
+
+        page = self.editor().get("/proxies/review").text
+        forms = re.findall(r"<form [^>]*>", page)
+        self.assertTrue(any("/proxies/review/accept" in form for form in forms))
+        self.assertTrue(any("/proxies/review/view" in form for form in forms))
+        template = (STATIC_DIRECTORY.parent / "templates" / "proxy-review.html").read_text()
+        self.assertEqual(template.count('method="post"'), template.count("data-keep-place"))
+        for form in forms:
+            if 'action="/proxies/review/' in form:
+                with self.subTest(form):
+                    self.assertIn("data-keep-place", form)
 
     def test_the_tab_is_on_the_proxies_page_too(self) -> None:
         page = self.editor().get("/proxies").text

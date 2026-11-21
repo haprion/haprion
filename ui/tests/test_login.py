@@ -32,6 +32,7 @@ from haprion_ui.app import create_app
 from haprion_ui.config import Config, Database, Poller, Throttle
 from haprion_ui.config import Session as SessionPolicy
 from haprion_ui.db import Account, AuthenticatedSession, ReviewView
+from haprion_ui.templates import STATIC_DIRECTORY
 from tests.registry_fixture import manager_of
 
 PASSWORD = "a sufficiently long password"
@@ -623,7 +624,12 @@ class SigningIn(LoginTestCase):
         script = client.get("/static/backups.js").text
         self.assertIn('list.addEventListener("toggle", remember)', script)
         self.assertIn("list.open = Boolean(kept.open)", script)
-        self.assertIn('querySelectorAll("[data-backup-now]")', script)
+        backup_now = (STATIC_DIRECTORY.parent / "templates" / "backups.html").read_text()
+        self.assertIn(
+            '<form method="post" action="/operations" class="inline-form" data-keep-place>',
+            backup_now,
+            "Back up now keeps the place (page.js)",
+        )
         self.assertIn('document.addEventListener("haprion:redrawn", wireAll)', script)
 
     def test_a_finished_job_redraws_the_content_rather_than_reloading_the_page(self) -> None:

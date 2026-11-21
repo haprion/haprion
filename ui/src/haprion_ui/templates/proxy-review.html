@@ -14,7 +14,7 @@
   it, and changed by an admin. Each switch is a form of its own.
 #}
 {% macro switch(name, on, cluster='', label='') %}
-<form method="post" action="/proxies/review/view" class="review-switch">
+<form method="post" action="/proxies/review/view" data-keep-place class="review-switch">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="switch" value="{{ name }}">
   <input type="hidden" name="on" value="{{ '0' if on else '1' }}">
@@ -49,7 +49,7 @@
         <td data-label="Proxy"><a class="proxy-link" href="{{ row.href }}"><strong>{{ row.name }}</strong></a></td>
         <td data-label="Reachable from">{{ row.reach }}</td>
         <td data-label="Weaker protection">{% if row.marks %}<span class="review-chips">{% for mark in row.marks %}<a class="status-badge {{ 'status-badge-warning' if mark.state == 'new' else 'status-badge-unknown' }}{% if mark.state == 'accepted' %} was-accepted{% endif %}" href="{{ mark.href }}">{% if mark.state == 'new' %}<span class="review-new">New</span>&nbsp;· {% endif %}{{ mark.label }}</a>{% endfor %}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
-        <td class="review-cell">{% if row.state == 'accepted' %}<span class="review-cell-action"><span class="accepted-mark" title="Accepted by {{ row.accepted_by }}, {{ row.accepted_at | shown_at }}">{{ check }}Accepted</span>{% if can_change %}<form method="post" action="/proxies/review/undo"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="name" value="{{ row.name }}"><button type="submit" class="secondary-button">Undo</button></form>{% endif %}</span>{% elif row.state == 'open' and can_change %}<form method="post" action="/proxies/review/accept"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="name" value="{{ row.name }}"><button type="submit" class="secondary-button">Accept</button></form>{% endif %}</td>
+        <td class="review-cell">{% if row.state == 'accepted' %}<span class="review-cell-action"><span class="accepted-mark" title="Accepted by {{ row.accepted_by }}, {{ row.accepted_at | shown_at }}">{{ check }}Accepted</span>{% if can_change %}<form method="post" action="/proxies/review/undo" data-keep-place><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="name" value="{{ row.name }}"><button type="submit" class="secondary-button">Undo</button></form>{% endif %}</span>{% elif row.state == 'open' and can_change %}<form method="post" action="/proxies/review/accept" data-keep-place><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="name" value="{{ row.name }}"><button type="submit" class="secondary-button">Accept</button></form>{% endif %}</td>
       </tr>
       {% endfor %}
       </tbody>

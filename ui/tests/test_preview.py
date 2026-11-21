@@ -842,7 +842,13 @@ class TheDynamicBlockTheObjectAsksFor(unittest.TestCase):
 
         self.assertEqual(reopened["rule_block_for"], ["1h"])
         plain = build_document(
-            form(rule_index=["0"], rule_name=["probe"], rule_mode=["block"], rule_path=["/.env"])
+            form(
+                rule_index=["0"],
+                rule_name=["probe"],
+                rule_mode=["block"],
+                rule_block_for=["30m"],
+                rule_path=["/.env"],
+            )
         ).replace("  block_for: 30m\n", "")
         self.assertEqual(form_from_document(plain, networks=())["rule_block_for"], ["30m"])
 

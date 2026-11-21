@@ -364,15 +364,18 @@ the certificate does not cover.
   HSTS cannot be taken back by changing the configuration. For its whole lifetime, a browser that has seen
   it refuses plain http to the name and offers no way past a certificate warning.
 
-**Access**, **Dynamic blocking** and **WAF** decide who is served.
+**Access**, **Limits**, **Dynamic blocking** and **WAF** decide who is served. *Access* says who and what
+is refused, *Limits* how much one visitor may ask, and *Dynamic blocking* what happens to one who asks too
+much.
 
 - *Reachable from* takes groups from the *Network* page, and addresses, ranges or countries. Anyone else
   is refused.
-- *Rate limit* is the number of requests one source address may make within *Rate window* (`10s` when
-  empty). Requests over the limit are answered 429; the rest are served.
+- *Denied*, *Deny rules* and *Never blocked* are described in [Access rules](#access-rules).
+- *Rate limit*, in *Limits*, is the number of requests one source address may make within *Rate window*
+  (`10s` when empty). Requests over the limit are answered 429; the rest are served.
 - *Path limits* are lower limits for single paths, such as a sign-in page. They are described in
   [Path limits](#path-limits).
-- *Denied*, *Max request body* and *Deny rules* are described in [Access rules](#access-rules).
+- *Max request body* is described in [Access rules](#access-rules).
 - Blocking is described in [Dynamic blocking](#dynamic-blocking).
 - The WAF group is shown where the engine is offered or already in use. It is described in
   [The WAF engine](#the-waf-engine).
@@ -768,7 +771,7 @@ shows what it touches before it is saved.
 - A VIP counts the objects served on it.
 - A source address counts the objects that leave from it, whether as their VIP's source or named.
 - A group counts the objects that name it as a source anywhere: who may reach them, who is refused, an
-  access rule, or the exempt list of dynamic blocking.
+  access rule, or *Never blocked*.
 
 *not used* means nothing names the value. A dash means the objects could not be read.
 
@@ -1643,8 +1646,8 @@ publish.
 ## Access rules
 
 An object can refuse visitors by their address, by what a request asks for, and by the size of what it
-sends. All three are in the *Access* group of the object's form (*Edit* on the proxy's page, or *New
-proxy*), below *Reachable from*, *Rate limit* and *Rate window*
+sends. *Denied*, *Deny rules* and *Never blocked* are in the *Access* group of the object's form (*Edit* on
+the proxy's page, or *New proxy*), below *Reachable from*; *Max request body* is in the *Limits* group
 ([An http or https object, field by field](#an-http-or-https-object-field-by-field)):
 
 - **Denied** (http, https and tcp). *Denied — groups* and *Denied — addresses* name who is refused: groups
@@ -1652,8 +1655,8 @@ proxy*), below *Reachable from*, *Rate limit* and *Rate window*
   *deny*; it starts as *log only*, so nobody is refused until it is *deny*.
 - **Max request body** (http and https) is the largest body a request may declare, such as `10m`.
 - **Deny rules** (http and https) are tried in order, and any one of them is enough. *Add rule* adds one
-  and *Remove rule* drops it. A rule has a *Name*, a *Mode* (*log*, *deny* or *block*), and the conditions it
-  names:
+  and *Remove rule* drops it. A rule has a *Name*, a *Mode* (*log only*, *deny* or *deny and block the
+  address*), and the conditions it names:
   - a *Path*, with its *Path match* (*prefix* or *exact*);
   - one or more *Methods*;
   - a *Header*, with its *Header match* (*equals*, *prefix* or *contains*) and *Header value*;
@@ -1747,16 +1750,46 @@ written on its traffic record as `admin-post:log`. In *deny* mode the visitor ge
 says `admin-post:deny`.
 
 **Block whoever walks into a rule.** A visitor who asks for `/.env` or `/wp-login.php` on a site that has neither
-is not a visitor. In *block* mode the request is refused as in *deny* mode, and the address is blocked for the
-object's *Block for*, as if it had gone over a [dynamic blocking](#dynamic-blocking) limit. Every later match
-starts that time again. The object needs dynamic blocking, and its *Never blocked* addresses are refused but
-never blocked. The block is on *Blocked addresses* with its reason. Try the rule in *log* mode first: a wrongly
-written rule blocks real visitors. No list of paths comes with Haprion; for example, as rules with a *prefix*
-path:
+is not a visitor. In *deny and block the address* mode the request is refused as in *deny* mode, and the
+address is blocked for the rule's *Block for*, which appears beside *Mode* (`30m` filled in, `1m` to `24h`).
+Every later request from the address to the object is answered 403 until the time runs out, and every later
+match starts that time again. The card's badge says how long, such as *Blocking 30m*. The rule needs no
+[dynamic blocking](#dynamic-blocking) on the object. The block is on *Blocked addresses* with its reason, and
+*Unblock* lifts it.
+
+Try the rule in *log only* mode first: a wrongly written rule blocks real visitors. A rule with no *Source*
+also blocks the network you administer from, so name that network in *Never blocked*. No list of paths comes
+with Haprion; for example, as rules with a *prefix* path:
 
 ```text
 /.env    /.git/    /wp-login.php    /phpmyadmin/
 ```
+
+In the object's YAML:
+
+```yaml
+deny_rules:
+  - name: env-probe
+    path: /.env
+    mode: block
+    block_for: 2h        # 1m to 24h; block mode only
+never_blocked: [office, 192.0.2.10]
+```
+
+A block rule without `block_for` lasts as long as the object's `dynamic_block.block_for`, or `30m` on an object
+with no dynamic blocking.
+
+**Never blocked** (http, https and tcp), at the end of *Access*, takes groups from the *Network* page, and
+addresses or ranges, as *Reachable from* does. An address in it is never blocked by anything on the object: a
+deny rule's block refuses the request it matched and blocks nothing, and dynamic blocking neither counts it nor
+blocks it. Name monitoring that polls the object, an office whose visitors share one address, and the network
+you administer from. A country cannot be named. In YAML it is the object's `never_blocked`;
+`dynamic_block.exempt` is read as the same list, and an object with both is refused.
+
+*Details:* a rule's blocks live in a table per time, `mgd-<object>-ruleblock-<time>` (such as
+`mgd-shop-ruleblock-30m`), shared by the object's rules with the same *Block for*. The match marks the
+address on the fifth stick counter slot (`sc4`), as dynamic blocking does
+([What the cluster's core configuration needs](#dynamic-blocking)).
 
 - The first logged rule a request meets is the one recorded. A refusal always names itself.
 - *Denied* (`deny_from`) is recorded as `deny-from`.
@@ -1784,7 +1817,7 @@ An object's *Rate limit* holds for every request to it. A sign-in page or an API
 limit than the site's images and scripts: set low enough for the sign-in, the object's limit would refuse
 ordinary page loads. A path limit gives one path a limit of its own.
 
-*Path limits* are in the *Access* group, under *Rate limit* (http and https). *Add limit* adds one and
+*Path limits* are in the *Limits* group, under *Rate limit* (http and https). *Add limit* adds one and
 *Remove limit* drops it. A limit has a *Path*, its *Path match* (*prefix* or *exact*), *Requests* and a
 *Window*, such as 5 requests per `10s` on `/login`. When the group is closed, its line counts the limits.
 
@@ -1999,12 +2032,12 @@ that time again. A block therefore lasts as long as the attack plus the time set
 
 The rate limit is a different tool: it refuses only what is over the limit, and serves the rest.
 
-**In the form**, *Dynamic blocking* sits between *Access* and *WAF*.
+**In the form**, *Dynamic blocking* sits between *Limits* and *WAF*.
 
 - *Requests* and *Errors* are what start a block (on a tcp object: *New connections*). With both empty
-  there is no blocking.
+  there is no dynamic blocking.
 - *Window* (`10s`), *Block for* (`30m`) and *Answer with* (`404`) come filled in.
-- *Never blocked* takes groups from the *Network* page, and addresses or ranges, as *Reachable from* does.
+- Who is never counted or blocked is *Never blocked* in *Access* ([Access rules](#access-rules)).
 
 **Watching and lifting blocks.** The object's page lists the addresses its block holds, with the time left, the reason
 and the nodes holding each. An admin ticks them and presses *Unblock*. The cluster's dashboard card
@@ -2025,7 +2058,7 @@ dynamic_block:
   # tcp instead: max_new_connections
   block_for: 30m       # 1m to 24h
   status: 404          # http/https: 403, 404 or 429; 404 is the default
-  exempt: [monitoring, 192.0.2.10]   # groups and ranges never counted or blocked
+never_blocked: [monitoring, 192.0.2.10]   # the object's; never counted or blocked
 ```
 
 At least one trigger must be set.
@@ -2057,18 +2090,19 @@ placed before the object had a reason, and one that a node cannot tell, shows no
 
 **Which address is blocked.** The one the rate limit counts: behind a trusted proxy, the last element of
 `X-Forwarded-For`; otherwise the address the connection came from. Many visitors behind one NAT address
-are blocked together. Name such an address in `exempt`, and also monitoring that polls the object often.
-A country cannot be exempt.
+are blocked together. Name such an address in *Never blocked* (`never_blocked`), and also monitoring that
+polls the object often. A country cannot be named there.
 
 **Where the block lives.** Each node keeps the block, with its own clock, as an entry in an HAProxy stick
 table (a small in-memory table) that expires after `block_for`. On a cluster with shared counters, the
 block reaches the other nodes and survives a reload and a failover. Without them, it is per node.
 
 *Details:* the tables are two backends with no servers, `mgd-<object>-dynblock-rate` and
-`mgd-<object>-dynblock`. `show stat` lists them; the node status leaves them out.
+`mgd-<object>-dynblock`, beside the deny rules' `mgd-<object>-ruleblock-<time>`. `show stat` lists them; the
+node status leaves them out.
 
 **What the cluster's core configuration needs.** Dynamic blocking uses the fourth and fifth stick counter
-slots (`sc3` and `sc4`), and [path limits](#path-limits) the sixth (`sc5`). HAProxy has three unless
+slots (`sc3` and `sc4`), a deny rule's block the fifth, and [path limits](#path-limits) the sixth (`sc5`). HAProxy has three unless
 `global` says otherwise, so the cluster's `core/haproxy.cfg` needs:
 
 ```
@@ -2084,10 +2118,12 @@ a publish is refused, with the missing line, when it needs more counter slots th
 when an object blocks on a cluster whose core has no such socket.
 
 **What the nodes report.** Each node reports its blocked addresses in its status (`blocked`): per object,
-how many, and the first 100 with the time left, read on the admin socket `/run/haproxy/manager.sock`.
+how many, and the first 100 with the time left, read on the admin socket `/run/haproxy/manager.sock`. An
+address that both a deny rule and dynamic blocking hold is counted and listed once for each, with its own
+time and reason.
 
 **Lifting a block from the command line.** From the management host, a block is lifted on every node at
-once, and each node is asked twice:
+once, from every table the object blocks in, and each node is asked twice:
 
 ```bash
 haprion-server-state -c alpha -o shop unblock 203.0.113.7 2001:db8::7
@@ -5142,7 +5178,7 @@ said in `nodes`. Asking again for an address only renews its time, so a call can
 
 - `done` (200): every node holds every address.
 - `partial` (200, `ok` false): some node did not take an address, or an address was left out. The address of a
-  proxy's own exempt list, or one that is not an IP address, is never blocked: it is under `refused` with the code
+  proxy's *Never blocked*, or one that is not an IP address, is never blocked: it is under `refused` with the code
   `address_exempt` or `address_invalid`, and the other addresses are blocked. A node that did not take it is in
   `nodes` with `failed`, and in `warnings`. A *Block* token is not told why; a *Write* token is.
 - `failed` (502, `blocking_failed`): no node took the block. Nothing holds it.

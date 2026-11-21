@@ -11,11 +11,17 @@ dynamic_block:
   max_requests: 300
   max_errors: 20
   block_for: 30m
-  exempt: [office, 192.0.2.10]
+never_blocked: [office, 192.0.2.10]
 deny_rules:
   - name: env-probe
     path: /.env
     mode: block
+    block_for: 2h
+  - name: wp-probe
+    path: /wp-login.php
+    match: exact
+    mode: block
+    block_for: 2h
 routes:
   - path: /api
     backend: api

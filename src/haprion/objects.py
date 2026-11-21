@@ -201,7 +201,7 @@ def _entry(name: str, document: str, network: Network | None = None) -> dict[str
         "description": None,
         #
         # And the cluster groups it names as sources (allow_from, deny_from,
-        # access rules, dynamic blocking's exempt), by the generator's rule:
+        # access rules, never_blocked), by the generator's rule:
         # the network page lists each group's users from it.
         #
         "groups": None,

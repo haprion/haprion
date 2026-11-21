@@ -82,6 +82,14 @@ def configuration(root: Path, servers: list[tuple[str, str, int]], *, socket: bo
         "    stick-table type ipv6 size 1k expire 10s store http_req_rate(10s)",
         "backend mgd-shop-dynblock",
         "    stick-table type ipv6 size 1k expire 30m store gpc(1),gpt(1)",
+        #
+        # And a deny rule's table (B525): one on the same object, one on an
+        # object that blocks by its rules alone.
+        #
+        "backend mgd-shop-ruleblock-2h",
+        "    stick-table type ipv6 size 1k expire 2h store gpc(1),gpt(1)",
+        "backend mgd-probe-ruleblock-30m",
+        "    stick-table type ipv6 size 1k expire 30m store gpc(1),gpt(1)",
     ]
     return "\n".join(line for line in lines if line) + "\n"
 
@@ -411,6 +419,34 @@ class TheHelperLiftsABlock(RunningHaproxy):
                 code, out = self.run_helper(verb, "api", "192.0.2.7")
                 self.assertEqual(code, self.helper.EXIT_UNKNOWN_SERVER)
                 self.assertEqual(json.loads(out)["outcome"], "refused")
+
+    def test_an_unblock_clears_a_rule_s_table_too(self) -> None:
+        """B525: a deny rule's block is in a table named by its time, and lifts with the rest."""
+
+        for table in ("mgd-shop-dynblock", "mgd-shop-ruleblock-2h"):
+            self.helper.ask([f"set table {table} key 192.0.2.7 data.gpt[0] 5"])
+        self.helper.ask(["set table mgd-shop-ruleblock-2h key 192.0.2.8 data.gpt[0] 5"])
+
+        code, out = self.run_helper("unblock", "shop", "192.0.2.7")
+
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(out)["outcome"], "done")
+        rules = str(self.helper.ask(["show table mgd-shop-ruleblock-2h"]))
+        self.assertNotIn("key=::ffff:192.0.2.7 ", rules)
+        self.assertIn("key=::ffff:192.0.2.8 ", rules, "the neighbour stays")
+        self.assertNotIn("192.0.2.7", self.held())
+
+    def test_an_object_that_blocks_by_its_rules_alone_lifts_but_takes_no_block_by_hand(
+        self,
+    ) -> None:
+        self.helper.ask(["set table mgd-probe-ruleblock-30m key 192.0.2.7 data.gpt[0] 5"])
+
+        code, out = self.run_helper("unblock", "probe", "192.0.2.7")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("192.0.2.7", str(self.helper.ask(["show table mgd-probe-ruleblock-30m"])))
+        code, out = self.run_helper("block", "probe", "192.0.2.7")
+        self.assertEqual(code, self.helper.EXIT_UNKNOWN_SERVER)
+        self.assertIn("no dynamic blocking", json.loads(out)["message"])
 
     def test_words_that_are_not_a_request_are_refused(self) -> None:
         for argv in (

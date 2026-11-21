@@ -24,7 +24,7 @@ from __future__ import annotations
 import encodings.idna
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from types import MappingProxyType
 from typing import Any
@@ -630,6 +630,7 @@ COMMON_KEYS = frozenset(
         "deny_from",
         "rate_limit",
         "dynamic_block",
+        "never_blocked",
         "advanced",
         "description",
     }
@@ -668,6 +669,7 @@ DNS_REFUSED_KEYS: Mapping[str, str] = MappingProxyType(
         "advanced": "advanced config is HAProxy text, and dnsdist serves this object",
         "rate_limit": "the request limit is HAProxy's, and dnsdist serves this object",
         "dynamic_block": "dynamic blocking is HAProxy's, and dnsdist serves this object",
+        "never_blocked": "blocking is HAProxy's, and dnsdist serves this object",
         "deny_from": "refusals by address are HAProxy's; list who may ask in allow_from",
     }
 )
@@ -685,6 +687,7 @@ SYSLOG_REFUSED_KEYS: Mapping[str, str] = MappingProxyType(
         "advanced": "advanced config is HAProxy text, and the kernel's IPVS serves this object",
         "rate_limit": "the request limit is HAProxy's, and the kernel's IPVS serves this object",
         "dynamic_block": "dynamic blocking is HAProxy's, and the kernel's IPVS serves this object",
+        "never_blocked": "blocking is HAProxy's, and the kernel's IPVS serves this object",
     }
 )
 
@@ -1128,8 +1131,9 @@ class DynamicBlock:
     An http object has two triggers, requests and errors per window, and at
     least one is set; the errors are the 4xx answers its servers give, which
     is what a scanner and a password guesser leave behind. A tcp object counts
-    new connections. `exempt` are groups and ranges never counted and never
-    blocked: monitoring, and an office whose visitors share one address.
+    new connections. Who is never counted and never blocked is the object's
+    `never_blocked`, not this block's: it holds for a deny rule's block too
+    (B525).
     """
 
     window: str
@@ -1138,7 +1142,6 @@ class DynamicBlock:
     max_errors: int | None = None
     max_new_connections: int | None = None
     status: int = 404
-    exempt: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1163,7 +1166,9 @@ class AccessRule:
     `log` lets the request through and records the rule's name on its traffic
     record, so that what a rule would refuse can be seen before it refuses it;
     `deny` answers 403 and records the same; `block` does what `deny` does and
-    blocks the source as the object's dynamic blocking would (B517, 10).
+    blocks the source for `block_for`: every later request from it to the
+    object is refused with 403 (B517, 10; B525). The block needs no dynamic
+    blocking on the object; `never_blocked` spares an address from it.
     """
 
     name: str
@@ -1175,6 +1180,8 @@ class AccessRule:
     sources: tuple[str, ...] = ()
     source_negate: bool = False
     """The rule holds for visitors *outside* `sources` - "all but these"."""
+    block_for: str | None = None
+    """How long a `block` rule's match blocks its source; None in the other modes (B525)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1353,6 +1360,14 @@ class Proxy:
 
     dynamic_block: DynamicBlock | None = None
     """When a source is blocked for a while (B271). None means never."""
+
+    never_blocked: tuple[str, ...] = ()
+    """Groups and ranges no block on the object ever takes, and dynamic blocking never counts (B525).
+
+    For a dynamic block and a deny rule's alike: monitoring, an office whose
+    visitors share one address, and the network its administrators work from,
+    which a `block` rule with no source would otherwise lock out.
+    """
 
     advanced: Advanced | None = None
     """HAProxy text pasted onto the object (Fas 17, B223). None means none."""
@@ -2197,13 +2212,10 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         data.get("dynamic_block"), f"{name}.dynamic_block", listen.protocol
     )
     deny_from = _deny_from(data.get("deny_from"), f"{name}.deny_from", listen.protocol)
+    never_blocked = _never_blocked(data, name)
     deny_rules = _deny_rules(data.get("deny_rules"), f"{name}.deny_rules")
+    deny_rules = _rules_with_block_time(deny_rules, dynamic_block)
     path_limits = _path_limits(data.get("path_limits"), f"{name}.path_limits")
-    if dynamic_block is None and any(rule.mode == "block" for rule in deny_rules):
-        raise ModelError(
-            f"{name}.deny_rules: a rule in block mode needs dynamic blocking on the object,"
-            " whose table holds the block and whose block_for ends it"
-        )
     max_request_body = _body_size(data.get("max_request_body"), f"{name}.max_request_body")
     waf = _waf(data.get("waf"), f"{name}.waf")
     handwritten = sorted(key for key, backend in backends.items() if backend.written_by_hand)
@@ -2212,7 +2224,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         name,
         listen.protocol,
         rate_limit=rate_limit is not None,
-        dynamic_block=dynamic_block is not None,
+        dynamic_block=dynamic_block is not None or any(rule.mode == "block" for rule in deny_rules),
         path_limits=bool(path_limits),
         handwritten=bool(handwritten),
     )
@@ -2233,6 +2245,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         rate_limit=rate_limit,
         path_limits=path_limits,
         dynamic_block=dynamic_block,
+        never_blocked=never_blocked,
         advanced=advanced,
         deny_from=deny_from,
         deny_rules=deny_rules,
@@ -2333,7 +2346,7 @@ def advanced_placement(name: str, document: bytes) -> advanced_config.Placement 
         name=name,
         protocol=str(protocol or ""),
         rate_limit=data.get("rate_limit") is not None,
-        dynamic_block=data.get("dynamic_block") is not None,
+        dynamic_block=data.get("dynamic_block") is not None or _names_block_rule(data),
         path_limits=bool(data.get("path_limits")),
         handwritten=handwritten,
     )
@@ -2769,6 +2782,80 @@ BLOCK_STATUSES = (403, 404, 429)
 DEFAULT_BLOCK_STATUS = 404
 
 
+#
+# A deny rule's block written before its rule carried a time (1.3.0) lasts as
+# long as the object's dynamic block, which held it then; one on an object
+# with none lasts this long, the time the form fills in (B525).
+#
+DEFAULT_RULE_BLOCK_FOR = "30m"
+
+
+def _block_for(value: Any, location: str) -> str:
+    """How long a block lasts: whole minutes or hours, from a minute to a day."""
+
+    if not isinstance(value, str) or not BLOCK_FOR.fullmatch(value):
+        raise ModelError(f"{location} must be a duration such as 30m or 2h")
+    minutes = int(value[:-1]) * (60 if value.endswith("h") else 1)
+    if not MIN_BLOCK_MINUTES <= minutes <= MAX_BLOCK_MINUTES:
+        raise ModelError(f"{location} must be from 1m to 24h")
+    return value
+
+
+def block_minutes(block_for: str) -> int:
+    """A valid `block_for` in minutes."""
+
+    return int(block_for[:-1]) * (60 if block_for.endswith("h") else 1)
+
+
+def _never_blocked(data: Mapping[str, Any], name: str) -> tuple[str, ...]:
+    """The object's `never_blocked`, or the same list as `dynamic_block.exempt` once held it (B525).
+
+    The older place is read so that an object saved before the move means what
+    it meant; the form writes the new one. Both at once would be two answers
+    to one question, and is refused.
+    """
+
+    block = data.get("dynamic_block")
+    older = block.get("exempt") if isinstance(block, Mapping) else None
+    if "never_blocked" in data and older is not None:
+        raise ModelError(
+            f"{name}.never_blocked and {name}.dynamic_block.exempt say the same thing; "
+            f"keep never_blocked"
+        )
+    location = f"{name}.never_blocked" if older is None else f"{name}.dynamic_block.exempt"
+    value = data.get("never_blocked", []) if older is None else older
+    entries = _sources(value, location, "exempt")
+    countries = [entry for entry in entries if entry.startswith(geo.PREFIX)]
+    if countries:
+        raise ModelError(
+            f"{location}: a country is too wide to exempt from blocking ({countries[0]})"
+        )
+    return entries
+
+
+def _rules_with_block_time(
+    rules: tuple[AccessRule, ...], dynamic_block: DynamicBlock | None
+) -> tuple[AccessRule, ...]:
+    """Each `block` rule with its time: its own, else the dynamic block's, else the default."""
+
+    inherited = dynamic_block.block_for if dynamic_block is not None else DEFAULT_RULE_BLOCK_FOR
+    return tuple(
+        replace(rule, block_for=inherited)
+        if rule.mode == "block" and rule.block_for is None
+        else rule
+        for rule in rules
+    )
+
+
+def _names_block_rule(data: Mapping[str, Any]) -> bool:
+    """Whether a document's deny rules name one in `block` mode, read without the model."""
+
+    rules = data.get("deny_rules")
+    return isinstance(rules, list) and any(
+        isinstance(rule, Mapping) and rule.get("mode") == "block" for rule in rules
+    )
+
+
 def _dynamic_block(value: Any, location: str, protocol: str) -> DynamicBlock | None:
     if value is None:
         return None
@@ -2799,12 +2886,7 @@ def _dynamic_block(value: Any, location: str, protocol: str) -> DynamicBlock | N
     window = data.get("window", DEFAULT_ABUSE_WINDOW)
     if not isinstance(window, str) or not ABUSE_WINDOW.fullmatch(window):
         raise ModelError(f"{location}.window must be a duration such as 10s or 1m")
-    block_for = data.get("block_for")
-    if not isinstance(block_for, str) or not BLOCK_FOR.fullmatch(block_for):
-        raise ModelError(f"{location}.block_for must be a duration such as 30m or 2h")
-    minutes = int(block_for[:-1]) * (60 if block_for.endswith("h") else 1)
-    if not MIN_BLOCK_MINUTES <= minutes <= MAX_BLOCK_MINUTES:
-        raise ModelError(f"{location}.block_for must be from 1m to 24h")
+    block_for = _block_for(data.get("block_for"), f"{location}.block_for")
     limits: dict[str, int] = {}
     for key in triggers:
         limit = data.get(key)
@@ -2820,13 +2902,7 @@ def _dynamic_block(value: Any, location: str, protocol: str) -> DynamicBlock | N
         raise ModelError(
             f"{location}.status must be one of: {', '.join(str(code) for code in BLOCK_STATUSES)}"
         )
-    exempt = _sources(data.get("exempt", []), f"{location}.exempt", "exempt")
-    countries = [entry for entry in exempt if entry.startswith(geo.PREFIX)]
-    if countries:
-        raise ModelError(
-            f"{location}.exempt: a country is too wide to exempt from blocking ({countries[0]})"
-        )
-    return DynamicBlock(window=window, block_for=block_for, status=status, exempt=exempt, **limits)
+    return DynamicBlock(window=window, block_for=block_for, status=status, **limits)
 
 
 def _unavailable(value: Any, location: str) -> Unavailable | None:
@@ -3072,7 +3148,17 @@ def _deny_rule(value: Any, location: str) -> AccessRule:
     data = _mapping(value, location)
     _only_keys(
         data,
-        {"name", "mode", "path", "match", "methods", "header", "source", "source_negate"},
+        {
+            "name",
+            "mode",
+            "path",
+            "match",
+            "methods",
+            "header",
+            "source",
+            "source_negate",
+            "block_for",
+        },
         location,
     )
     name = _required_string(data, "name", location)
@@ -3090,6 +3176,14 @@ def _deny_rule(value: Any, location: str) -> AccessRule:
                 f"and that a query matches on its beginning; choose a name that does not start with {prefix}"
             )
     mode = _mode(data, location, ACCESS_MODES)
+    block_for = None
+    if "block_for" in data:
+        if mode != "block":
+            raise ModelError(
+                f"{location}.block_for says how long a match blocks its source, and the rule "
+                f"is in {mode} mode"
+            )
+        block_for = _block_for(data["block_for"], f"{location}.block_for")
 
     path = data.get("path")
     match = data.get("match", "prefix")
@@ -3131,6 +3225,7 @@ def _deny_rule(value: Any, location: str) -> AccessRule:
         header=header,
         sources=sources,
         source_negate=negate,
+        block_for=block_for,
     )
 
 

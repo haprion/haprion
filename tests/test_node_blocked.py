@@ -104,6 +104,26 @@ class ReadingTheBlockedTables(unittest.TestCase):
         )
         self.assertEqual(self.parsing["parse_blocked_tables"](text), {"a-b_c": 1})
 
+    def test_a_rule_s_tables_count_with_the_dynamic_block_s(self) -> None:
+        """B525: one table per time the object's deny rules block for, summed per object."""
+
+        from haprion.generate import block_tables, rule_block_table
+
+        counted, blocked = block_tables("shop")
+        text = (
+            f"# table: {counted}, type: ipv6, size:1, used:9\n"
+            f"# table: {blocked}, type: ipv6, size:1, used:2\n"
+            f"# table: {rule_block_table('shop', '30m')}, type: ipv6, size:1, used:3\n"
+            f"# table: {rule_block_table('shop', '2h')}, type: ipv6, size:1, used:1\n"
+            f"# table: {rule_block_table('probe', '1h')}, type: ipv6, size:1, used:4\n"
+            "# table: mgd-shop-pathlimit-0, type: ipv6, size:1, used:7\n"
+        )
+        self.assertEqual(self.parsing["parse_blocked_tables"](text), {"shop": 6, "probe": 4})
+        self.assertEqual(
+            self.parsing["blocked_tables_by_object"](text)["shop"],
+            {blocked: 2, "mgd-shop-ruleblock-30m": 3, "mgd-shop-ruleblock-2h": 1},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

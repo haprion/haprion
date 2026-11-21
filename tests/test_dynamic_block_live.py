@@ -35,7 +35,7 @@ from typing import Any
 
 from haprion import cluster_settings
 from haprion.config import Vip
-from haprion.generate import block_tables, generate
+from haprion.generate import generate
 from haprion.proxy_model import load_proxy
 from haprion.traffic_stream import TRAFFIC_LOG_SOCKET
 from tests import spawned
@@ -96,10 +96,20 @@ class TwoNodesBlock(unittest.TestCase):
     def reasons(self, node: str, name: str = "shop") -> dict[str, str | None]:
         """Each blocked address's reason on one node, as `haprion-node-status` reads it."""
 
-        entries = parsing()["parse_blocked_entries"](
-            self.runtime(node, f"show table {block_tables(name)[1]}")
-        )
-        return {entry["address"]: entry["reason"] for entry in entries}
+        return {entry["address"]: entry["reason"] for entry in self.entries(node, name)}
+
+    def entries(self, node: str, name: str = "shop") -> list[dict[str, Any]]:
+        """Every blocked entry of the object on one node, over all its tables (B525)."""
+
+        node_status = parsing()
+        tables = node_status["blocked_tables_by_object"](self.runtime(node, "show table"))
+        return [
+            entry
+            for table in tables.get(name, {})
+            for entry in node_status["parse_blocked_entries"](
+                self.runtime(node, f"show table {table}")
+            )
+        ]
 
     def logged(self, node: str, rule: str) -> bool:
         def said() -> bool:
@@ -213,6 +223,36 @@ backends:
         port: {backend_port}
 """.encode(),
         )
+        #
+        # A rule's block alone (B525): no dynamic blocking on the object, the
+        # rule's own time, and never_blocked where the object keeps it now.
+        #
+        probe = load_proxy(
+            "probe",
+            f"""schema: 1
+name: probe
+hostnames: [probe.example.com]
+listen:
+  protocol: http
+never_blocked: [{EXEMPT}]
+deny_rules:
+  - name: admin-probe
+    path: /admin
+    mode: block
+    block_for: 2m
+routes:
+  - path: /
+    backend: probed
+backends:
+  probed:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 127.0.0.1
+        port: {backend_port}
+""".encode(),
+        )
         settings = cluster_settings.load_document(f"peers:\n  port: {peers_port}\n".encode())
         binary = shutil.which("haproxy")
         assert binary is not None
@@ -248,7 +288,7 @@ backends:
                 target=self._collect, args=(receiver, self.records[address]), daemon=True
             ).start()
             files = generate(
-                [shop, limited, db],
+                [shop, limited, db, probe],
                 vips={"main": Vip(name="main", address=address)},
                 default_vip="main",
                 ports={
@@ -318,10 +358,7 @@ backends:
 
         def read() -> tuple[int | None, list[dict[str, Any]]]:
             counts = node_status["parse_blocked_tables"](self.runtime(node, "show table"))
-            entries = node_status["parse_blocked_entries"](
-                self.runtime(node, f"show table {block_tables(name)[1]}")
-            )
-            return counts.get(name), entries
+            return counts.get(name), self.entries(node, name)
 
         #
         # Two questions to the socket, and a peer update may land between
@@ -475,12 +512,12 @@ backends:
 
         a, b = NODES[0][1], NODES[1][1]
         self.assertEqual(self.get(a, "127.0.0.44", "/.env"), 403)
-        self.assertEqual(self.get(a, "127.0.0.44"), 404, "the next request meets the block")
+        self.assertEqual(self.get(a, "127.0.0.44"), 403, "the next request meets the block")
         self.assertEqual(self.reasons(a)["127.0.0.44"], "rule")
         self.assertTrue(self.logged(a, "env-probe:deny"), "the match names its rule")
         self.assertTrue(self.logged(a, "dynamic-block/rule:deny"), "the block names its reason")
         self.assertTrue(_until(lambda: self.reasons(b).get("127.0.0.44") == "rule"))
-        self.assertEqual(self.get(b, "127.0.0.44"), 404)
+        self.assertEqual(self.get(b, "127.0.0.44"), 403)
         self.assertEqual(self.get(a, "127.0.0.45"), 200, "a neighbour is served")
 
     def test_a_blocking_rule_spares_the_exempt_and_blocks_behind_a_proxy(self) -> None:
@@ -490,6 +527,35 @@ backends:
         self.assertEqual(self.get(a, PROXY, "/.env", forwarded=BEHIND), 403)
         self.assertEqual(self.get(a, PROXY, forwarded=NEIGHBOUR), 200, "the proxy is not blocked")
         self.assertEqual(list(self.blocked(a)), [BEHIND])
+
+    def test_a_rule_blocks_alone_for_its_own_time_on_both_nodes(self) -> None:
+        """B525: no dynamic blocking; the rule's 2m, and 403 after the match."""
+
+        a, b = NODES[0][1], NODES[1][1]
+        host = "probe.example.com"
+        self.assertEqual(self.get(a, "127.0.0.46", "/admin", host=host), 403)
+        self.assertEqual(self.get(a, "127.0.0.46", host=host), 403, "the next request is blocked")
+        self.assertEqual(self.reasons(a, "probe"), {"127.0.0.46": "rule"})
+        self.assertTrue(self.logged(a, "dynamic-block/rule:deny"))
+        left = self.blocked(a, "probe")["127.0.0.46"]
+        self.assertGreater(left, 60_000, "the rule's 2m, not a minute")
+        self.assertLessEqual(left, 120_000)
+        self.assertTrue(_until(lambda: "127.0.0.46" in self.blocked(b, "probe")))
+        self.assertEqual(self.get(b, "127.0.0.46", host=host), 403)
+        self.assertEqual(self.get(a, "127.0.0.47", host=host), 200, "a neighbour is served")
+
+    def test_a_rule_block_spares_never_blocked_and_lifts(self) -> None:
+        a, b = NODES[0][1], NODES[1][1]
+        host = "probe.example.com"
+        self.assertEqual(self.get(a, EXEMPT, "/admin", host=host), 403, "refused, as deny refuses")
+        self.assertEqual(self.get(a, EXEMPT, host=host), 200, "but never blocked")
+        self.get(a, "127.0.0.48", "/admin", host=host)
+        self.assertTrue(_until(lambda: "127.0.0.48" in self.blocked(b, "probe")))
+        self.unblock("127.0.0.48", "probe")
+        self.assertNotIn("127.0.0.48", self.blocked(a, "probe"))
+        self.assertNotIn("127.0.0.48", self.blocked(b, "probe"))
+        self.assertEqual(self.get(a, "127.0.0.48", host=host), 200)
+        self.assertEqual(self.get(b, "127.0.0.48", host=host), 200)
 
     def test_a_blocking_rule_s_path_cannot_be_walked_around(self) -> None:
         """A dot segment is refused where the rules only block, as where they deny (26-11-20).

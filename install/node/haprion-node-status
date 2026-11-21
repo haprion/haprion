@@ -1516,7 +1516,7 @@ MAX_STAT_ROWS = 500
 # Named by the generator's `block_tables` and `path_limit_table`, in the `mgd-`
 # space no pool may take; `generate.TABLE_SECTION` is the same shape.
 #
-BLOCK_TABLE = re.compile(r"^mgd-.+-(?:dynblock(?:-rate)?|pathlimit-[0-9]+)$")
+BLOCK_TABLE = re.compile(r"^mgd-.+-(?:dynblock(?:-rate)?|pathlimit-[0-9]+|ruleblock-[0-9]+[mh])$")
 
 #
 # Why the frontends are reported at all, when they carry no health check: a
@@ -1716,16 +1716,20 @@ def ask_runtime(
 
 
 #
-# Dynamic blocking (B271): each object's blocked table, by the generator's name
-# (`generate.block_tables`), and its entries as 3.4.6 writes them (measured
-# 26-10-10):
+# Blocking (B271, B525): each object's blocked tables, by the generator's names -
+# the dynamic block's (`generate.block_tables`) and one per time its deny rules
+# block for (`generate.rule_block_table`) - and their entries as 3.4.6 writes
+# them (measured 26-10-10):
 #   # table: mgd-shop-dynblock, type: ipv6, size:1048576, used:2
 #   0x...: key=::ffff:192.0.2.7 use=0 exp=1793254 shard=0 gpc0=0
-# Every entry is a block, `exp` its milliseconds left. The count is the
-# table's own; the addresses listed stop at MAX_BLOCKED_LISTED per object.
+# Every entry is a block, `exp` its milliseconds left. The count is the sum of
+# the object's tables; an address two of them hold is counted and listed in
+# each, with its own time and reason. The addresses listed stop at
+# MAX_BLOCKED_LISTED per object.
 #
 BLOCKED_TABLE = re.compile(
-    r"^# table: mgd-([a-z][a-z0-9_-]{0,39})-dynblock, type: \S+, size:\d+, used:(\d+)$"
+    r"^# table: (mgd-([a-z][a-z0-9_-]{0,39})-(?:dynblock|ruleblock-[0-9]+[mh])), "
+    r"type: \S+, size:\d+, used:(\d+)$"
 )
 BLOCKED_ENTRY = re.compile(r"^0x[0-9a-f]+: key=(\S+) .*\bexp=(\d+)\b")
 #
@@ -1741,15 +1745,25 @@ MAX_BLOCKED_LISTED = 100
 MAX_BLOCKED_OBJECTS = 500
 
 
-def parse_blocked_tables(text: str) -> dict[str, int]:
-    """`show table` as {object: blocked count}, for the objects with dynamic blocking."""
+def blocked_tables_by_object(text: str) -> dict[str, dict[str, int]]:
+    """`show table` as {object: {table: blocked count}}, for the objects that block."""
 
-    found: dict[str, int] = {}
+    found: dict[str, dict[str, int]] = {}
     for line in text.splitlines():
         match = BLOCKED_TABLE.match(line.strip())
-        if match is not None and len(found) < MAX_BLOCKED_OBJECTS:
-            found[match.group(1)] = int(match.group(2))
+        if match is None:
+            continue
+        table, name, count = match.group(1), match.group(2), int(match.group(3))
+        if name not in found and len(found) >= MAX_BLOCKED_OBJECTS:
+            continue
+        found.setdefault(name, {})[table] = count
     return found
+
+
+def parse_blocked_tables(text: str) -> dict[str, int]:
+    """`show table` as {object: blocked count}, summed over the object's tables."""
+
+    return {name: sum(tables.values()) for name, tables in blocked_tables_by_object(text).items()}
 
 
 def parse_blocked_entries(text: str) -> list[dict[str, Any]]:
@@ -1779,20 +1793,21 @@ def parse_blocked_entries(text: str) -> list[dict[str, Any]]:
 
 
 def read_blocked() -> dict[str, dict[str, Any]] | None:
-    """{object: {count, addresses}} for every object with dynamic blocking; None if unasked."""
+    """{object: {count, addresses}} for every object that blocks, over all its tables; None if unasked."""
 
     text = ask_runtime("show table", ADMIN_SOCKET)
     if text is None:
         return None
     blocked: dict[str, dict[str, Any]] = {}
-    for name, count in parse_blocked_tables(text).items():
+    for name, tables in blocked_tables_by_object(text).items():
         addresses: list[dict[str, Any]] = []
-        if count:
-            listing = ask_runtime(
-                f"show table mgd-{name}-dynblock", ADMIN_SOCKET, MAX_BLOCKED_LISTED + 1
-            )
-            addresses = parse_blocked_entries(listing or "")
-        blocked[name] = {"count": count, "addresses": addresses}
+        for table, count in tables.items():
+            room = MAX_BLOCKED_LISTED - len(addresses)
+            if not count or room <= 0:
+                continue
+            listing = ask_runtime(f"show table {table}", ADMIN_SOCKET, room + 1)
+            addresses += parse_blocked_entries(listing or "")[:room]
+        blocked[name] = {"count": sum(tables.values()), "addresses": addresses}
     return blocked
 
 

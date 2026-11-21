@@ -528,15 +528,14 @@ def unblock(
 def exempted(
     proxy: Proxy, wanted: Sequence[str], networks: Mapping[str, Sequence[str]]
 ) -> tuple[str, ...]:
-    """The addresses the object's blocking exempts: its groups and its own ranges.
+    """The addresses the object never blocks (`never_blocked`): its groups and its own ranges.
 
     A group the network file no longer has exempts nothing here; publishing
     the object would refuse it anyway.
     """
 
-    block = proxy.dynamic_block
     ranges: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
-    for entry in block.exempt if block is not None else ():
+    for entry in proxy.never_blocked:
         for written in networks.get(entry, (entry,)):
             try:
                 ranges.append(ipaddress.ip_network(written, strict=False))

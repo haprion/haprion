@@ -302,19 +302,20 @@ def stick_counters_problem(
     needed = max(slots, default=-1) + 1
     #
     # What the slots past the rate limit's are for, in the refusal's words. A
-    # slot the advanced text tracks counts as the blocking's, as it always has.
+    # slot the advanced text tracks counts as the blocking's, as it always has;
+    # so does a deny rule's block, which marks on the dynamic block's slot (B525).
     #
     blocking = any(slot >= BLOCK_COUNTERS - 1 and slot != PATH_LIMIT_SLOT for slot in slots)
     uses = (
         " and ".join(
             what
             for what, used in (
-                ("dynamic blocking", blocking or bool(slots & {3})),
+                ("blocking", blocking or bool(slots & {3})),
                 ("path limits", PATH_LIMIT_SLOT in slots),
             )
             if used
         )
-        or "dynamic blocking"
+        or "blocking"
     )
     core = files.get("core/haproxy.cfg", b"").decode("utf-8", errors="replace")
     stated = _stated(core, re.escape(STICK_COUNTERS_KEYWORD))
@@ -331,7 +332,7 @@ def stick_counters_problem(
             # 26-10-10, F3).
             #
             return (
-                f"{cluster}: an object uses dynamic blocking, and core/haproxy.cfg has no admin "
+                f"{cluster}: an object blocks addresses, and core/haproxy.cfg has no admin "
                 f"socket for the nodes to list and lift blocks on.\n"
                 f"\n"
                 f"  Fix it, then publish again:\n"
@@ -352,7 +353,7 @@ def stick_counters_problem(
         f"    add this line to the `global` section:\n"
         f"      {STICK_COUNTERS_KEYWORD} {needed}\n"
         f"\n"
-        f"  Why this stops a publish: dynamic blocking and path limits count an address\n"
+        f"  Why this stops a publish: blocking and path limits count an address\n"
         f"  on counters of their own, past the cluster's brake and the object's rate limit,\n"
         f"  and HAProxy keeps three unless `global` says otherwise. `global` is the\n"
         f"  cluster's own file, which the generator never writes."

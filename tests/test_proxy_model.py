@@ -803,16 +803,46 @@ class WhoAndWhatAnObjectRefuses(unittest.TestCase):
             "/Admin/v1.2/x",
         )
 
-    def test_a_blocking_rule_needs_the_object_s_dynamic_blocking(self) -> None:
-        """B517, 10: the block is an entry in that table, ended by its block_for."""
+    def test_a_blocking_rule_carries_its_own_time(self) -> None:
+        """B525: no dynamic blocking needed; the rule says how long, 1m to 24h."""
 
         rule = "deny_rules:\n  - name: env-probe\n    path: /.env\n    mode: block"
-        self.assertIn("needs dynamic blocking", self.refused(rule))
-        block = "dynamic_block:\n  window: 10s\n  max_errors: 20\n  block_for: 1h"
-        self.assertEqual(self.load(f"{block}\n{rule}").deny_rules[0].mode, "block")
+        alone = self.load(f"{rule}\n    block_for: 2h")
+        self.assertIsNone(alone.dynamic_block)
+        self.assertEqual((alone.deny_rules[0].mode, alone.deny_rules[0].block_for), ("block", "2h"))
+        for value in ("0m", "25h", "90s", "1d", "30"):
+            with self.subTest(value):
+                self.assertIn("block_for", self.refused(f"{rule}\n    block_for: {value}"))
+        self.assertIn(
+            "is in log mode",
+            self.refused("deny_rules:\n  - name: a\n    path: /x\n    block_for: 30m"),
+        )
         self.assertIn(
             "one of: log, deny", self.refused("deny_from:\n  mode: block\n  sources: [office]")
         )
+
+    def test_a_blocking_rule_without_a_time_keeps_what_it_had(self) -> None:
+        """A 1.3.0 rule: the dynamic block's time, which held it then; else 30m."""
+
+        rule = "deny_rules:\n  - name: env-probe\n    path: /.env\n    mode: block"
+        block = "dynamic_block:\n  window: 10s\n  max_errors: 20\n  block_for: 1h"
+        self.assertEqual(self.load(f"{block}\n{rule}").deny_rules[0].block_for, "1h")
+        self.assertEqual(self.load(rule).deny_rules[0].block_for, "30m")
+        self.assertIsNone(
+            self.load("deny_rules:\n  - name: a\n    path: /x").deny_rules[0].block_for
+        )
+
+    def test_never_blocked_belongs_to_the_object(self) -> None:
+        """B525: one list for every block; the older dynamic_block.exempt still reads."""
+
+        self.assertEqual(
+            self.load("never_blocked: [office, 192.0.2.10]").never_blocked,
+            ("office", "192.0.2.10/32"),
+        )
+        older = "dynamic_block:\n  max_errors: 20\n  block_for: 1h\n  exempt: [office]"
+        self.assertEqual(self.load(older).never_blocked, ("office",))
+        self.assertIn("say the same thing", self.refused(f"{older}\nnever_blocked: [vpn]"))
+        self.assertIn("too wide", self.refused("never_blocked: [country:SE]"))
 
     def test_two_rules_may_not_share_a_name(self) -> None:
         block = "deny_rules:\n  - name: a\n    path: /x\n  - name: a\n    path: /y"
@@ -1098,14 +1128,7 @@ class AnAddressBlockedForAWhile(unittest.TestCase):
         )
         self.assertEqual(
             block,
-            DynamicBlock(
-                window="1m",
-                block_for="2h",
-                max_requests=300,
-                max_errors=20,
-                status=429,
-                exempt=("office", "192.0.2.10/32"),
-            ),
+            DynamicBlock(window="1m", block_for="2h", max_requests=300, max_errors=20, status=429),
         )
 
     def test_a_tcp_object_counts_connections_and_is_not_answered(self) -> None:

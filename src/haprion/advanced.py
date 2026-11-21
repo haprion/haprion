@@ -1272,6 +1272,7 @@ GENERATED_VARIABLES = frozenset(
         "txn.path_limit",
         "txn.request_id",
         "txn.rule",
+        "txn.ruleblock",
         "txn.traffic_host",
         "txn.traffic_method",
         "txn.traffic_path",

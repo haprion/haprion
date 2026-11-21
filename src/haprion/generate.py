@@ -56,6 +56,7 @@ from haprion.proxy_model import (
     URL_PLACEHOLDER,
     Advanced,
     Backend,
+    DynamicBlock,
     Health,
     Hsts,
     PathLimit,
@@ -64,6 +65,7 @@ from haprion.proxy_model import (
     Server,
     Waf,
     WafException,
+    block_minutes,
     is_range,
     is_wildcard,
     server_name,
@@ -272,7 +274,10 @@ RETRIES = 3
 # 2 (1.3.0, B523): every http frontend sends X-Request-ID and writes the request
 # ID and the client's TLS and HTTP version in the traffic record.
 #
-GENERATOR_LEVEL = 2
+# 3 (B525): a deny rule's block lives in a table of its own time and answers
+# 403, apart from the object's dynamic block.
+#
+GENERATOR_LEVEL = 3
 
 # A second, opt-in stream. The ordinary `option httplog` output is deliberately
 # untouched: this profile applies only to the additional per-frontend log
@@ -1497,7 +1502,7 @@ def groups_named(proxy: Proxy) -> tuple[str, ...]:
         *proxy.allow_from,
         *(proxy.deny_from.sources if proxy.deny_from is not None else ()),
         *(source for rule in proxy.deny_rules for source in rule.sources),
-        *(proxy.dynamic_block.exempt if proxy.dynamic_block is not None else ()),
+        *proxy.never_blocked,
     )
     return tuple(
         sorted({name for name in named if not is_range(name) and not geo.is_country(name)})
@@ -1537,7 +1542,7 @@ def _refuse_unknown_networks(
                 elsewhere = (
                     name in proxy.allow_from
                     or any(name in rule.sources for rule in proxy.deny_rules)
-                    or (proxy.dynamic_block is not None and name in proxy.dynamic_block.exempt)
+                    or name in proxy.never_blocked
                 )
                 if elsewhere or name not in denied:
                     raise GeneratorError(
@@ -2926,20 +2931,27 @@ HEADER_MATCH_FLAGS = {"equals": "str", "prefix": "beg", "contains": "sub"}
 
 
 def _rule_block(
-    proxy: Proxy, condition: str, trusted: bool, exempt_source: str, exempt_forwarded: str
+    proxy: Proxy,
+    block_for: str,
+    condition: str,
+    trusted: bool,
+    exempt_source: str,
+    exempt_forwarded: str,
 ) -> list[str]:
-    """A `block` rule's match, placed in the object's blocked table (B517, 10).
+    """A `block` rule's match, placed in the object's table for the rule's time (B517, 10; B525).
 
-    The same entry a limit places (`_http_block_lines`): tracked on the mark's
-    counter, keyed on the visitor - the forwarded address behind a trusted
-    proxy, never the proxy - and stamped with the reason `rule`. Its expiry is
-    `block_for`, and every later match starts it again. An address that is
-    never blocked is not tracked, so the stamp, which acts on the tracked entry
-    alone, does nothing for it. The match itself is refused by `_verdict`
-    after these lines; the requests after it meet the block in the pools.
+    Tracked on the mark's counter as a limit's entry is (`_http_block_lines`),
+    keyed on the visitor - the forwarded address behind a trusted proxy, never
+    the proxy - and stamped with the reason `rule`. Its expiry is the table's,
+    the rule's `block_for`, and every later match starts it again. The counter
+    is the dynamic block's mark, and that is no clash: the match is refused in
+    the frontend by `_verdict` after these lines and never reaches a pool,
+    where the mark is used. An address that is never blocked is not tracked,
+    so the stamp, which acts on the tracked entry alone, does nothing for it.
+    The requests after the match meet the block in the pools.
     """
 
-    _, blocked = block_tables(proxy.name)
+    blocked = rule_block_table(proxy.name, block_for)
     mark = f"    http-request track-sc{BLOCK_MARK_COUNTER}"
     if trusted:
         tracked = [
@@ -3074,9 +3086,7 @@ def _access_rules(
         lines.extend(_address_acl(acl, fetch, proxy.deny_from.sources, networks))
         lines.extend(_verdict(f"{host} {acl}", "deny-from", proxy.deny_from.mode))
     lines.extend(_access_path_rules(proxy, host))
-    blocking = proxy.dynamic_block is not None and any(
-        rule.mode == "block" for rule in proxy.deny_rules
-    )
+    blocking = any(rule.mode == "block" for rule in proxy.deny_rules)
     exempt_source = exempt_forwarded = ""
     if blocking:
         exempt, exempt_source, exempt_forwarded = _block_exempt(proxy, networks, forwarded=trusted)
@@ -3122,9 +3132,16 @@ def _access_rules(
             acl = _acl_name(proxy.name, f"{prefix}-source")
             lines.extend(_address_acl(acl, fetch, rule.sources, networks))
             condition.append(f"!{acl}" if rule.source_negate else acl)
-        if rule.mode == "block":
+        if rule.mode == "block" and rule.block_for is not None:
             lines.extend(
-                _rule_block(proxy, " ".join(condition), trusted, exempt_source, exempt_forwarded)
+                _rule_block(
+                    proxy,
+                    rule.block_for,
+                    " ".join(condition),
+                    trusted,
+                    exempt_source,
+                    exempt_forwarded,
+                )
             )
         lines.extend(_verdict(" ".join(condition), rule.name, rule.mode))
     if proxy.max_request_body is not None:
@@ -3845,6 +3862,25 @@ def block_tables(proxy_name: str) -> tuple[str, str]:
     return f"{PREFIX}-{proxy_name}-dynblock-rate", f"{PREFIX}-{proxy_name}-dynblock"
 
 
+def rule_block_table(proxy_name: str, block_for: str) -> str:
+    """The table holding the blocks an object's deny rules place for this long (B525).
+
+    Named by the time rather than by the rule's place in the list: a rule
+    removed or moved must not hand the blocks it placed to another rule's
+    table and time. Rules with one time share a table. In the generator's own
+    `mgd-` space, as the dynamic blocking tables are.
+    """
+
+    return f"{PREFIX}-{proxy_name}-ruleblock-{block_for}"
+
+
+def rule_block_times(proxy: Proxy) -> tuple[str, ...]:
+    """The times the object's `block` rules hold an address for, shortest first, each once."""
+
+    times = {rule.block_for for rule in proxy.deny_rules if rule.block_for is not None}
+    return tuple(sorted(times, key=block_minutes))
+
+
 def path_limit_table(proxy_name: str, index: int) -> str:
     """The table of an object's path limit by its place in the list (B520).
 
@@ -3859,7 +3895,9 @@ def path_limit_table(proxy_name: str, index: int) -> str:
 # traffic, so not a pool. `haprion-node-status` knows the same shapes, and a
 # test holds the two alike.
 #
-TABLE_SECTION = re.compile(rf"^{PREFIX}-.+-(?:dynblock(?:-rate)?|pathlimit-[0-9]+)$")
+TABLE_SECTION = re.compile(
+    rf"^{PREFIX}-.+-(?:dynblock(?:-rate)?|pathlimit-[0-9]+|ruleblock-[0-9]+[mh])$"
+)
 
 
 def is_table_section(name: str) -> bool:
@@ -3899,9 +3937,18 @@ def _block_tables(proxy: Proxy, peers: str | None) -> list[str]:
     `show table` reads the time left from it.
     """
 
+    rules = [
+        line
+        for block_for in rule_block_times(proxy)
+        for line in (
+            "",
+            f"backend {rule_block_table(proxy.name, block_for)}",
+            _stick_table(block_for, "gpc(1),gpt(1)", peers),
+        )
+    ]
     block = proxy.dynamic_block
     if block is None:
-        return []
+        return rules
     counted, blocked = block_tables(proxy.name)
     window = block.window
     if block.max_new_connections is not None:
@@ -3921,6 +3968,7 @@ def _block_tables(proxy: Proxy, peers: str | None) -> list[str]:
         "",
         f"backend {blocked}",
         _stick_table(block.block_for, "gpc(1),gpt(1)", peers),
+        *rules,
     ]
 
 
@@ -3934,15 +3982,16 @@ def _block_exempt(
     exemption, so the rules read as if it did not exist.
     """
 
-    block = proxy.dynamic_block
-    if block is None or not block.exempt:
+    if not proxy.never_blocked:
         return [], "", ""
     by_source = _acl_name(proxy.name, "dynblock-exempt")
-    lines = _address_acl(by_source, "src", block.exempt, networks)
+    lines = _address_acl(by_source, "src", proxy.never_blocked, networks)
     if not forwarded:
         return lines, f" !{by_source}", ""
     by_forwarded = _acl_name(proxy.name, "dynblock-exempt-fwd")
-    lines += _address_acl(by_forwarded, "req.hdr_ip(X-Forwarded-For,-1)", block.exempt, networks)
+    lines += _address_acl(
+        by_forwarded, "req.hdr_ip(X-Forwarded-For,-1)", proxy.never_blocked, networks
+    )
     return lines, f" !{by_source}", f" !{by_forwarded}"
 
 
@@ -4004,11 +4053,36 @@ def _http_block_lines(
     """
 
     block = proxy.dynamic_block
-    if block is None or block.max_new_connections is not None:
+    times = rule_block_times(proxy)
+    dynamic = block if block is not None and block.max_new_connections is None else None
+    if dynamic is None and not times:
         return []
+    lines, exempt_source, exempt_forwarded = _block_exempt(proxy, networks, forwarded=trusted)
+    if dynamic is not None:
+        lines += _dynamic_block_lines(proxy, dynamic, trusted, exempt_source, exempt_forwarded)
+    lines += _rule_block_lookups(proxy, times, trusted, exempt_source, exempt_forwarded)
+    if dynamic is not None and dynamic.max_errors is not None:
+        #
+        # An error is a 4xx the server gave. `http-response` does not run for
+        # an answer HAProxy gives itself, so neither the block's refusal nor
+        # the rate limit's 429 is counted: a block cannot extend itself, and
+        # an address just over the rate limit is not blocked for "errors".
+        # Nothing is counted for an address that is not tracked (an exempt one).
+        #
+        lines.append(
+            f"    http-response sc-inc-gpc(0,{BLOCK_COUNT_COUNTER}) if {{ status 400:499 }}"
+        )
+    return lines
+
+
+def _dynamic_block_lines(
+    proxy: Proxy, block: DynamicBlock, trusted: bool, exempt_source: str, exempt_forwarded: str
+) -> list[str]:
+    """The dynamic block's counting, marking and refusal in a pool (B271, B424)."""
+
     counted, blocked = block_tables(proxy.name)
     over = _acl_name(proxy.name, "dynblock-over")
-    lines, exempt_source, exempt_forwarded = _block_exempt(proxy, networks, forwarded=trusted)
+    lines: list[str] = []
     #
     # Two lines with one name are one condition, read as an OR - so either
     # limit is enough. Read when a rule asks, after this request was counted.
@@ -4054,18 +4128,57 @@ def _http_block_lines(
     lines.append(
         f"    http-request deny deny_status {block.status} if {{ var(txn.dynblock) -m found }}"
     )
-    if block.max_errors is not None:
-        #
-        # An error is a 4xx the server gave. `http-response` does not run for
-        # an answer HAProxy gives itself, so neither the block's refusal nor
-        # the rate limit's 429 is counted: a block cannot extend itself, and
-        # an address just over the rate limit is not blocked for "errors".
-        # Nothing is counted for an address that is not tracked (an exempt one).
-        #
-        lines.append(
-            f"    http-response sc-inc-gpc(0,{BLOCK_COUNT_COUNTER}) if {{ status 400:499 }}"
-        )
     return lines
+
+
+#
+# What a deny rule's block answers every later request with (B525): the 403 the
+# match itself got. The dynamic block's own answer is its setting, and a rule
+# block works on an object that has none.
+#
+RULE_BLOCK_STATUS = 403
+
+
+def _rule_block_lookups(
+    proxy: Proxy,
+    times: Sequence[str],
+    trusted: bool,
+    exempt_source: str,
+    exempt_forwarded: str,
+) -> list[str]:
+    """A pool's refusal of an address a deny rule blocked, from each of the rules' tables (B525).
+
+    Read after the dynamic block, which has answered already where it holds
+    the address too. `in_table` takes no counter slot, so the tables cost no
+    `tune.stick-counters`. An exempt address is not refused even if a table
+    holds it from before it was exempted, as the dynamic block reads its own.
+    """
+
+    if not times:
+        return []
+    forwarded = "req.hdr_ip(X-Forwarded-For,-1)"
+    lines: list[str] = []
+    for block_for in times:
+        table = rule_block_table(proxy.name, block_for)
+        if trusted:
+            lines += [
+                f"    http-request set-var(txn.ruleblock) {forwarded},table_gpt(0,{table}) "
+                f"if {TRUSTED_ACL}{exempt_forwarded} {{ {forwarded},in_table({table}) }}",
+                f"    http-request set-var(txn.ruleblock) src,table_gpt(0,{table}) "
+                f"if !{TRUSTED_ACL}{exempt_source} {{ src,in_table({table}) }}",
+            ]
+        else:
+            lines.append(
+                f"    http-request set-var(txn.ruleblock) src,table_gpt(0,{table}) "
+                f"if{exempt_source} {{ src,in_table({table}) }}"
+            )
+    rule = f"dynamic-block/{BLOCK_REASONS[BLOCK_REASON_BY_NAME['rule']]}:deny"
+    return [
+        *lines,
+        f"    http-request set-var(txn.rule) str({rule}) if {{ var(txn.ruleblock) -m found }}",
+        f"    http-request deny deny_status {RULE_BLOCK_STATUS} "
+        f"if {{ var(txn.ruleblock) -m found }}",
+    ]
 
 
 def _tcp_block_lines(proxy: Proxy, networks: Mapping[str, Sequence[str]]) -> list[str]:

@@ -361,6 +361,20 @@ class EnoughStickCountersForWhatIsGenerated(unittest.TestCase):
             )
         )
 
+    def test_a_rule_s_block_needs_the_same_slots_and_socket(self) -> None:
+        """B525: a deny rule's block marks on sc4 in a table of its own, from the frontend."""
+
+        rule = b"frontend fe\n    http-request track-sc4 src table mgd-shop-ruleblock-2h\n"
+        problem = self.problem("global\n    tune.stick-counters 5\n", rule)
+        assert problem is not None
+        self.assertIn(
+            "an object blocks addresses, and core/haproxy.cfg has no admin socket", problem
+        )
+        self.assertIsNone(self.problem(f"global\n    tune.stick-counters 5\n{self.SOCKET}", rule))
+        short = self.problem(f"global\n{self.SOCKET}", rule)
+        assert short is not None
+        self.assertIn("an object uses blocking, which needs 5", short)
+
     def test_without_dynamic_blocking_the_default_is_enough(self) -> None:
         self.assertIsNone(self.problem("global\n", b"    http-request track-sc2 src\n"))
 
@@ -390,7 +404,7 @@ class EnoughStickCountersForWhatIsGenerated(unittest.TestCase):
         self.assertIn("      tune.stick-counters 6\n", problem)
         both = self.problem("global\n", self.LIMITED + self.GENERATED)
         assert both is not None
-        self.assertIn("uses dynamic blocking and path limits, which needs 6", both)
+        self.assertIn("uses blocking and path limits, which needs 6", both)
 
     def test_path_limits_alone_need_no_admin_socket(self) -> None:
         """Nothing lists or lifts a count, so the socket blocks need is not asked for."""

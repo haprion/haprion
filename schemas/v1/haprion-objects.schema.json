@@ -232,7 +232,7 @@
           "maxLength": 200
         },
         "groups": {
-          "description": "The cluster groups the object names as sources (allow_from, deny_from, access rules, dynamic blocking's exempt), in name order; null where the document could not be read. Absent from an older release.",
+          "description": "The cluster groups the object names as sources (allow_from, deny_from, access rules, never_blocked), in name order; null where the document could not be read. Absent from an older release.",
           "type": [
             "array",
             "null"

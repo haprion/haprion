@@ -40,16 +40,17 @@
 <input type="hidden" name="waf_exceptions" value="{{ form.waf_exceptions }}">
 
 {% macro rule_card(rule, open=False) %}
-<details class="rule-card"{% if open %} open{% endif %} data-rule>
-  <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title" data-rule-title>{{ rule.name or 'New rule' }}</span>{% if rule.mode in ('deny', 'block') %}<span class="status-badge status-badge-unknown" data-rule-badge>{{ 'Blocking' if rule.mode == 'block' else 'Denying' }}</span>{% else %}<span class="status-badge status-badge-warning" data-rule-badge>Logging</span>{% endif %}<span class="form-group-summary" data-rule-summary>{{ rule.summary }}</span></summary>
+<details class="rule-card{% if rule.mode == 'block' %} rule-blocking{% endif %}"{% if open %} open{% endif %} data-rule>
+  <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title" data-rule-title>{{ rule.name or 'New rule' }}</span>{% if rule.mode in ('deny', 'block') %}<span class="status-badge status-badge-unknown" data-rule-badge>{{ 'Blocking ' ~ (rule.block_for or default_rule_block_for) if rule.mode == 'block' else 'Denying' }}</span>{% else %}<span class="status-badge status-badge-warning" data-rule-badge>Logging</span>{% endif %}<span class="form-group-summary" data-rule-summary>{{ rule.summary }}</span></summary>
   <input type="hidden" name="rule_index" value="{{ rule.index }}">
   <div class="form-grid">
     <label><span class="field-title">Name</span><input name="rule_name" value="{{ rule.name }}" placeholder="admin-post"></label>
-    <label><span class="field-title">Mode</span><select name="rule_mode">{% for mode in ('log', 'deny', 'block') %}<option{% if rule.mode == mode %} selected{% endif %}>{{ mode }}</option>{% endfor %}</select></label>
+    <label><span class="field-title">Mode</span><select name="rule_mode">{% for mode, label in (('log', 'log only'), ('deny', 'deny'), ('block', 'deny and block the address')) %}<option value="{{ mode }}"{% if rule.mode == mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    <label data-rule-block-for{% if rule.mode != 'block' %} hidden{% endif %}><span class="field-title">Block for</span><input name="rule_block_for" value="{{ rule.block_for or default_rule_block_for }}" size="10" placeholder="30m"></label>
     <label><span class="field-title">Path <span class="optional">(optional)</span></span><input name="rule_path" value="{{ rule.path }}" placeholder="/admin"></label>
     <label><span class="field-title">Path match</span><select name="rule_match">{% for match in ('prefix', 'exact') %}<option{% if rule.match == match %} selected{% endif %}>{{ match }}</option>{% endfor %}</select></label>
+    <div class="field rule-methods"><span class="field-title">Methods <span class="optional">(optional)</span></span><div class="form-checks">{% for method in choices.methods %}<label class="check"><input type="checkbox" name="rule_methods" value="{{ rule.index }}:{{ method }}"{% if method in rule.methods %} checked{% endif %}> {{ method }}</label>{% endfor %}</div></div>
   </div>
-  <div class="rule-row"><span class="field-title">Methods <span class="optional">(optional)</span></span><div class="form-checks">{% for method in choices.methods %}<label class="check"><input type="checkbox" name="rule_methods" value="{{ rule.index }}:{{ method }}"{% if method in rule.methods %} checked{% endif %}> {{ method }}</label>{% endfor %}</div></div>
   <div class="form-grid">
     <label><span class="field-title">Header <span class="optional">(optional)</span></span><input name="rule_header" value="{{ rule.header }}" placeholder="User-Agent"></label>
     <label><span class="field-title">Header match</span><select name="rule_header_match">{% for match in ('equals', 'prefix', 'contains') %}<option{% if rule.header_match == match %} selected{% endif %}>{{ match }}</option>{% endfor %}</select></label>
@@ -77,7 +78,7 @@
 </details>
 {% endmacro %}
 {% set new_limit = {'path': '', 'match': 'prefix', 'requests': '', 'window': rate_window, 'summary': 'prefix · at most ? per ' ~ rate_window} %}
-{% set new_rule = {'index': '__index__', 'name': '', 'mode': 'log', 'path': '', 'match': 'prefix', 'methods': [], 'header': '', 'header_match': 'equals', 'header_value': '', 'source': '', 'negate': False, 'summary': 'No condition'} %}
+{% set new_rule = {'index': '__index__', 'name': '', 'mode': 'log', 'block_for': '', 'path': '', 'match': 'prefix', 'methods': [], 'header': '', 'header_match': 'equals', 'header_value': '', 'source': '', 'negate': False, 'summary': 'No condition'} %}
 
 {% macro group(state, shown='', expanded=false) %}
 <details class="form-group"{{ shown }}{% if expanded or (open_group and open_group == state.key) %} open{% endif %}>
@@ -164,14 +165,6 @@
         <small class="warning-text" data-open-note hidden><svg class="warning-mark" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8 15 14.2H1z"></path><path d="M8 6.2v3.9M8 12v.1"></path></svg>Reachable from everywhere.</small>
       </div>
       <label><span class="field-title">Reachable from — addresses <span class="optional">(optional)</span></span><textarea name="allow_ranges" rows="5" placeholder="198.51.100.0/24&#10;203.0.113.10">{{ form.allow_ranges }}</textarea><small>One address, range or <code>country:SE</code> per line.</small></label>
-      <label{{ when('protocol', 'http https tcp') }}><span class="field-title">Rate limit <span class="optional">(optional)</span></span><input name="rate_limit" value="{{ form.rate_limit }}" size="10" placeholder="100"><small>Per source address; new connections for TCP.</small></label>
-      <label{{ when('protocol', 'http https tcp') }}><span class="field-title">Rate window <span class="optional">(optional)</span></span><input name="rate_window" value="{{ form.rate_window }}" size="10" placeholder="{{ rate_window }}"><small>Such as <code>10s</code> or <code>1m</code>.</small></label>
-    </div>
-    <div class="rule-list"{{ when('protocol', 'http https') }} data-limit-list>
-      <div class="rule-list-head"><span class="field-title">Path limits <span class="optional">(optional)</span></span></div>
-      {% for limit in form.path_limits %}{{ limit_card(limit) }}{% endfor %}
-      <template data-limit-template>{{ limit_card(new_limit, open=True) }}</template>
-      <div class="rule-list-foot"><button type="button" class="secondary-button" data-add-limit>Add limit</button></div>
     </div>
     <div class="form-grid form-grid-pair"{{ when('protocol', 'http https tcp') }}>
       <label><span class="field-title">Denied — groups <span class="optional">(optional)</span></span>
@@ -185,13 +178,38 @@
       </label>
       <label><span class="field-title">Denied — addresses <span class="optional">(optional)</span></span><textarea name="deny_ranges" rows="5" placeholder="203.0.113.0/24">{{ form.deny_ranges }}</textarea><small>One address, range or <code>country:SE</code> per line.</small></label>
       <label><span class="field-title">Denied — mode</span><select name="deny_mode" class="single-select">{% set chosen_mode = 'deny' if form.protocol == 'tcp' else form.deny_mode %}<option value="log"{{ when('protocol', 'http https') }}{% if chosen_mode == 'log' %} selected{% endif %}>log only</option><option value="deny"{% if chosen_mode == 'deny' %} selected{% endif %}>deny</option></select></label>
-      <label{{ when('protocol', 'http https') }}><span class="field-title">Max request body <span class="optional">(optional)</span></span><input name="max_request_body" value="{{ form.max_request_body }}" size="10" placeholder="10m"><small>Declared size; <code>k</code>, <code>m</code>, <code>g</code>.</small></label>
     </div>
-    <div class="rule-list"{{ when('protocol', 'http https') }} data-rule-list>
+    <div class="rule-list"{{ when('protocol', 'http https') }} data-rule-list data-default-block-for="{{ default_rule_block_for }}">
       <div class="rule-list-head"><span class="field-title">Deny rules <span class="optional">(optional)</span></span></div>
       {% for rule in form.deny_rules %}{{ rule_card(rule) }}{% endfor %}
       <template data-rule-template>{{ rule_card(new_rule, open=True) }}</template>
       <div class="rule-list-foot"><button type="button" class="secondary-button" data-add-rule>Add rule</button></div>
+    </div>
+    <div class="form-grid form-grid-pair"{{ when('protocol', 'http https tcp') }}>
+      <div class="field">
+        <label><span class="field-title">Never blocked — groups <span class="optional">(optional)</span></span>
+          <select name="block_exempt_from" multiple size="5">
+            <option value="" {% if form.block_exempt_ranges|trim %}hidden{% elif not form.block_exempt_from %}selected{% endif %}>Nobody</option>
+            {% for network in choices.networks %}<option value="{{ network }}"{% if network in form.block_exempt_from %} selected{% endif %}>{{ network }}</option>{% endfor %}
+          </select>
+        </label>
+        <small>Defined on the <a href="/network">Network</a> page.</small>
+      </div>
+      <label><span class="field-title">Never blocked — addresses <span class="optional">(optional)</span></span><textarea name="block_exempt_ranges" rows="5" placeholder="198.51.100.0/24&#10;203.0.113.10">{{ form.block_exempt_ranges }}</textarea><small>One address or range per line.</small></label>
+    </div>
+    {% endcall %}
+
+    {% call group(groups.limits, when('protocol', 'http https tcp')) %}
+    <div class="form-grid">
+      <label{{ when('protocol', 'http https tcp') }}><span class="field-title">Rate limit <span class="optional">(optional)</span></span><input name="rate_limit" value="{{ form.rate_limit }}" size="10" placeholder="100"><small>Per source address; new connections for TCP.</small></label>
+      <label{{ when('protocol', 'http https tcp') }}><span class="field-title">Rate window <span class="optional">(optional)</span></span><input name="rate_window" value="{{ form.rate_window }}" size="10" placeholder="{{ rate_window }}"><small>Such as <code>10s</code> or <code>1m</code>.</small></label>
+      <label{{ when('protocol', 'http https') }}><span class="field-title">Max request body <span class="optional">(optional)</span></span><input name="max_request_body" value="{{ form.max_request_body }}" size="10" placeholder="10m"><small>Declared size; <code>k</code>, <code>m</code>, <code>g</code>.</small></label>
+    </div>
+    <div class="rule-list"{{ when('protocol', 'http https') }} data-limit-list>
+      <div class="rule-list-head"><span class="field-title">Path limits <span class="optional">(optional)</span></span></div>
+      {% for limit in form.path_limits %}{{ limit_card(limit) }}{% endfor %}
+      <template data-limit-template>{{ limit_card(new_limit, open=True) }}</template>
+      <div class="rule-list-foot"><button type="button" class="secondary-button" data-add-limit>Add limit</button></div>
     </div>
     {% endcall %}
 
@@ -206,18 +224,6 @@
       <label{{ when('protocol', 'tcp') }}><span class="field-title">New connections <span class="optional">(optional)</span></span><input name="block_connections" value="{{ form.block_connections }}" size="10" placeholder="50"><small>Per source address, in the window.</small></label>
       <label><span class="field-title">Window</span><input name="block_window" value="{{ form.block_window }}" size="10" placeholder="{{ rate_window }}"><small>Such as <code>10s</code> or <code>1m</code>.</small></label>
       <label><span class="field-title">Block for</span><input name="block_for" value="{{ form.block_for }}" size="10" placeholder="30m"><small>From <code>1m</code> to <code>24h</code>; longer while it goes on.</small></label>
-    </div>
-    <div class="form-grid form-grid-pair">
-      <div class="field">
-        <label><span class="field-title">Never blocked — groups <span class="optional">(optional)</span></span>
-          <select name="block_exempt_from" multiple size="5">
-            <option value="" {% if form.block_exempt_ranges|trim %}hidden{% elif not form.block_exempt_from %}selected{% endif %}>Nobody</option>
-            {% for network in choices.networks %}<option value="{{ network }}"{% if network in form.block_exempt_from %} selected{% endif %}>{{ network }}</option>{% endfor %}
-          </select>
-        </label>
-        <small>Defined on the <a href="/network">Network</a> page.</small>
-      </div>
-      <label><span class="field-title">Never blocked — addresses <span class="optional">(optional)</span></span><textarea name="block_exempt_ranges" rows="5" placeholder="198.51.100.0/24&#10;203.0.113.10">{{ form.block_exempt_ranges }}</textarea><small>One address or range per line.</small></label>
       <label{{ when('protocol', 'http https') }}><span class="field-title">Answer with</span><select name="block_status" class="single-select">{% for code in ('403', '404', '429') %}<option{% if form.block_status == code %} selected{% endif %}>{{ code }}</option>{% endfor %}</select></label>
     </div>
     {% endcall %}

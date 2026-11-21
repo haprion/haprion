@@ -134,9 +134,9 @@ class TheDialogInABrowser(DraftReading):
         page.wait_for_selector("[data-advanced-dialog][open]")
 
     def test_a_link_into_the_form_focuses_its_field(self) -> None:
-        """B517, 12: `?open=access&focus=rate_limit` opens Access and puts the cursor there."""
+        """B517, 12: `?open=limits&focus=rate_limit` opens Limits and puts the cursor there."""
 
-        page = self.signed_in("/proxies/edge-demo/public-web/edit?open=access&focus=rate_limit")
+        page = self.signed_in("/proxies/edge-demo/public-web/edit?open=limits&focus=rate_limit")
 
         page.wait_for_function(
             "document.activeElement && document.activeElement.name === 'rate_limit'"

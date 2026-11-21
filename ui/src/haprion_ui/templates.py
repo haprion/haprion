@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
+from haprion.proxy_model import DEFAULT_RULE_BLOCK_FOR
 from markupsafe import Markup, escape
 from starlette.templating import _TemplateResponse
 
@@ -124,6 +125,7 @@ TEMPLATES.env.globals["new_request_key"] = lambda: str(uuid4())
 #
 TEMPLATES.env.globals["check_phrase"] = health.check_phrase
 TEMPLATES.env.globals["form_groups"] = form_groups
+TEMPLATES.env.globals["default_rule_block_for"] = DEFAULT_RULE_BLOCK_FOR
 TEMPLATES.env.globals["waf_exception_count"] = waf_exception_count
 TEMPLATES.env.globals["waf_where"] = waf.where
 TEMPLATES.env.globals["health_rows"] = health_rows

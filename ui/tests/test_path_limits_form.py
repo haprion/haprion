@@ -140,12 +140,12 @@ class AnObjectWithLimitsOpensInTheForm(unittest.TestCase):
         rebuilt = yaml.safe_load(build_document(fields))
         self.assertEqual(len(rebuilt["path_limits"]), 2)
 
-    def test_the_access_group_counts_the_limits(self) -> None:
+    def test_the_limits_group_counts_the_limits(self) -> None:
         fields = form_from_document(LIMITED)
-        access = form_groups(fields)["access"]
+        limits = form_groups(fields)["limits"]
 
-        self.assertIn("2 path limits", access.summary)
-        self.assertNotIn("path limit", form_groups(dict(DEFAULTS))["access"].summary)
+        self.assertIn("2 path limits", limits.summary)
+        self.assertNotIn("path limit", form_groups(dict(DEFAULTS))["limits"].summary)
 
     def test_a_changed_limit_is_one_line_named_by_its_paths(self) -> None:
         after = LIMITED.replace("max_requests: 5\n", "max_requests: 9\n")
@@ -189,7 +189,7 @@ class AddingAndRemovingLimitsInTheBrowser(EditorTestCase):
                 lambda route, *_, kind=kind, body=body: route.fulfill(content_type=kind, body=body),
             )
         page.goto(f"{ORIGIN}/proxies/alpha/shop/edit")
-        page.click("summary:has-text('Access')")
+        page.click("summary:has-text('Limits')")
         return page
 
     def test_a_limit_s_line_follows_what_is_typed(self) -> None:

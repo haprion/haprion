@@ -506,8 +506,45 @@
     }
     list.addEventListener("click", (event) => {
       const remove = event.target.closest("[data-remove-rule]");
-      if (remove) remove.closest("[data-rule]").remove();
+      if (remove) {
+        remove.closest("[data-rule]").remove();
+        countRules();
+      }
     });
+    //
+    // The Access group's badges count what the rules do, as the server does:
+    // denying and blocking apart. The deny list's own mode is counted by the
+    // server and stays in the count the page was rendered with.
+    //
+    const countRules = () => {
+      const group = list.closest("details.form-group");
+      const modes = [...list.querySelectorAll("select[name='rule_mode']")].map((s) => s.value);
+      const counts = {
+        log: modes.filter((m) => m === "log").length,
+        deny: modes.filter((m) => m === "deny").length,
+        block: modes.filter((m) => m === "block").length,
+      };
+      if (!group) return;
+      const list_mode = group.querySelector("select[name='deny_mode']");
+      const listed = group.querySelector("select[name='deny_from']");
+      const ranges = group.querySelector("textarea[name='deny_ranges']");
+      const denied =
+        (listed && [...listed.selectedOptions].some((o) => o.value)) || (ranges && ranges.value.trim());
+      if (denied && list_mode) counts[list_mode.value === "deny" ? "deny" : "log"] += 1;
+      const wanted = [
+        [`${counts.log} logging`, "warning", counts.log],
+        [`${counts.deny} denying`, "unknown", counts.deny],
+        [`${counts.block} blocking`, "unknown", counts.block],
+      ].filter(([, , n]) => n);
+      for (const badge of group.querySelectorAll(":scope > summary .form-group-badge")) badge.remove();
+      const summary = group.querySelector(":scope > summary");
+      for (const [text, kind] of wanted) {
+        const badge = document.createElement("span");
+        badge.className = `status-badge status-badge-${kind} form-group-badge`;
+        badge.textContent = text;
+        summary.append(badge);
+      }
+    };
     //
     // A rule's folded line follows its name and mode as they are typed. Its
     // conditions are worded by the server, so that part says it has changed,
@@ -521,10 +558,15 @@
       const mode = rule.querySelector("select[name='rule_mode']").value;
       const deny = mode !== "log";
       const badge = rule.querySelector("[data-rule-badge]");
-      badge.textContent = { log: "Logging", deny: "Denying", block: "Blocking" }[mode] || "Logging";
+      const time = rule.querySelector("input[name='rule_block_for']").value.trim() || list.dataset.defaultBlockFor;
+      badge.textContent =
+        mode === "block" ? `Blocking ${time}` : { log: "Logging", deny: "Denying" }[mode] || "Logging";
       badge.classList.toggle("status-badge-unknown", deny);
       badge.classList.toggle("status-badge-warning", !deny);
-      if (!["rule_name", "rule_mode"].includes(event.target.name)) {
+      rule.classList.toggle("rule-blocking", mode === "block");
+      rule.querySelector("[data-rule-block-for]").hidden = mode !== "block";
+      countRules();
+      if (!["rule_name", "rule_mode", "rule_block_for"].includes(event.target.name)) {
         const line = rule.querySelector("[data-rule-summary]");
         line.textContent = "Changed — validate to see the result";
         line.classList.add("changed");
@@ -532,6 +574,15 @@
     };
     list.addEventListener("input", follow);
     list.addEventListener("change", follow);
+    const owner = list.closest("details.form-group");
+    if (owner) {
+      owner.addEventListener("change", (event) => {
+        if (["deny_from", "deny_ranges", "deny_mode"].includes(event.target.name)) countRules();
+      });
+      owner.addEventListener("input", (event) => {
+        if (event.target.name === "deny_ranges") countRules();
+      });
+    }
     if (!template || !add) return;
     add.addEventListener("click", () => {
       const html = template.innerHTML.replaceAll("__index__", String(next));
@@ -539,6 +590,7 @@
       template.insertAdjacentHTML("beforebegin", html);
       const added = template.previousElementSibling;
       added.querySelector("input[name='rule_name']").focus();
+      countRules();
     });
   };
 

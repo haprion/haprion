@@ -29,8 +29,8 @@ class EveryFieldHasExactlyOnePlace(unittest.TestCase):
 class TheClosedLineSaysWhatTheGroupHolds(unittest.TestCase):
     def test_the_rate_limit_is_read_with_its_default_window(self) -> None:
         self.assertEqual(
-            form_groups(form(rate_limit="5"))["access"].summary,
-            "From everywhere · at most 5 per 10s",
+            form_groups(form(rate_limit="5"))["limits"].summary,
+            "at most 5 per 10s",
         )
 
     def test_a_redirect_names_where_it_goes(self) -> None:
@@ -77,15 +77,39 @@ class TheAccessGroupSaysWhatItsRulesDo(unittest.TestCase):
             [("2 logging", "warning"), ("1 denying", "unknown")],
         )
 
-    def test_a_blocking_rule_is_counted_with_the_refusals(self) -> None:
-        """B517, 10: it refuses its match as a denying rule does."""
-
-        state = form_groups({"rule_mode": ["block", "log"]})["access"]
+    def test_blocking_rules_are_counted_apart_from_denying_ones(self) -> None:
+        state = form_groups({"rule_mode": ["block", "block", "deny", "deny", "deny", "log"]})[
+            "access"
+        ]
 
         self.assertEqual(
             [(badge.text, badge.kind) for badge in state.badges],
-            [("1 logging", "warning"), ("1 denying", "unknown")],
+            [("1 logging", "warning"), ("3 denying", "unknown"), ("2 blocking", "unknown")],
         )
+
+    def test_limits_hold_the_rate_the_paths_and_the_body_and_access_does_not(self) -> None:
+        limits = GROUPS["limits"].fields
+        access = GROUPS["access"].fields
+        for field in (
+            "rate_limit",
+            "rate_window",
+            "max_request_body",
+            "limit_path",
+            "limit_match",
+            "limit_requests",
+            "limit_window",
+        ):
+            self.assertIn(field, limits)
+            self.assertNotIn(field, access)
+        for field in ("allow_from", "deny_from", "rule_block_for", "block_exempt_from"):
+            self.assertIn(field, access)
+        self.assertNotIn("block_exempt_from", GROUPS["blocking"].fields)
+        self.assertEqual(
+            form_groups(form(max_request_body="1m", rate_limit="5"))["limits"].summary,
+            "at most 5 per 10s · body ≤ 1m",
+        )
+        titles = [state.title for state in form_groups(form()).values()]
+        self.assertEqual(titles[1:4], ["Access", "Limits", "Dynamic blocking"])
 
     def test_an_object_without_rules_shows_no_badge(self) -> None:
         self.assertEqual(form_groups({})["access"].badges, ())
@@ -94,9 +118,7 @@ class TheAccessGroupSaysWhatItsRulesDo(unittest.TestCase):
         # 26-11-14: a list chosen under Denied was not to be found with the group closed.
         lists = ("spamhaus-drop", "firehol-level1", "community")
         one = form_groups(form(deny_from=["office", "spamhaus-drop"]), blocklists=lists)
-        self.assertEqual(
-            one["access"].summary, "From everywhere · no rate limit · blocklist spamhaus-drop"
-        )
+        self.assertEqual(one["access"].summary, "From everywhere · blocklist spamhaus-drop")
         two = form_groups(form(deny_from=["spamhaus-drop", "community"]), blocklists=lists)
         self.assertTrue(two["access"].summary.endswith("blocklists spamhaus-drop, community"), two)
         three = form_groups(form(deny_from=list(lists)), blocklists=lists)

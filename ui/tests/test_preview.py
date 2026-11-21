@@ -736,9 +736,9 @@ class TheDynamicBlockTheObjectAsksFor(unittest.TestCase):
                 "max_errors": 20,
                 "block_for": "2h",
                 "status": 429,
-                "exempt": ["office", "192.0.2.10"],
             },
         )
+        self.assertEqual(document["never_blocked"], ["office", "192.0.2.10"])
         result = check(written)
         self.assertIsNone(result.problem)
         self.assertIn(
@@ -760,11 +760,29 @@ class TheDynamicBlockTheObjectAsksFor(unittest.TestCase):
         self.assertEqual(document["dynamic_block"], {"max_new_connections": 50, "block_for": "30m"})
         self.assertIsNone(check(written).problem)
 
-    def test_never_blocked_without_a_trigger_is_refused(self) -> None:
-        with self.assertRaises(ValueError) as raised:
-            build_document(form(block_exempt_ranges="192.0.2.10"))
+    def test_never_blocked_stands_without_a_trigger(self) -> None:
+        written = form(block_exempt_from=("office",), block_exempt_ranges="192.0.2.10")
+        document = yaml.safe_load(build_document(written))
 
-        self.assertIn("Never blocked needs Requests or Errors", str(raised.exception))
+        self.assertNotIn("dynamic_block", document)
+        self.assertEqual(document["never_blocked"], ["office", "192.0.2.10"])
+        self.assertIsNone(check(written).problem)
+        reopened = form_from_document(build_document(written), networks=("office",))
+        self.assertEqual(reopened["block_exempt_from"], ("office",))
+        self.assertEqual(reopened["block_exempt_ranges"], "192.0.2.10")
+
+    def test_the_older_exempt_opens_in_never_blocked_and_saves_as_the_new_key(self) -> None:
+        older = build_document(form(block_requests="300", block_for="1h")).replace(
+            "  block_for: 1h\n", "  block_for: 1h\n  exempt:\n  - 192.0.2.10\n  - office\n"
+        )
+        self.assertIn("exempt:", older)
+        opened = form_from_document(older, networks=("office",))
+
+        self.assertEqual(opened["block_exempt_from"], ("office",))
+        self.assertEqual(opened["block_exempt_ranges"], "192.0.2.10")
+        saved = yaml.safe_load(build_document(opened))
+        self.assertEqual(saved["never_blocked"], ["office", "192.0.2.10"])
+        self.assertNotIn("exempt", saved["dynamic_block"])
 
     def test_numbers_that_are_not_numbers_are_named(self) -> None:
         for fields, said in (
@@ -805,6 +823,28 @@ class TheDynamicBlockTheObjectAsksFor(unittest.TestCase):
                         else ""
                     )
                     self.assertEqual(reopened[key], expected, key)
+
+    def test_a_block_rule_without_a_time_shows_the_one_it_inherits(self) -> None:
+        stored = build_document(
+            form(
+                block_requests="300",
+                block_for="1h",
+                rule_index=["0"],
+                rule_name=["probe"],
+                rule_mode=["block"],
+                rule_block_for=["1h"],
+                rule_path=["/.env"],
+            )
+        ).replace("  path: /.env\n  block_for: 1h\n", "  path: /.env\n", 1)
+        self.assertEqual(stored.count("block_for"), 1)
+
+        reopened = form_from_document(stored, networks=())
+
+        self.assertEqual(reopened["rule_block_for"], ["1h"])
+        plain = build_document(
+            form(rule_index=["0"], rule_name=["probe"], rule_mode=["block"], rule_path=["/.env"])
+        ).replace("  block_for: 30m\n", "")
+        self.assertEqual(form_from_document(plain, networks=())["rule_block_for"], ["30m"])
 
     def test_a_stored_block_that_spells_out_the_defaults_still_opens(self) -> None:
         stored = build_document(form(block_requests="300")).replace(

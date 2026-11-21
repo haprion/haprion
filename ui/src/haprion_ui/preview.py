@@ -32,6 +32,7 @@ from haprion.proxy_model import (
     BALANCE,
     DEFAULT_BLOCK_STATUS,
     DEFAULT_HEALTH_METHOD,
+    DEFAULT_RULE_BLOCK_FOR,
     DNS_BALANCE,
     DNS_QUERY_TYPES,
     HEALTH_METHODS,
@@ -214,6 +215,7 @@ DEFAULTS = {
     "rule_index": [],
     "rule_name": [],
     "rule_mode": [],
+    "rule_block_for": [],
     "rule_path": [],
     "rule_match": [],
     "rule_header": [],
@@ -642,8 +644,8 @@ def _blocking_document(form: Mapping[str, object], protocol: str) -> dict[str, o
     The window, the time and the answer stand filled in, so they mean nothing
     until a trigger does; the window and the answer are written only where they
     differ from the engine's defaults, so an object keeps saying what it said.
-    Groups and addresses never blocked without a trigger are refused rather
-    than dropped: somebody meant something by them.
+    Never blocked is the object's own (`never_blocked`), written by
+    `build_document`; it needs no trigger here.
     """
 
     def text(key: str) -> str:
@@ -657,12 +659,8 @@ def _blocking_document(form: Mapping[str, object], protocol: str) -> dict[str, o
             ("block_errors", "max_errors", "Errors"),
         )
     )
-    exempt = _listed(form.get("block_exempt_from", ())) + _entries(text("block_exempt_ranges"))
     written = [(key, name, label) for name, key, label in triggers if text(name)]
     if not written:
-        if exempt:
-            names = " or ".join(label for _, _, label in triggers)
-            raise ValueError(f"Never blocked needs {names}: nothing would start a block")
         return None
     block: dict[str, object] = {}
     window = text("block_window")
@@ -681,8 +679,6 @@ def _blocking_document(form: Mapping[str, object], protocol: str) -> dict[str, o
             raise ValueError("Answer with must be a status code")
         if int(status) != DEFAULT_BLOCK_STATUS:
             block["status"] = int(status)
-    if exempt:
-        block["exempt"] = exempt
     return block
 
 
@@ -980,6 +976,10 @@ def build_document(form: dict[str, object]) -> str:
     blocking = _blocking_document(form, protocol)
     if blocking is not None:
         document["dynamic_block"] = blocking
+    if protocol in ("http", "https", "tcp"):
+        never = _listed(form.get("block_exempt_from", ())) + _entries(text("block_exempt_ranges"))
+        if never:
+            document["never_blocked"] = never
 
     #
     # Written last because it is the one field that is about the object's state
@@ -1372,6 +1372,7 @@ RULE_FIELDS = (
     "header_match",
     "header_value",
     "source",
+    "block_for",
 )
 
 
@@ -1450,6 +1451,8 @@ def _rule_document(rule: Mapping[str, Any]) -> dict[str, Any]:
         document["source"] = sources
     if rule["negate"]:
         document["source_negate"] = True
+    if document["mode"] == "block":
+        document["block_for"] = rule.get("block_for") or DEFAULT_RULE_BLOCK_FOR
     return document
 
 
@@ -1575,13 +1578,21 @@ def _with_normalised_pool_defaults(data: Any) -> Any:
     return {**data, "backends": pools}
 
 
+def _never_blocked(data: Mapping[str, Any]) -> list[str]:
+    """The object's `never_blocked`, or the older `dynamic_block.exempt` where it still lives."""
+
+    listed = data.get("never_blocked")
+    if not isinstance(listed, list):
+        listed = _sub(data, "dynamic_block").get("exempt")
+    return [str(entry) for entry in listed] if isinstance(listed, list) else []
+
+
 def _blocking_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str, Any]:
     """`dynamic_block` as the form holds it; the filled-in defaults when there is none."""
 
     known = set(networks)
     block = _sub(data, "dynamic_block")
-    exempt = block.get("exempt")
-    exempt = [str(entry) for entry in exempt] if isinstance(exempt, list) else []
+    exempt = _never_blocked(data)
     return {
         "block_requests": str(block.get("max_requests", "") or ""),
         "block_errors": str(block.get("max_errors", "") or ""),
@@ -1595,26 +1606,45 @@ def _blocking_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict
 
 
 def _with_normalised_blocking(data: Any, networks: Collection[str]) -> Any:
-    """The stored object with `dynamic_block` written as the form writes it.
+    """The stored object with blocking written as the form writes it.
 
-    The engine's defaults left unsaid, and the groups never blocked ahead of
-    the addresses, as the form's two boxes give them back: the same block.
+    The engine's defaults left unsaid; the groups never blocked ahead of the
+    addresses, as the form's two boxes give them back, at the top of the object
+    where `never_blocked` lives rather than in `dynamic_block.exempt`; and a
+    block rule that took its time from the object's dynamic blocking saying it.
     """
 
-    if not isinstance(data, Mapping) or not isinstance(data.get("dynamic_block"), Mapping):
+    if not isinstance(data, Mapping):
         return data
-    block = dict(data["dynamic_block"])
-    if block.get("window") == DEFAULT_ABUSE_WINDOW:
-        block.pop("window")
-    if block.get("status") == DEFAULT_BLOCK_STATUS:
-        block.pop("status")
-    exempt = block.get("exempt")
-    if isinstance(exempt, list):
+    result = dict(data)
+    block = result.get("dynamic_block")
+    inherited = DEFAULT_RULE_BLOCK_FOR
+    if isinstance(block, Mapping):
+        block = dict(block)
+        if block.get("window") == DEFAULT_ABUSE_WINDOW:
+            block.pop("window")
+        if block.get("status") == DEFAULT_BLOCK_STATUS:
+            block.pop("status")
+        inherited = str(block.get("block_for", "") or "") or inherited
+        if "exempt" in block and "never_blocked" not in result:
+            result["never_blocked"] = block["exempt"]
+        block.pop("exempt", None)
+        result["dynamic_block"] = block
+    never = result.get("never_blocked")
+    if isinstance(never, list):
         known = set(networks)
-        block["exempt"] = [entry for entry in exempt if entry in known] + [
-            entry for entry in exempt if entry not in known
+        result["never_blocked"] = [entry for entry in never if entry in known] + [
+            entry for entry in never if entry not in known
         ]
-    return {**data, "dynamic_block": block}
+    rules = result.get("deny_rules")
+    if isinstance(rules, list):
+        result["deny_rules"] = [
+            {**rule, "block_for": rule.get("block_for") or inherited}
+            if isinstance(rule, Mapping) and rule.get("mode") == "block"
+            else rule
+            for rule in rules
+        ]
+    return result
 
 
 def _access_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str, Any]:
@@ -1631,6 +1661,9 @@ def _access_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[s
         "max_request_body": str(data.get("max_request_body", "") or ""),
     }
     columns: dict[str, list[str]] = {f"rule_{name}": [] for name in ("index", *RULE_FIELDS)}
+    inherited_block_for = (
+        str(_sub(data, "dynamic_block").get("block_for", "") or "") or DEFAULT_RULE_BLOCK_FOR
+    )
     methods: list[str] = []
     negated: list[str] = []
     rules = data.get("deny_rules")
@@ -1644,6 +1677,7 @@ def _access_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[s
             "index": index,
             "name": str(rule.get("name", "") or ""),
             "mode": str(rule.get("mode", "log") or "log"),
+            "block_for": str(rule.get("block_for", "") or "") or inherited_block_for,
             "path": str(rule.get("path", "") or ""),
             "match": str(rule.get("match", "prefix") or "prefix"),
             "header": str(header.get("name", "") or ""),

@@ -51,7 +51,7 @@ WEAKNESSES: tuple[Weakness, ...] = (
     Weakness("manual", "Not assessed · written by hand", "", ""),
     Weakness("waf-off", "WAF off", "waf", "waf_mode"),
     Weakness("waf-log", "WAF log only", "waf", "waf_mode"),
-    Weakness("no-rate-limit", "No rate limit", "access", "rate_limit"),
+    Weakness("no-rate-limit", "No rate limit", "limits", "rate_limit"),
     Weakness("no-hsts", "No HSTS", "tls", "hsts"),
     Weakness("backend-tls-unverified", "Backend TLS not verified", "connections", "backend_tls"),
     Weakness("advanced", "Advanced config", "", "advanced"),

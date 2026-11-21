@@ -406,6 +406,7 @@ FIELD_LABELS: dict[str, str] = {
     "rule_index": "Rules",
     "rule_name": "Rules",
     "rule_mode": "Rules",
+    "rule_block_for": "Rules",
     "rule_path": "Rules",
     "rule_match": "Rules",
     "rule_header": "Rules",
@@ -634,6 +635,7 @@ class ObjectForm(BaseModel):
     rule_index: RuleList = Field(default_factory=list)
     rule_name: RuleList = Field(default_factory=list)
     rule_mode: RuleList = Field(default_factory=list)
+    rule_block_for: RuleList = Field(default_factory=list)
     rule_path: Annotated[
         list[Annotated[str, StringConstraints(max_length=FORM_TEXT)]], Field(max_length=MAX_RULES)
     ] = Field(default_factory=list)

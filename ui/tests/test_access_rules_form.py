@@ -123,29 +123,123 @@ class TheFormWritesTheRules(EditorTestCase):
         self.assertIn("names no condition", answer.text)
         self.assertEqual(self.saved, [])
 
-    def test_a_blocking_rule_is_offered_and_needs_dynamic_blocking(self) -> None:
-        """B517, 10: the block lives in the object's dynamic blocking table."""
-
+    def test_a_blocking_rule_saves_without_dynamic_blocking_and_writes_its_time(self) -> None:
         client = self.editor()
 
         page = self.submit(client, "/proxies/alpha/shop/edit", action="check").text
-        self.assertIn(
-            "<option>block</option>", page.split('name="rule_mode"')[1].split("</select>")[0]
-        )
+        select = page.split('name="rule_mode"')[1].split("</select>")[0]
+        self.assertIn('<option value="block">deny and block the address</option>', select)
+        self.assertIn('<option value="log" selected>log only</option>', select)
         answer = self.submit(
             client,
+            "/proxies/alpha/shop/edit",
+            action="save",
+            rule_index=["0", "1"],
+            rule_name=["env-probe", "peek"],
+            rule_mode=["block", "deny"],
+            rule_block_for=["2h", "45m"],
+            rule_path=["/.env", "/peek"],
+            rule_match=["prefix", "prefix"],
+        )
+
+        self.assertEqual(answer.status_code, 303, answer.text)
+        rules = saved_document(self)["deny_rules"]
+        self.assertEqual(rules[0]["mode"], "block")
+        self.assertEqual(rules[0]["block_for"], "2h")
+        self.assertNotIn("block_for", rules[1])
+        self.assertNotIn("dynamic_block", saved_document(self))
+
+    def test_a_blocking_rule_without_a_time_is_written_with_the_default(self) -> None:
+        self.submit(
+            self.editor(),
             "/proxies/alpha/shop/edit",
             action="save",
             rule_index=["0"],
             rule_name=["env-probe"],
             rule_mode=["block"],
+            rule_block_for=[""],
             rule_path=["/.env"],
             rule_match=["prefix"],
         )
 
-        self.assertEqual(answer.status_code, 200)
-        self.assertIn("needs dynamic blocking", answer.text)
-        self.assertEqual(self.saved, [])
+        self.assertEqual(saved_document(self)["deny_rules"][0]["block_for"], "30m")
+
+    def test_the_rule_card_shows_block_for_only_for_a_blocking_rule(self) -> None:
+        from haprion_ui.preview import DEFAULTS, build_document, form_from_document
+
+        opened = form_from_document(
+            build_document(
+                {
+                    **DEFAULTS,
+                    "name": "shop",
+                    "hostnames": "shop.example.com",
+                    "servers": "192.0.2.10:8080",
+                    "rule_index": ["0", "1"],
+                    "rule_name": ["probe", "watch"],
+                    "rule_mode": ["block", "log"],
+                    "rule_block_for": ["2h", "30m"],
+                    "rule_path": ["/.env", "/x"],
+                    "rule_match": ["prefix", "prefix"],
+                    "rule_header": ["", ""],
+                    "rule_header_match": ["equals", "equals"],
+                    "rule_header_value": ["", ""],
+                    "rule_source": ["", ""],
+                }
+            ),
+            networks=(),
+        )
+        self.assertEqual(opened["rule_block_for"], ["2h", "30m"])
+        client = self.editor()
+        page = self.submit(
+            client,
+            "/proxies/alpha/shop/edit",
+            action="check",
+            rule_index=["0", "1"],
+            rule_name=["probe", "watch"],
+            rule_mode=["block", "log"],
+            rule_block_for=["2h", "30m"],
+            rule_path=["/.env", "/x"],
+            rule_match=["prefix", "prefix"],
+        ).text
+        cards = [
+            card for card in page.split('<details class="rule-card')[1:] if "data-rule>" in card
+        ]
+        self.assertGreaterEqual(len(cards), 2)
+        probe = next(card for card in cards if 'value="probe"' in card)
+        watch = next(card for card in cards if 'value="watch"' in card)
+        self.assertIn("data-rule-badge>Blocking 2h</span>", probe)
+        self.assertIn("data-rule-block-for>", probe)
+        self.assertNotIn("data-rule-block-for hidden", probe)
+        self.assertIn("data-rule-block-for hidden", watch)
+        self.assertIn("data-rule-badge>Logging</span>", watch)
+
+    def test_a_block_for_on_another_mode_is_not_written(self) -> None:
+        self.submit(
+            self.editor(),
+            "/proxies/alpha/shop/edit",
+            action="save",
+            rule_index=["0"],
+            rule_name=["watch"],
+            rule_mode=["log"],
+            rule_block_for=["2h"],
+            rule_path=["/x"],
+            rule_match=["prefix"],
+        )
+
+        self.assertNotIn("block_for", saved_document(self)["deny_rules"][0])
+
+    def test_never_blocked_alone_is_saved_as_the_objects_own_key(self) -> None:
+        self.submit(
+            self.editor(),
+            "/proxies/alpha/shop/edit",
+            action="save",
+            block_exempt_from=["office"],
+            block_exempt_ranges="192.0.2.10",
+        )
+
+        document = saved_document(self)
+        self.assertEqual(document["never_blocked"], ["office", "192.0.2.10"])
+        self.assertNotIn("dynamic_block", document)
 
     def test_a_raw_port_posts_no_rules(self) -> None:
         """The fields are hidden for tcp, and hidden fields still post."""
@@ -238,8 +332,48 @@ class AddingAndRemovingRulesInTheBrowser(EditorTestCase):
         rule.locator("input[name=rule_name]").fill("")
         self.assertEqual(rule.locator("[data-rule-title]").inner_text(), "New rule")
         rule.locator("select[name=rule_mode]").select_option("block")
-        self.assertEqual(badge.inner_text(), "Blocking")
+        self.assertEqual(badge.inner_text(), "Blocking 30m")
         self.assertIn("status-badge-unknown", badge.get_attribute("class") or "")
+        block_for = rule.locator("input[name=rule_block_for]")
+        self.assertTrue(block_for.is_visible())
+        block_for.fill("2h")
+        self.assertEqual(badge.inner_text(), "Blocking 2h")
+        rule.locator("select[name=rule_mode]").select_option("log")
+        self.assertFalse(block_for.is_visible())
+        self.assertEqual(badge.inner_text(), "Logging")
+
+    def test_the_access_badge_counts_denying_and_blocking_apart(self) -> None:
+        page = self.open_form()
+        for mode in ("deny", "deny", "block"):
+            page.click("[data-add-rule]")
+            page.locator("[data-rule]").last.locator("select[name=rule_mode]").select_option(mode)
+        badges = page.locator(
+            "details.form-group:has([data-rule-list]) > summary .form-group-badge"
+        )
+        self.assertIn("2 denying", badges.all_inner_texts())
+        self.assertIn("1 blocking", badges.all_inner_texts())
+
+    def test_the_methods_sit_in_the_first_grid_and_nothing_scrolls_sideways(self) -> None:
+        page = self.open_form()
+        page.set_viewport_size({"width": 1280, "height": 900})
+        page.click("[data-add-rule]")
+        rule = page.locator("[data-rule]").last
+        rule.locator("select[name=rule_mode]").select_option("block")
+        self.assertTrue(
+            rule.locator(".rule-methods").evaluate(
+                "e => e.parentElement === e.closest('details').querySelector('.form-grid')"
+            )
+        )
+        self.assertTrue(rule.locator(".rule-methods .check").first.is_visible())
+        overflow = page.evaluate(
+            "document.documentElement.scrollWidth - document.documentElement.clientWidth"
+        )
+        self.assertEqual(overflow, 0)
+        # Block for sits right of Mode, on the same row.
+        mode = rule.locator("select[name=rule_mode]").bounding_box()
+        block = rule.locator("input[name=rule_block_for]").bounding_box()
+        self.assertAlmostEqual(mode["y"], block["y"], delta=2)
+        self.assertGreater(block["x"], mode["x"])
 
     def test_what_the_browser_posts_is_the_rules_on_the_screen(self) -> None:
         client = self.editor()

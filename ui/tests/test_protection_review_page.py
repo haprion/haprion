@@ -92,7 +92,7 @@ class TheReviewPage(EditorTestCase):
 
         shop = self.row(page, "shop")
         self.assertIn("No rate limit", shop)
-        self.assertIn('href="/proxies/alpha/shop/edit?open=access&amp;focus=rate_limit"', shop)
+        self.assertIn('href="/proxies/alpha/shop/edit?open=limits&amp;focus=rate_limit"', shop)
         self.assertIn(">Everywhere<", shop)
         self.assertIn(">Accept</button>", shop)
         self.assertRegex(page, r"Protection review <b>1</b>")
@@ -234,10 +234,10 @@ class TheReviewPage(EditorTestCase):
 
 class TheFormOpensAtAField(EditorTestCase):
     def test_a_link_opens_its_group_and_names_the_field(self) -> None:
-        page = self.editor().get("/proxies/alpha/shop/edit?open=access&focus=rate_limit").text
+        page = self.editor().get("/proxies/alpha/shop/edit?open=limits&focus=rate_limit").text
 
         self.assertIn('data-focus="rate_limit"', page)
-        title = page.index('<span class="form-group-title">Access</span>')
+        title = page.index('<span class="form-group-title">Limits</span>')
         opening = page[page.rindex("<details", 0, title) : title].split(">")[0]
         self.assertIn(" open", opening)
 

@@ -207,7 +207,7 @@ class AnAcceptanceHoldsTheMarksItSaw(unittest.TestCase):
 
         self.assertEqual(
             shop.marks[1].href,  # type: ignore[attr-defined]
-            "/proxies/alpha/shop/edit?open=access&focus=rate_limit",
+            "/proxies/alpha/shop/edit?open=limits&focus=rate_limit",
         )
         self.assertEqual(reader.marks[1].href, "/proxies/alpha/shop")
 

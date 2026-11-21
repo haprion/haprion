@@ -35,6 +35,7 @@ DEPENDENT = {
     "rule_match": "access rules",
     "rule_methods": "access rules",
     "rule_mode": "access rules",
+    "rule_block_for": "access rules",
     "rule_name": "access rules",
     "rule_negate": "access rules",
     "rule_path": "access rules",

@@ -40,13 +40,13 @@
 <input type="hidden" name="waf_exceptions" value="{{ form.waf_exceptions }}">
 
 {% macro rule_card(rule, open=False) %}
-<details class="rule-card{% if rule.mode == 'block' %} rule-blocking{% endif %}"{% if open %} open{% endif %} data-rule>
+<details class="rule-card"{% if open %} open{% endif %} data-rule>
   <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title" data-rule-title>{{ rule.name or 'New rule' }}</span>{% if rule.mode in ('deny', 'block') %}<span class="status-badge status-badge-unknown" data-rule-badge>{{ ('Blocking ' ~ rule.block_for).strip() if rule.mode == 'block' else 'Denying' }}</span>{% else %}<span class="status-badge status-badge-warning" data-rule-badge>Logging</span>{% endif %}<span class="form-group-summary" data-rule-summary>{{ rule.summary }}</span></summary>
   <input type="hidden" name="rule_index" value="{{ rule.index }}">
   <div class="form-grid">
     <label><span class="field-title">Name</span><input name="rule_name" value="{{ rule.name }}" placeholder="admin-post"></label>
     <label><span class="field-title">Mode</span><select name="rule_mode">{% for mode, label in (('log', 'log only'), ('deny', 'deny'), ('block', 'deny and block the address')) %}<option value="{{ mode }}"{% if rule.mode == mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-    <label data-rule-block-for{% if rule.mode != 'block' %} hidden{% endif %}><span class="field-title">Block for</span><input name="rule_block_for" value="{{ rule.block_for }}" size="10" placeholder="30m"></label>
+    <label data-rule-block-for><span class="field-title">Block for</span><input name="rule_block_for" value="{{ rule.block_for }}" size="10" placeholder="30m"{% if rule.mode != 'block' %} class="field-idle" readonly tabindex="-1"{% endif %}></label>
     <label><span class="field-title">Path <span class="optional">(optional)</span></span><input name="rule_path" value="{{ rule.path }}" placeholder="/admin"></label>
     <label><span class="field-title">Path match</span><select name="rule_match">{% for match in ('prefix', 'exact') %}<option{% if rule.match == match %} selected{% endif %}>{{ match }}</option>{% endfor %}</select></label>
     <div class="field rule-methods"><span class="field-title">Methods <span class="optional">(optional)</span></span><div class="form-checks">{% for method in choices.methods %}<label class="check"><input type="checkbox" name="rule_methods" value="{{ rule.index }}:{{ method }}"{% if method in rule.methods %} checked{% endif %}> {{ method }}</label>{% endfor %}</div></div>

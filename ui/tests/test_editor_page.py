@@ -409,7 +409,12 @@ class ReachingTheEditor(EditorTestCase):
 
         page = self.editor().get("/proxies/alpha/shop/edit")
 
-        self.assertNotIn("readonly", page.text)
+        name = re.search(r'<input name="name"[^>]*>', page.text)
+        if name is None:
+            self.fail("the form has a name field")
+        self.assertIn('value="shop"', name.group(0))
+        self.assertNotIn("readonly", name.group(0))
+        self.assertNotIn("disabled", name.group(0))
 
     def test_a_new_object_opens_on_a_blank_name(self) -> None:
         page = self.editor().get("/proxies/alpha/new")

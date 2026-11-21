@@ -1562,8 +1562,9 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
  * shape of the object cannot use `disabled` to say "not yet" - it would be
  * saying it to the server as well.
  */
-.form-grid select.field-idle { opacity: 0.45; }
-.form-grid label:has(select.field-idle) { opacity: 0.7; }
+.form-grid select.field-idle, .form-grid input.field-idle { opacity: 0.45; }
+.form-grid label:has(select.field-idle), .form-grid label:has(input.field-idle) { opacity: 0.7; }
+.form-grid input.field-idle { cursor: not-allowed; }
 .check-value { display: flex; align-items: center; gap: 10px; color: var(--text-secondary); font-weight: 620; }
 .section-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .section-title p { margin: 0; }
@@ -2636,12 +2637,12 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .rule-card[open] > summary .form-group-title { color: var(--text-strong); }
 .rule-card .form-grid { padding: 6px 0; }
 .rule-row { display: grid; gap: 6px; padding: 6px 0; }
-.rule-card .rule-methods { grid-column: 1 / -1; }
-.rule-card.rule-blocking .rule-methods { grid-column: 2 / -1; }
+/* One layout in every mode (26-11-21): Block for keeps its place, so Path match and Methods do too. */
+.rule-card .rule-methods { grid-column: 2 / -1; }
 .rule-card .rule-methods > .field-title { color: var(--text-secondary); font-weight: 620; }
 .rule-card .rule-methods .form-checks { padding: 0; min-height: 40px; gap: 6px 18px; }
 .rule-card .rule-methods .form-checks .check { flex-direction: row; align-items: center; gap: 8px; }
-@media (max-width: 559px) { .rule-card.rule-blocking .rule-methods { grid-column: 1 / -1; } }
+@media (max-width: 559px) { .rule-card .rule-methods { grid-column: 1 / -1; } }
 .rule-row .form-checks { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 0; }
 .rule-not .form-checks { justify-content: flex-end; }
 .rule-foot { display: flex; justify-content: flex-end; padding: 4px 0 12px; }

@@ -173,7 +173,9 @@ class TheFormWritesTheRules(EditorTestCase):
         self.assertIn("data-rule-badge>Blocking</span>", answer.text)
         self.assertNotIn("data-rule-badge>Blocking 30m<", answer.text)
 
-    def test_the_rule_card_shows_block_for_only_for_a_blocking_rule(self) -> None:
+    def test_the_rule_card_greys_block_for_in_place_unless_the_rule_blocks(self) -> None:
+        """26-11-21: a field that comes and goes moves the ones beside it; greyed, it stays."""
+
         from haprion_ui.preview import DEFAULTS, build_document, form_from_document
 
         opened = form_from_document(
@@ -218,8 +220,16 @@ class TheFormWritesTheRules(EditorTestCase):
         watch = next(card for card in cards if 'value="watch"' in card)
         self.assertIn("data-rule-badge>Blocking 2h</span>", probe)
         self.assertIn("data-rule-block-for>", probe)
-        self.assertNotIn("data-rule-block-for hidden", probe)
-        self.assertIn("data-rule-block-for hidden", watch)
+        self.assertIn('name="rule_block_for" value="2h" size="10" placeholder="30m">', probe)
+        # Read-only, not disabled: a disabled field is not posted, and the
+        # rules' columns would no longer line up.
+        self.assertIn("data-rule-block-for>", watch)
+        self.assertIn(
+            'name="rule_block_for" value="30m" size="10" placeholder="30m" class="field-idle"'
+            ' readonly tabindex="-1">',
+            watch,
+        )
+        self.assertNotIn("data-rule-block-for hidden", page)
         self.assertIn("data-rule-badge>Logging</span>", watch)
 
     def test_a_block_for_on_another_mode_is_not_written(self) -> None:
@@ -350,8 +360,11 @@ class AddingAndRemovingRulesInTheBrowser(EditorTestCase):
         # UU01: an emptied time names none, as the server refuses it.
         block_for.fill("")
         self.assertEqual(badge.inner_text(), "Blocking")
+        self.assertTrue(block_for.is_editable())
         rule.locator("select[name=rule_mode]").select_option("log")
-        self.assertFalse(block_for.is_visible())
+        self.assertTrue(block_for.is_visible())
+        self.assertFalse(block_for.is_editable())
+        self.assertIn("field-idle", block_for.get_attribute("class") or "")
         self.assertEqual(badge.inner_text(), "Logging")
 
     def test_the_access_badge_counts_denying_and_blocking_apart(self) -> None:
@@ -392,6 +405,31 @@ class AddingAndRemovingRulesInTheBrowser(EditorTestCase):
         block = rule.locator("input[name=rule_block_for]").bounding_box()
         self.assertAlmostEqual(mode["y"], block["y"], delta=2)
         self.assertGreater(block["x"], mode["x"])
+
+    def test_no_field_of_a_rule_moves_when_its_mode_changes(self) -> None:
+        """26-11-21: Block for was hidden outside block mode, and Path, Path match and Methods moved."""
+
+        page = self.open_form()
+        page.set_viewport_size({"width": 1280, "height": 900})
+        page.click("[data-add-rule]")
+        rule = page.locator("[data-rule]").last
+        fields = (
+            "input[name=rule_block_for]",
+            "input[name=rule_path]",
+            "select[name=rule_match]",
+            ".rule-methods",
+            "input[name=rule_header]",
+        )
+        where: dict[str, list[tuple[float, float]]] = {}
+        for mode in ("log", "deny", "block", "log"):
+            rule.locator("select[name=rule_mode]").select_option(mode)
+            for field in fields:
+                box = rule.locator(field).bounding_box()
+                if box is None:
+                    self.fail(f"{field} is not drawn in {mode} mode")
+                where.setdefault(field, []).append((round(box["x"]), round(box["y"])))
+        for field, places in where.items():
+            self.assertEqual(len(set(places)), 1, f"{field} moved: {places}")
 
     def test_what_the_browser_posts_is_the_rules_on_the_screen(self) -> None:
         client = self.editor()

@@ -562,8 +562,17 @@
         mode === "block" ? `Blocking ${time}`.trim() : { log: "Logging", deny: "Denying" }[mode] || "Logging";
       badge.classList.toggle("status-badge-unknown", deny);
       badge.classList.toggle("status-badge-warning", !deny);
-      rule.classList.toggle("rule-blocking", mode === "block");
-      rule.querySelector("[data-rule-block-for]").hidden = mode !== "block";
+      //
+      // Greyed in place, never hidden (26-11-21): a field that comes and goes
+      // moves the ones beside it. Read-only rather than disabled, since a
+      // disabled field is not posted and the rules' columns would fall apart;
+      // the server writes the time for a blocking rule only.
+      //
+      const blockFor = rule.querySelector("input[name='rule_block_for']");
+      const idle = mode !== "block";
+      blockFor.readOnly = idle;
+      blockFor.classList.toggle("field-idle", idle);
+      blockFor.tabIndex = idle ? -1 : 0;
       countRules();
       if (!["rule_name", "rule_mode", "rule_block_for"].includes(event.target.name)) {
         const line = rule.querySelector("[data-rule-summary]");

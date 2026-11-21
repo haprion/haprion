@@ -448,8 +448,9 @@ def form_groups(
 ) -> dict[str, GroupState]:
     """Each group's title and the line it shows while closed.
 
-    `blocked` is how many addresses the object's dynamic blocking holds on the
-    nodes now (B271), said at the end of that group's line. `blocklists` are
+    `blocked` is how many addresses the object blocks on the nodes now
+    (B271), said at the end of the line of the group the blocks come from:
+    Dynamic blocking, or Access where only a rule blocks. `blocklists` are
     the names that are blocklists rather than network groups: those chosen
     under Denied are named on Access's line (26-11-14), where somebody looking
     for a list finds it closed - one or two by name, more as a count.
@@ -461,9 +462,6 @@ def form_groups(
         )
         for key, group in GROUPS.items()
     }
-    if blocked:
-        state = states["blocking"]
-        states["blocking"] = replace(state, summary=f"{state.summary} · {blocked} blocked")
     chosen = [str(name) for name in form.get("deny_from", ()) or () if str(name) in blocklists]
     if chosen:
         said = (
@@ -473,4 +471,15 @@ def form_groups(
         )
         state = states["access"]
         states["access"] = replace(state, summary=_joined([state.summary, said], said))
+    if blocked:
+        #
+        # The count goes where the blocks come from: Dynamic blocking when it
+        # is on, else Access when a rule blocks (that group must not say "Off ·
+        # 3 blocked"). Blocks left from something since removed stay with
+        # Dynamic blocking, as before.
+        #
+        by_rule = any(str(mode) == "block" for mode in form.get("rule_mode", ()) or ())
+        key = "access" if by_rule and _blocking(form) == "Off" else "blocking"
+        state = states[key]
+        states[key] = replace(state, summary=f"{state.summary} · {blocked} blocked")
     return states

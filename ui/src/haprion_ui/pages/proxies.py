@@ -1325,7 +1325,7 @@ def build_router(config: Config) -> APIRouter:
         cluster_busy: jobs.InFlight | None = None
         servers_missed = ""
         #
-        # The addresses the object's dynamic blocking holds (B271), with the
+        # The addresses the object blocks, by dynamic blocking or a rule (B271, B525), with the
         # last unblock that not every node took said until the next one.
         #
         blocked_card = blocked.object_card(status_rows, cluster=cluster, name=name)
@@ -1335,7 +1335,11 @@ def build_router(config: Config) -> APIRouter:
         # since each drawing reads their traffic again.
         #
         blocking = blocked_card is not None or (
-            proxy is not None and proxy.dynamic_block is not None
+            proxy is not None
+            and (
+                proxy.dynamic_block is not None
+                or any(rule.mode == "block" for rule in proxy.deny_rules)
+            )
         )
         blocked_missed = ""
         if servers is not None or blocked_card is not None:

@@ -121,7 +121,7 @@ class ReadingTheBlockedTables(unittest.TestCase):
         self.assertEqual(self.parsing["parse_blocked_tables"](text), {"shop": 6, "probe": 4})
         self.assertEqual(
             self.parsing["blocked_tables_by_object"](text)["shop"],
-            {blocked: 2, "mgd-shop-ruleblock-30m": 3, "mgd-shop-ruleblock-2h": 1},
+            {blocked: 2, "mgd-shop-ruleblock-30m": 3, "mgd-shop-ruleblock-120m": 1},
         )
 
 

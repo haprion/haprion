@@ -12,7 +12,7 @@ with which key, and whether the servers exist is the helper's to decide.
 
 Requests already in flight finish in both (measured 2026-10-09); nothing is cut.
 
-    unblock lifts the object's dynamic block on source addresses, on every node
+    unblock lifts the object's blocks (dynamic blocking and block rules) on source addresses, on every node
 
 The state is kept by each node across reloads and restarts until it is set to
 ready again, so a deploy does not quietly put a drained server back.

@@ -2219,12 +2219,14 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
     max_request_body = _body_size(data.get("max_request_body"), f"{name}.max_request_body")
     waf = _waf(data.get("waf"), f"{name}.waf")
     handwritten = sorted(key for key, backend in backends.items() if backend.written_by_hand)
+    dynamic_slots, rule_slot = block_slots(data)
     advanced = _advanced(
         data.get("advanced"),
         name,
         listen.protocol,
         rate_limit=rate_limit is not None,
-        dynamic_block=dynamic_block is not None or any(rule.mode == "block" for rule in deny_rules),
+        dynamic_block=dynamic_slots,
+        rule_block=rule_slot,
         path_limits=bool(path_limits),
         handwritten=bool(handwritten),
     )
@@ -2284,6 +2286,7 @@ def _advanced(
     *,
     rate_limit: bool,
     dynamic_block: bool = False,
+    rule_block: bool = False,
     path_limits: bool = False,
     handwritten: bool,
 ) -> Advanced | None:
@@ -2302,6 +2305,7 @@ def _advanced(
         protocol=protocol,
         rate_limit=rate_limit,
         dynamic_block=dynamic_block,
+        rule_block=rule_block,
         path_limits=path_limits,
         handwritten=handwritten,
     )
@@ -2341,12 +2345,14 @@ def advanced_placement(name: str, document: bytes) -> advanced_config.Placement 
     handwritten = isinstance(backends, Mapping) and any(
         pool_written_by_hand(pool) for pool in backends.values()
     )
+    dynamic_slots, rule_slot = block_slots(data)
     return advanced_config.place(
         advanced_config.normalise(value),
         name=name,
         protocol=str(protocol or ""),
         rate_limit=data.get("rate_limit") is not None,
-        dynamic_block=data.get("dynamic_block") is not None or _names_block_rule(data),
+        dynamic_block=dynamic_slots,
+        rule_block=rule_slot,
         path_limits=bool(data.get("path_limits")),
         handwritten=handwritten,
     )
@@ -2845,6 +2851,18 @@ def _rules_with_block_time(
         else rule
         for rule in rules
     )
+
+
+def block_slots(data: Mapping[str, Any]) -> tuple[bool, bool]:
+    """What a document reserves of the block counter slots: (dynamic blocking, rule block).
+
+    Dynamic blocking holds sc3 and sc4; a deny rule in `block` mode holds sc4
+    alone. The one place that decides, so the model, the CLI's advanced text
+    and the form's dialog cannot read the same document differently. Read
+    without the model, as the dialog's data is not yet a loaded object.
+    """
+
+    return data.get("dynamic_block") is not None, _names_block_rule(data)
 
 
 def _names_block_rule(data: Mapping[str, Any]) -> bool:

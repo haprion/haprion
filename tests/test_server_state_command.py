@@ -79,6 +79,21 @@ backends:
       - {host: 198.51.100.30, port: 8080}
 """
 
+RULED = b"""schema: 1
+name: ruled
+hostnames: [ruled.example.com]
+listen: {protocol: http}
+deny_rules:
+  - {name: scanner, mode: block, path: /.env, block_for: 30m}
+routes:
+  - {path: /, backend: web}
+backends:
+  web:
+    balance: roundrobin
+    servers:
+      - {host: 198.51.100.40, port: 8080}
+"""
+
 WEB_10 = server_guid("shop", "web", Server(host="198.51.100.10", port=8080))
 WEB_11 = server_guid("shop", "web", Server(host="198.51.100.11", port=8080))
 API_20 = server_guid("shop", "api", Server(host="198.51.100.20", port=9000))
@@ -147,6 +162,7 @@ class HelperFixture(unittest.TestCase):
                 "managed/proxies/shop.yaml": SHOP,
                 "managed/proxies/resolver.yaml": RESOLVER,
                 "managed/proxies/store.yaml": STORE,
+                "managed/proxies/ruled.yaml": RULED,
                 #
                 # A neighbour that no longer loads. A drain of shop must not
                 # depend on it: only the named object's file is read.
@@ -464,6 +480,24 @@ class EveryNodeLiftsTheBlockTwice(HelperFixture):
             sorted([(node, "unblock store 203.0.113.7 2001:db8::7") for node in self.nodes] * 2),
         )
 
+    def test_an_object_that_blocks_by_deny_rules_alone_is_lifted_on_every_node(self) -> None:
+        """Review 26-11-21, U01: lifting asks nothing of the object; the node decides."""
+
+        asked: list[str] = []
+
+        def ask(
+            node: Node, identity: DeployIdentity, request: str
+        ) -> subprocess.CompletedProcess[str]:
+            asked.append(node.name)
+            return unblocked(request)
+
+        code, document, _ = self.run_unblock("ruled", ["203.0.113.7"], ask)
+
+        self.assertEqual(code, 0)
+        assert document is not None
+        self.assertEqual(document["outcome"], "done")
+        self.assertEqual(sorted(asked), sorted(self.nodes * 2))
+
     def test_an_entry_sent_back_during_the_first_round_is_cleared_by_the_second(self) -> None:
         rounds: dict[str, int] = {}
 
@@ -548,7 +582,6 @@ class EveryNodeLiftsTheBlockTwice(HelperFixture):
             raise AssertionError("a node was asked")
 
         for object_name, addresses, code in (
-            ("shop", ["203.0.113.7"], "bad_input"),
             ("gone", ["203.0.113.7"], "server_not_found"),
             ("store", ["example.com"], "bad_input"),
             ("store", [], "bad_input"),

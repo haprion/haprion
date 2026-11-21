@@ -3867,18 +3867,25 @@ def rule_block_table(proxy_name: str, block_for: str) -> str:
 
     Named by the time rather than by the rule's place in the list: a rule
     removed or moved must not hand the blocks it placed to another rule's
-    table and time. Rules with one time share a table. In the generator's own
-    `mgd-` space, as the dynamic blocking tables are.
+    table and time. Rules with one time share a table, whichever way the time
+    is written: `60m` and `1h` are the table `ruleblock-60m`. In the
+    generator's own `mgd-` space, as the dynamic blocking tables are.
     """
 
-    return f"{PREFIX}-{proxy_name}-ruleblock-{block_for}"
+    return f"{PREFIX}-{proxy_name}-ruleblock-{block_minutes(block_for)}m"
 
 
 def rule_block_times(proxy: Proxy) -> tuple[str, ...]:
-    """The times the object's `block` rules hold an address for, shortest first, each once."""
+    """The times the object's `block` rules hold an address for, shortest first, each once.
 
-    times = {rule.block_for for rule in proxy.deny_rules if rule.block_for is not None}
-    return tuple(sorted(times, key=block_minutes))
+    Written in minutes (`1h` is `60m`), so that two spellings of one time are
+    one table and the order never depends on the order of a set.
+    """
+
+    minutes = {
+        block_minutes(rule.block_for) for rule in proxy.deny_rules if rule.block_for is not None
+    }
+    return tuple(f"{value}m" for value in sorted(minutes))
 
 
 def path_limit_table(proxy_name: str, index: int) -> str:

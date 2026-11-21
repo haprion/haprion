@@ -512,9 +512,8 @@
       }
     });
     //
-    // The Access group's badges count what the rules do, as the server does:
-    // denying and blocking apart. The deny list's own mode is counted by the
-    // server and stays in the count the page was rendered with.
+    // The Access group's badges count what the rules and the deny list do, as
+    // the server does: logging, denying and blocking apart.
     //
     const countRules = () => {
       const group = list.closest("details.form-group");

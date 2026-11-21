@@ -1786,10 +1786,13 @@ blocks it. Name monitoring that polls the object, an office whose visitors share
 you administer from. A country cannot be named. In YAML it is the object's `never_blocked`;
 `dynamic_block.exempt` is read as the same list, and an object with both is refused.
 
-*Details:* a rule's blocks live in a table per time, `mgd-<object>-ruleblock-<time>` (such as
-`mgd-shop-ruleblock-30m`), shared by the object's rules with the same *Block for*. The match marks the
+*Details:* a rule's blocks live in a table per time, `mgd-<object>-ruleblock-<minutes>m` (such as
+`mgd-shop-ruleblock-120m` for `2h`), shared by the object's rules with the same *Block for*, however it is
+written (`60m` and `1h` are one table). The match marks the
 address on the fifth stick counter slot (`sc4`), as dynamic blocking does
-([What the cluster's core configuration needs](#dynamic-blocking)).
+([What the cluster's core configuration needs](#dynamic-blocking)). Changing a rule's *Block for*, or
+removing the last rule with that time, ends the blocks in its table when the change is deployed; rules with
+one time share their blocks.
 
 - The first logged rule a request meets is the one recorded. A refusal always names itself.
 - *Denied* (`deny_from`) is recorded as `deny-from`.
@@ -2098,7 +2101,7 @@ table (a small in-memory table) that expires after `block_for`. On a cluster wit
 block reaches the other nodes and survives a reload and a failover. Without them, it is per node.
 
 *Details:* the tables are two backends with no servers, `mgd-<object>-dynblock-rate` and
-`mgd-<object>-dynblock`, beside the deny rules' `mgd-<object>-ruleblock-<time>`. `show stat` lists them; the
+`mgd-<object>-dynblock`, beside the deny rules' `mgd-<object>-ruleblock-<minutes>m`. `show stat` lists them; the
 node status leaves them out.
 
 **What the cluster's core configuration needs.** Dynamic blocking uses the fourth and fifth stick counter
@@ -2135,7 +2138,7 @@ haprion-server-state -c alpha -o shop unblock 203.0.113.7 2001:db8::7
 - A node that does not run blocking for the object yet says to deploy.
 
 *Details:* on a node, a block is lifted by `haprion-server-state unblock <object> <address>...`, which the
-server state key's forced command allows. It clears the address from both tables, since an address left
+server state key's forced command allows. It clears the address from every table the object blocks in, since an address left
 in the count would be blocked again by its next request. A cleared entry is not shared, and another node
 can send the block back, so a block is lifted on every node and then checked again.
 

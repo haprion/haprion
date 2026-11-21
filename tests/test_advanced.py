@@ -353,6 +353,41 @@ class TheCountersBelongToWhoeverTracksThemFirst(unittest.TestCase):
         section = "backend shop-t\n    http-request track-sc4 src\n"
         self.assertEqual(fates(section, dynamic_block=True)[1][1], REFUSED_FATE)
 
+    def test_a_block_rule_alone_holds_sc4_and_says_blocking_not_dynamic_blocking(self) -> None:
+        """Review 26-11-21, U04 and U05: one reading of what a document reserves."""
+
+        from haprion.proxy_model import advanced_placement, block_slots
+
+        base = (
+            "schema: 1\nname: shop\nhostnames: [shop.example.com]\nlisten: {protocol: http}\n"
+            "routes:\n  - {path: /, backend: web}\n"
+            "backends:\n  web: {balance: roundrobin, servers: [{host: 198.51.100.10, port: 80}]}\n"
+        )
+        rule = "deny_rules:\n  - {name: scan, mode: block, path: /.env, block_for: 30m}\n"
+        dynamic = "dynamic_block: {max_requests: 300, block_for: 30m}\n"
+
+        def reasons(extra: str, line: str) -> list[str]:
+            document = f"{base}{extra}advanced: |\n    {line}\n".encode()
+            placement = advanced_placement("shop", document)
+            self.assertIsNotNone(placement)
+            return [entry.reason for entry in placement.refused] if placement else []
+
+        from haprion.proxy_model import read_document
+
+        self.assertEqual(block_slots(read_document("shop", (base + rule).encode())), (False, True))
+        self.assertEqual(
+            block_slots(read_document("shop", (base + dynamic).encode())), (True, False)
+        )
+        self.assertEqual(
+            reasons(rule, "http-request track-sc4 src table shop-t"),
+            ["sc4 is this object's blocking; the text counts on sc2"],
+        )
+        self.assertEqual(reasons(rule, "http-request sc-inc-gpc0(3)"), [])
+        self.assertEqual(
+            reasons(dynamic, "http-request track-sc3 src"),
+            ["sc3 is this object's dynamic blocking; the text counts on sc2"],
+        )
+
     def test_a_slot_is_read_as_haproxy_reads_it(self) -> None:
         """Code review 26-10-30 again, R4: HAProxy reads `+0` and `-0` as slot 0."""
 

@@ -64,7 +64,6 @@ from haprion.server_state import (
     apply,
     ask_node,
     ask_unblock,
-    blocking,
     find_object,
     object_name,
     resolve,
@@ -242,9 +241,13 @@ def main(
         files = read_tree_files(cluster.config_path, head, (f"{PROXY_PREFIX}{name}.yaml",))
         proxy = find_object(managed_proxies(files), name)
         targets: tuple[Target, ...] = ()
-        if unblocking:
-            blocking(proxy)
-        elif isinstance(servers, list):
+        #
+        # Lifting a block asks nothing of the object's newest version: the
+        # node answers for the tables it runs (an object may block by deny
+        # rules alone, or a rule may be gone from the repository but not yet
+        # deployed).
+        #
+        if not unblocking and isinstance(servers, list):
             targets = resolve(proxy, [str(entry) for entry in servers])
     except ServerStateError as exc:
         return refuse(exc.code, str(exc), exc.exit_code)

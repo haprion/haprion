@@ -86,7 +86,7 @@ def configuration(root: Path, servers: list[tuple[str, str, int]], *, socket: bo
         # And a deny rule's table (B525): one on the same object, one on an
         # object that blocks by its rules alone.
         #
-        "backend mgd-shop-ruleblock-2h",
+        "backend mgd-shop-ruleblock-120m",
         "    stick-table type ipv6 size 1k expire 2h store gpc(1),gpt(1)",
         "backend mgd-probe-ruleblock-30m",
         "    stick-table type ipv6 size 1k expire 30m store gpc(1),gpt(1)",
@@ -423,15 +423,15 @@ class TheHelperLiftsABlock(RunningHaproxy):
     def test_an_unblock_clears_a_rule_s_table_too(self) -> None:
         """B525: a deny rule's block is in a table named by its time, and lifts with the rest."""
 
-        for table in ("mgd-shop-dynblock", "mgd-shop-ruleblock-2h"):
+        for table in ("mgd-shop-dynblock", "mgd-shop-ruleblock-120m"):
             self.helper.ask([f"set table {table} key 192.0.2.7 data.gpt[0] 5"])
-        self.helper.ask(["set table mgd-shop-ruleblock-2h key 192.0.2.8 data.gpt[0] 5"])
+        self.helper.ask(["set table mgd-shop-ruleblock-120m key 192.0.2.8 data.gpt[0] 5"])
 
         code, out = self.run_helper("unblock", "shop", "192.0.2.7")
 
         self.assertEqual(code, 0, out)
         self.assertEqual(json.loads(out)["outcome"], "done")
-        rules = str(self.helper.ask(["show table mgd-shop-ruleblock-2h"]))
+        rules = str(self.helper.ask(["show table mgd-shop-ruleblock-120m"]))
         self.assertNotIn("key=::ffff:192.0.2.7 ", rules)
         self.assertIn("key=::ffff:192.0.2.8 ", rules, "the neighbour stays")
         self.assertNotIn("192.0.2.7", self.held())

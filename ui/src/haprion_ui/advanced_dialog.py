@@ -17,6 +17,7 @@ from haprion import advanced as advanced_config
 from haprion.proxy_model import (
     ModelError,
     advanced_placement,
+    block_slots,
     dump_document,
     load_written,
     pool_written_by_hand,
@@ -114,12 +115,14 @@ def _returned_pool(name: str, data: Mapping[str, Any], text: str) -> dict[str, A
 
     listen = data.get("listen")
     protocol = str(listen.get("protocol", "") if isinstance(listen, Mapping) else "")
+    dynamic_slots, rule_slot = block_slots(data)
     placement = advanced_config.place(
         text,
         name=name,
         protocol=protocol,
         rate_limit=data.get("rate_limit") is not None,
-        dynamic_block=data.get("dynamic_block") is not None,
+        dynamic_block=dynamic_slots,
+        rule_block=rule_slot,
         path_limits=bool(data.get("path_limits")),
         handwritten=True,
     )

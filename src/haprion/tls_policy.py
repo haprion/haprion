@@ -264,7 +264,7 @@ def core_defaults_problem(core_cfg: bytes, *, cluster: str, config_path: str) ->
 #
 # HAProxy's own number of stick counter slots when `global` names none, and the
 # line that raises it. Generated configuration uses up to `sc4` once an object
-# has dynamic blocking (B271), and `sc5` once one has path limits (B520).
+# has dynamic blocking (B271) or a `block` deny rule (B525), and `sc5` once one has path limits (B520).
 #
 DEFAULT_STICK_COUNTERS = 3
 STICK_COUNTERS_KEYWORD = "tune.stick-counters"

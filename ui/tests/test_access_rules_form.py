@@ -149,8 +149,10 @@ class TheFormWritesTheRules(EditorTestCase):
         self.assertNotIn("block_for", rules[1])
         self.assertNotIn("dynamic_block", saved_document(self))
 
-    def test_a_blocking_rule_without_a_time_is_written_with_the_default(self) -> None:
-        self.submit(
+    def test_a_blocking_rule_without_a_time_is_refused_naming_the_rule(self) -> None:
+        """Review 26-11-21, U10: the object's own *Block for* refuses an empty time too."""
+
+        answer = self.submit(
             self.editor(),
             "/proxies/alpha/shop/edit",
             action="save",
@@ -162,7 +164,9 @@ class TheFormWritesTheRules(EditorTestCase):
             rule_match=["prefix"],
         )
 
-        self.assertEqual(saved_document(self)["deny_rules"][0]["block_for"], "30m")
+        self.assertEqual(answer.status_code, 200)
+        self.assertIn("Block for needs a time, such as 30m (rule env-probe)", answer.text)
+        self.assertEqual(self.saved, [])
 
     def test_the_rule_card_shows_block_for_only_for_a_blocking_rule(self) -> None:
         from haprion_ui.preview import DEFAULTS, build_document, form_from_document
@@ -352,6 +356,12 @@ class AddingAndRemovingRulesInTheBrowser(EditorTestCase):
         )
         self.assertIn("2 denying", badges.all_inner_texts())
         self.assertIn("1 blocking", badges.all_inner_texts())
+        # The deny list counts with its own mode, as the server counts it.
+        page.locator("textarea[name=deny_ranges]").fill("192.0.2.0/24")
+        page.locator("select[name=deny_mode]").select_option("deny")
+        self.assertIn("3 denying", badges.all_inner_texts())
+        page.locator("select[name=deny_mode]").select_option("log")
+        self.assertIn("1 logging", badges.all_inner_texts())
 
     def test_the_methods_sit_in_the_first_grid_and_nothing_scrolls_sideways(self) -> None:
         page = self.open_form()

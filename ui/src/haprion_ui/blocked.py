@@ -1,4 +1,4 @@
-"""Addresses dynamic blocking holds, as the nodes report them (B271).
+"""Addresses an object blocks, as the nodes report them (B271).
 
 Read from the poller's newest status reading, as the *Servers* card is: each
 node's `blocked` names, per object, how many addresses its table holds and the
@@ -135,15 +135,22 @@ def object_card(
         if not isinstance(mine, Mapping):
             continue
         count = mine.get("count")
-        counts.append(count if isinstance(count, int) and not isinstance(count, bool) else 0)
+        count = count if isinstance(count, int) and not isinstance(count, bool) else 0
         listed = mine.get("addresses")
+        rows_listed = 0
+        seen_here: set[str] = set()
         for item in listed if isinstance(listed, list) else ():
             if not isinstance(item, Mapping) or not isinstance(item.get("address"), str):
                 continue
+            rows_listed += 1
+            seen_here.add(item["address"])
             left = item.get("expires_in_ms")
             left = left if isinstance(left, int) and not isinstance(left, bool) else 0
             nodes, longest = found.get(item["address"], ([], 0))
-            found[item["address"]] = ([*nodes, node], max(longest, left))
+            found[item["address"]] = (
+                nodes if node in nodes else [*nodes, node],
+                max(longest, left),
+            )
             #
             # The node with the most time left placed (or renewed) the block
             # last, so its reason is the one shown.
@@ -151,6 +158,15 @@ def object_card(
             reason = item.get("reason")
             if reason in REASON_TEXT and left >= reasons.get(item["address"], ("", -1))[1]:
                 reasons[item["address"]] = (reason, left)
+        #
+        # The node counts an address once for every table that holds it. When
+        # its list is complete the repeats are known and are taken off; past
+        # the listing limit the sum is only an upper bound (`show table`
+        # counts per table) and stays as the node said it.
+        #
+        if rows_listed == count:
+            count = len(seen_here)
+        counts.append(count)
     addresses = tuple(
         BlockedAddress(
             address=address,

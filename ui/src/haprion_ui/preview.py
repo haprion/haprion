@@ -1452,7 +1452,15 @@ def _rule_document(rule: Mapping[str, Any]) -> dict[str, Any]:
     if rule["negate"]:
         document["source_negate"] = True
     if document["mode"] == "block":
-        document["block_for"] = rule.get("block_for") or DEFAULT_RULE_BLOCK_FOR
+        #
+        # An empty time is refused in the words of the object's own *Block for*,
+        # rather than read as a third meaning of "no time".
+        #
+        if not str(rule.get("block_for") or "").strip():
+            raise ValueError(
+                f"Block for needs a time, such as 30m (rule {rule['name'] or 'without a name'})"
+            )
+        document["block_for"] = str(rule["block_for"]).strip()
     return document
 
 

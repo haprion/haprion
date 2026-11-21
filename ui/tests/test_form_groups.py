@@ -87,6 +87,16 @@ class TheAccessGroupSaysWhatItsRulesDo(unittest.TestCase):
             [("1 logging", "warning"), ("3 denying", "unknown"), ("2 blocking", "unknown")],
         )
 
+    def test_the_blocked_count_goes_where_the_blocks_come_from(self) -> None:
+        """Review 26-11-21, U06: Dynamic blocking never says "Off · N blocked"."""
+
+        by_rule = form_groups(form(rule_mode=["block"]), 3)
+        self.assertEqual(by_rule["blocking"].summary, "Off")
+        self.assertEqual(by_rule["access"].summary, "From everywhere · 3 blocked")
+        dynamic = form_groups(form(block_requests="300", block_for="30m", rule_mode=["block"]), 3)
+        self.assertTrue(dynamic["blocking"].summary.endswith(" · 3 blocked"), dynamic)
+        self.assertNotIn("blocked", dynamic["access"].summary)
+
     def test_limits_hold_the_rate_the_paths_and_the_body_and_access_does_not(self) -> None:
         limits = GROUPS["limits"].fields
         access = GROUPS["access"].fields

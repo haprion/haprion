@@ -376,7 +376,9 @@ def addresses(value: object) -> tuple[str, ...]:
 
 
 def blocking(proxy: Proxy) -> Proxy:
-    """The object, if its newest version blocks; refused otherwise."""
+    """The object, if its newest version has dynamic blocking; refused otherwise.
+
+    Placing a block by hand needs it; lifting one asks nothing of the object."""
 
     if proxy.dynamic_block is None:
         raise ServerStateError(
@@ -456,8 +458,7 @@ def read_unblocked(
         return Unblocked(
             node,
             "refused",
-            message="the node runs no dynamic blocking for this object; deploy the newest "
-            "version to it",
+            message="the node runs no blocking for this object; deploy the newest version to it",
         )
     said = document.get("message")
     message = said[:300] if isinstance(said, str) and said else None

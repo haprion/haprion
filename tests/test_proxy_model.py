@@ -803,6 +803,25 @@ class WhoAndWhatAnObjectRefuses(unittest.TestCase):
             "/Admin/v1.2/x",
         )
 
+    def test_two_spellings_of_one_time_are_one_table_in_minutes(self) -> None:
+        """Review 26-11-21, U03: `60m` and `1h` share a table, named and ordered by minutes."""
+
+        from haprion.generate import rule_block_table, rule_block_times
+
+        self.assertEqual(rule_block_table("shop", "1h"), rule_block_table("shop", "60m"))
+        self.assertEqual(rule_block_table("shop", "2h"), "mgd-shop-ruleblock-120m")
+        for first, second in (("60m", "1h"), ("1h", "60m"), ("30m", "1h")):
+            rule = (
+                f"deny_rules:\n  - name: a\n    path: /a\n    mode: block\n    block_for: {first}\n"
+                f"  - name: b\n    path: /b\n    mode: block\n    block_for: {second}\n"
+                f"  - name: c\n    path: /c\n    mode: block\n    block_for: 2h"
+            )
+            with self.subTest(first=first, second=second):
+                times = rule_block_times(self.load(rule))
+                self.assertEqual(
+                    times, ("60m", "120m") if first != "30m" else ("30m", "60m", "120m")
+                )
+
     def test_a_blocking_rule_carries_its_own_time(self) -> None:
         """B525: no dynamic blocking needed; the rule says how long, 1m to 24h."""
 

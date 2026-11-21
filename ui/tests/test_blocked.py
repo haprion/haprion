@@ -148,6 +148,43 @@ class TheCard(unittest.TestCase):
             self.fail("an object holding blocked addresses has a card")
         self.assertEqual((card.count, card.more), (250, 249))
 
+    def test_an_address_in_two_tables_counts_once_and_its_node_is_named_once(self) -> None:
+        """Review 26-11-21, U02: the node lists an address once for every table that holds it."""
+
+        card = blocked.object_card(
+            [
+                reading(
+                    ("node-a", {"shop": held(2, ("192.0.2.7", 600000), ("192.0.2.7", 3000000))}),
+                    ("node-b", {"shop": held(2, ("192.0.2.7", 600000), ("192.0.2.8", 5000))}),
+                )
+            ],
+            cluster="alpha",
+            name="shop",
+            now=OBSERVED,
+        )
+        if card is None:
+            self.fail("blocked addresses have a card")
+        self.assertEqual(
+            [(row.address, row.nodes) for row in card.addresses],
+            [("192.0.2.7", ("node-a", "node-b")), ("192.0.2.8", ("node-b",))],
+        )
+        self.assertEqual((card.count, card.more), (2, 0))
+
+    def test_past_the_listing_limit_the_nodes_sum_stays_the_upper_bound(self) -> None:
+        card = blocked.object_card(
+            [
+                reading(
+                    ("node-a", {"shop": held(250, ("192.0.2.7", 1000), ("192.0.2.7", 2000))}),
+                )
+            ],
+            cluster="alpha",
+            name="shop",
+            now=OBSERVED,
+        )
+        if card is None:
+            self.fail("blocked addresses have a card")
+        self.assertEqual((card.count, card.more), (250, 249))
+
     def test_a_block_whose_time_ran_out_is_ending_until_the_next_reading(self) -> None:
         """Faded and still counted, never dropped and brought back (26-10-10)."""
 
@@ -472,6 +509,46 @@ class TheObjectPageAndTheDashboard(DraftReading, BadgeReading):
             f'<meta name="haproxy-live" content="{config.poller.interval_seconds}">', page
         )
         self.assertNotIn('<meta name="haproxy-live"', quiet)
+
+    def test_a_page_whose_object_blocks_by_a_rule_keeps_itself_current_too(self) -> None:
+        """Review 26-11-21, U06: a new rule block shows without a reload."""
+
+        from haprion.proxy_model import load_proxy as real_load
+
+        from haprion_ui import reading as page_reading
+
+        original = page_reading.read_source
+
+        def demo_rows(request: Any, config: Any, source: Any) -> Any:
+            return original(request, replace(config, demo_fixture=True), source)
+
+        def with_a_block_rule(name: str, document: bytes) -> Any:
+            proxy = real_load(name, document)
+            rule = real_load(
+                "shop",
+                b"schema: 1\nname: shop\nhostnames: [shop.example.com]\n"
+                b"listen: {protocol: http}\nroutes:\n  - {path: /, backend: web}\n"
+                b"backends:\n  web: {balance: roundrobin,"
+                b" servers: [{host: 198.51.100.10, port: 80}]}\n"
+                b"deny_rules:\n  - {name: scan, mode: block, path: /.env, block_for: 30m}\n",
+            ).deny_rules
+            return replace(proxy, dynamic_block=None, deny_rules=rule)
+
+        self.account = replace(self.account, role="admin")
+        config = replace(configuration(), management_writes=True, clusters=demo.CLUSTERS)
+        client = self.client(config)
+        self.sign_in(client)
+        with (
+            mock.patch("haprion_ui.pages.proxies.read_source", side_effect=demo_rows),
+            mock.patch("haprion_ui.object_reading.read_source", side_effect=demo_rows),
+            mock.patch.object(demo, "BLOCKED", {}),
+        ):
+            plain = client.get("/proxies/edge-demo/public-web").text
+            with mock.patch("haprion_ui.pages.proxies.load_proxy", side_effect=with_a_block_rule):
+                ruled = client.get("/proxies/edge-demo/public-web").text
+
+        self.assertNotIn('<meta name="haproxy-live"', plain)
+        self.assertIn('<meta name="haproxy-live"', ruled)
 
     def test_the_dashboard_links_the_objects_for_an_admin(self) -> None:
         page = self.writing_client().get("/")

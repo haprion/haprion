@@ -1219,6 +1219,50 @@ class AnExpiredCertificate(unittest.TestCase):
         self.assertEqual(answer["results"][0]["certificate"]["not_after"], "2020-01-02T00:00:00Z")
 
 
+class CurlsWordsAreRead(unittest.TestCase):
+    """What curl's exit and reason mean, read without a server to race against."""
+
+    def answer(self, said: str) -> dict[str, Any]:
+        loader = importlib.machinery.SourceFileLoader("health_probe_script", str(SCRIPT))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        assert spec is not None
+        module: Any = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        module.CURL_COMMANDS = (sys.executable,)
+
+        def run(argv: list[str], **kwargs: Any) -> sp.CompletedProcess[bytes]:
+            return sp.CompletedProcess(argv, 0, said.encode(), b"")
+
+        entry = module.read_request(
+            io.BytesIO(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "targets": [target(host="192.0.2.10", port=8080, http2=True)],
+                    }
+                ).encode()
+            )
+        )["targets"][0]
+        with mock.patch.object(module.subprocess, "run", run):
+            result: dict[str, Any] = module.http2_check(entry, 1000, None)
+        return result
+
+    SETTINGS = "Remote peer returned unexpected data while we expected SETTINGS frame."
+
+    def test_an_http1_server_that_closed_first_still_does_not_speak_http2(self) -> None:
+        """26-11-21: under the gate's load curl exits 55 or 56 with nghttp2's reason, not 16."""
+
+        for code in (16, 55, 56):
+            with self.subTest(code):
+                result = self.answer(f"{code}\t000\t0\t{self.SETTINGS}\n")
+                self.assertFalse(result["ok"])
+                self.assertIn("does not speak HTTP/2", result["error"])
+
+    def test_a_reset_with_its_own_reason_says_that_reason(self) -> None:
+        result = self.answer("56\t000\t0\tRecv failure: Connection reset by peer\n")
+        self.assertEqual(result["error"], "Recv failure: Connection reset by peer")
+
+
 class CurlIsHeldToTheRequest(unittest.TestCase):
     """The HTTP/2 check's curl reads nothing the request did not hand it."""
 

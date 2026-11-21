@@ -640,6 +640,16 @@ CURL_TIMEOUT = 28
 CURL_TLS_FAILED = (35, 58, 59, 66)
 CURL_NOT_VERIFIED = 60
 CURL_HTTP2 = 16
+#
+# A plain server that speaks only HTTP/1.1 answers the HTTP/2 preface with an
+# HTTP/1 response and closes. curl says so with its HTTP/2 code - unless the
+# close wins the race with what curl was still sending, and then it exits 55
+# or 56 with the same reason (measured on curl 8.18.0 under load, 26-11-21:
+# 138 x 16, 1 x 55 with the reason, 161 x 56 reset). The reason is nghttp2's
+# own sentence, so it is what is read when the code is a send or receive one.
+#
+CURL_SEND_OR_RECEIVE = (55, 56)
+NOT_HTTP2 = "while we expected SETTINGS frame"
 
 
 def http2_check(target: dict[str, Any], timeout_ms: int, source: str | None) -> dict[str, Any]:
@@ -748,7 +758,7 @@ def http2_check(target: dict[str, Any], timeout_ms: int, source: str | None) -> 
         found["error"] = f"TLS verification failed: {_printable(message) or 'not trusted'}"
     elif code in CURL_TLS_FAILED:
         found["error"] = f"TLS failed: {_printable(message) or 'no handshake'}"
-    elif code == CURL_HTTP2:
+    elif code == CURL_HTTP2 or (code in CURL_SEND_OR_RECEIVE and NOT_HTTP2 in message):
         found["error"] = "no HTTP/2 answer: the server does not speak HTTP/2 here"
     elif code != 0:
         found["error"] = _printable(message) or f"curl stopped with {code}"

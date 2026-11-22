@@ -2087,7 +2087,7 @@ reaches the other nodes with the block. It is the limit that last renewed the bl
 limit writes it again, so an address blocked through the API that then goes over a limit shows that limit instead
 of *Blocked through the API*. It is *Too many requests* or *Too many errors* when the address went
 over that limit, *Too many new connections* for a tcp object's limit, *Blocked through the API* for an
-address placed through the API, and *Matched a deny rule in block mode* for a
+address placed through the API, and *Deny rule* for a
 [rule that blocks](#access-rules). An address over both limits shows the requests. A block
 placed before the object had a reason, and one that a node cannot tell, shows none.
 

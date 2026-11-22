@@ -62,6 +62,18 @@ class EveryReasonIsSaid(unittest.TestCase):
 
         self.assertEqual(set(blocked.REASON_TEXT), set(BLOCK_REASONS.values()))
 
+    def test_each_reason_fits_its_column_on_one_line(self) -> None:
+        """The Reason column is 220 px at 13 px type (26-11-22): a longer text ran into Nodes.
+
+        24 characters is the longest that fits there, measured at 1280 px. The column
+        also cuts with an ellipsis, so this keeps the words whole rather than the
+        table from overlapping.
+        """
+
+        for reason, text in blocked.REASON_TEXT.items():
+            with self.subTest(reason=reason):
+                self.assertLessEqual(len(text), 24, text)
+
 
 class TheCard(unittest.TestCase):
     def test_one_row_per_address_with_the_nodes_holding_it(self) -> None:

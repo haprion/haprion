@@ -138,7 +138,7 @@ def unsaved_paths(repo: Path, *excluded: str) -> tuple[str, ...]:
         path = entry[3:]
         if path not in found:
             found.append(path)
-        index += 2 if entry[:1] in ("R", "C") else 1
+        index += 2 if set(entry[:2]) & {"R", "C"} else 1
     return tuple(found)
 
 

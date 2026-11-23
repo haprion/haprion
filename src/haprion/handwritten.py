@@ -28,7 +28,7 @@ import errno
 import hashlib
 import os
 import stat
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -279,9 +279,15 @@ def settle_index(repo: Path, head: str) -> None:
         _git(repo, "reset", "-q", head, "--", *LAYERS)
 
 
+def named_paths(paths: Sequence[str], *, at_most: int = 5) -> str:
+    """Paths named for a sentence: the first few and how many more (B530, N3)."""
+
+    shown = list(paths[:at_most])
+    rest = len(paths) - len(shown)
+    return ", ".join(shown) + (f" and {rest} more" if rest > 0 else "")
+
+
 def listed_paths(found: tuple[Pending, ...], *, at_most: int = 5) -> str:
     """The files, named for a sentence: the first few and how many more."""
 
-    names = [item.path for item in found[:at_most]]
-    rest = len(found) - len(names)
-    return ", ".join(names) + (f" and {rest} more" if rest > 0 else "")
+    return named_paths([item.path for item in found], at_most=at_most)

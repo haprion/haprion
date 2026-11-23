@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import yaml
 
@@ -304,6 +305,30 @@ class TheReading(DraftFixture):
 
         self.assertEqual((code, result["state"]), (0, "refused"))
         self.assertIn("core/alias.cfg", result["message"])
+
+    def test_a_draft_area_that_cannot_be_read_is_a_reading_that_failed(self) -> None:
+        """B530, N4: `failed` with `handwritten_unavailable`, never `refused`."""
+
+        broken = handwritten.HandwrittenUnreadable("the draft area cannot be opened")
+        with mock.patch.object(handwritten, "read_draft", side_effect=broken):
+            out = io.StringIO()
+            readings_helper.main(
+                [],
+                policy_path=self.policy(),
+                input_stream=io.BytesIO(
+                    readings_helper.build_request("alpha", REQUEST_ID, {"handwritten": {}}).encode()
+                ),
+                output_stream=out,
+                error_stream=io.StringIO(),
+                require_secure=False,
+                require_root=False,
+            )
+        envelope = json.loads(out.getvalue())["result"]["reads"]["handwritten"]["envelope"]
+
+        document = assert_contract("haprion-handwritten", json.dumps(envelope))
+        self.assertEqual(
+            (document["outcome"], document["error"]["code"]), ("failed", "handwritten_unavailable")
+        )
 
     def test_it_is_asked_inside_the_readings_call(self) -> None:
         self.assertIs(readings_helper.READINGS["handwritten"], handwritten_helper.main)

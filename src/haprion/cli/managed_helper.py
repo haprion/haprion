@@ -23,7 +23,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -229,11 +229,6 @@ def _only_managed(paths: tuple[str, ...]) -> bool:
     return bool(paths) and all(path.startswith(MANAGED_PREFIX) for path in paths)
 
 
-def _named(paths: tuple[str, ...], *, at_most: int = 5) -> str:
-    shown = ", ".join(paths[:at_most])
-    return shown + (f" and {len(paths) - at_most} more" if len(paths) > at_most else "")
-
-
 def handwritten_waiting(cluster: str, found: tuple[handwritten.Pending, ...], *, doing: str) -> str:
     """The refusal of a publish while files written by hand are not published (B529).
 
@@ -248,6 +243,22 @@ def handwritten_waiting(cluster: str, found: tuple[handwritten.Pending, ...], *,
         f"{'is' if one else 'are'} not published: {handwritten.listed_paths(found)}. Publish "
         f"{'it' if one else 'them'} first, on the page Handwritten changes or with "
         f'haprion-publish -c {cluster} "<comment>", before {doing}.'
+    )
+
+
+def not_written_out(repo: Path, commit: str, exc: GitError) -> str:
+    """Why a recorded version's files are not in the draft area, and what finishes it (B530, N2).
+
+    git refuses the write-out only when a file the version changes was changed
+    on disk too - in managed/, which the interface writes - and names it.
+    Running the request again finishes the version once that change is gone.
+    """
+
+    return (
+        f"version {count_versions(repo, commit)} was recorded, but its files could not be "
+        f"written out to the draft area: {exc}. A file the version changes in managed/ was "
+        f"changed on disk as well. Discard that change (sudo git -C {repo} checkout -- <file>), "
+        "then run the same request again to finish the version."
     )
 
 
@@ -515,14 +526,18 @@ def _publish(
         #
         parent = first_parent(repo, head)
         if parent is not None:
-            with suppress(GitError):
+            try:
                 write_out(repo, parent, head)
+            except GitError as exc:
+                return refuse(
+                    "publish_incomplete", not_written_out(repo, head, exc), exit_codes.BLOCKED
+                )
         dirty = outside_layers(repo)
     if dirty:
         return refuse(
             "dirty_worktree",
             f"there are unsaved changes in the cluster worktree outside core/ and manual/: "
-            f"{_named(dirty)}. Publish or discard them before {words.doing}.",
+            f"{handwritten.named_paths(dirty)}. Publish or discard them before {words.doing}.",
             exit_codes.BLOCKED,
         )
     waiting = handwritten_refusal(repo, head, request.cluster, doing=words.doing)
@@ -687,10 +702,7 @@ def _publish(
             write_out(repo, head, commit)
         except GitError as exc:
             return refuse(
-                "publish_incomplete",
-                f"version {count_versions(repo, commit)} was recorded, but its files could not "
-                f"be written out to the draft area: {exc}. Run the same request again to finish it.",
-                exit_codes.BLOCKED,
+                "publish_incomplete", not_written_out(repo, commit, exc), exit_codes.BLOCKED
             )
         metadata = ReleaseMetadata(
             cluster=request.cluster,
@@ -769,7 +781,7 @@ def _publish_handwritten(
     if dirty:
         return refuse(
             "dirty_worktree",
-            f"there are unsaved changes outside core/ and manual/: {_named(dirty)}. "
+            f"there are unsaved changes outside core/ and manual/: {handwritten.named_paths(dirty)}. "
             "Publish or discard them before publishing the files changed by hand.",
             exit_codes.BLOCKED,
         )

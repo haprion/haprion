@@ -16,6 +16,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from haprion import handwritten, repo_health
 from haprion.candidate_validation import ValidationResult
@@ -226,6 +227,98 @@ class ReadingTheStatus(unittest.TestCase):
             self.assertEqual(
                 repo_health.unsaved_paths(repo, *handwritten.LAYERS), ("managed/new name.yaml",)
             )
+
+
+class ARenameOnlyOnDisk(unittest.TestCase):
+    def test_names_the_new_path_and_skips_the_old_one(self) -> None:
+        """B530, N1: ` R` in the work tree's column carries the old name as a field of its own."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            repo = Path(raw)
+            git(repo, "init", "-q", "-b", "main")
+            git(repo, "config", "user.email", "operator@example.com")
+            git(repo, "config", "user.name", "operator")
+            (repo / "managed").mkdir()
+            (repo / "managed/a.yaml").write_text(
+                "x: 1\nlonger content so rename is detected\n", encoding="utf-8"
+            )
+            git(repo, "add", "-A")
+            git(repo, "commit", "-qm", "first")
+            (repo / "managed/a.yaml").rename(repo / "managed/b.yaml")
+            git(repo, "add", "-N", "managed/b.yaml")
+
+            self.assertEqual(repo_health.unsaved_paths(repo), ("managed/b.yaml",))
+
+
+class AVersionWhoseFilesCannotBeWrittenOut(HandwrittenFixture):
+    def test_the_refusal_names_the_file_and_the_same_request_finishes_it(self) -> None:
+        """B530, N2: a change on disk to a file the version writes; discarded, the retry finishes."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            request = self.request()
+            target = self.repo / "managed/proxies/shop.yaml"
+
+            def in_the_way() -> None:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("written by hand\n", encoding="utf-8")
+
+            code, document, _err = self.publish_while(policy, request, during=in_the_way)
+
+            self.assertEqual((code, document["error"]["code"]), (75, "publish_incomplete"))
+            self.assertIn("managed/proxies/shop.yaml", document["error"]["message"])
+            self.assertIn("run the same request again", document["error"]["message"])
+            target.unlink()
+            request.seek(0)
+            code, document, _err = self.publish_while(policy, request)
+            self.assertEqual(code, 0, document)
+            self.assertEqual(git(self.repo, "status", "--porcelain"), "")
+
+
+class APublishStoppedBeforeItMovedTheIndex(HandwrittenFixture):
+    def test_the_same_request_points_the_index_at_the_version(self) -> None:
+        """B530, H02 b / N4: a new file, and the index left at the version before."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            (self.repo / "core/conf.d").mkdir(parents=True, exist_ok=True)
+            (self.repo / "core/conf.d/0020-new.cfg").write_text(
+                "frontend extra\n  bind 192.0.2.20:82\n", encoding="utf-8"
+            )
+            request = self.hand_request()
+            first, document, _err = self.publish_while(policy, request)
+            self.assertEqual(first, 0, document)
+            git(self.repo, "reset", "-q", "--mixed", "HEAD~1")
+            self.assertIn("?? core/conf.d/0020-new.cfg", git(self.repo, "status", "--porcelain"))
+            request.seek(0)
+
+            code, document, _err = self.publish_while(policy, request)
+
+            self.assertEqual(code, 0, document)
+            self.assertEqual(git(self.repo, "status", "--porcelain"), "")
+
+
+class ADraftThatCannotBeRead(HandwrittenFixture):
+    """B530, N4: a reading that failed is said as one, on every path."""
+
+    def test_the_publish_answers_handwritten_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            (self.repo / "core/haproxy.cfg").write_bytes(EDITED)
+            request = self.hand_request()
+            broken = handwritten.HandwrittenUnreadable("the draft area cannot be opened")
+            with mock.patch.object(handwritten, "read_layers", side_effect=broken):
+                code, document, _err = self.publish_while(policy, request)
+            with mock.patch.object(handwritten, "read_draft", side_effect=broken):
+                saved, said, _err = self.publish_objects(policy, self.request())
+
+            self.assertEqual(document["error"]["code"], "handwritten_unavailable")
+            self.assertEqual(said["error"]["code"], "handwritten_unavailable")
+            self.assertNotEqual(code, 0)
+            self.assertNotEqual(saved, 0)
 
 
 class WhatOnlyGitSees(HandwrittenFixture):

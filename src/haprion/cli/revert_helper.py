@@ -41,7 +41,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, Protocol, TextIO
 
-from haprion import crs, exit_codes, geo, held_ports, node_publish, release_checks
+from haprion import crs, exit_codes, geo, handwritten, held_ports, node_publish, release_checks
 from haprion.candidate_validation import (
     DEFAULT_RUN_ROOT,
     DERIVED_LIMITS,
@@ -407,7 +407,7 @@ def _revert(
         return refuse(
             "dirty_worktree",
             f"there are unsaved changes in {repo} outside core/ and manual/: "
-            f"{', '.join(dirty[:5])}{' and more' if len(dirty) > 5 else ''}. "
+            f"{handwritten.named_paths(dirty)}. "
             "Publish or discard them before reverting.",
             exit_codes.BLOCKED,
         )

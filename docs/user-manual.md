@@ -190,9 +190,12 @@ exactly those files and deploys them. If the files change after the page was ope
 and the page asks you to read it again. Only the files are published: saved changes stay saved, and the
 generated configuration is not made again.
 
-While files changed by hand wait, no other publish goes through. *Versions* and the update page say so
-and link to the page instead of offering a button. A link, or a file that is not text, under `core/` or
-`manual/` cannot be published at all; *Needs attention* says which file. At the terminal,
+While files changed by hand wait, no other publish or revert goes through. *Versions* and the update page
+say so and link to the page instead of offering a button. Only the files' content counts: a changed file
+mode is not a change. A file you save while a publish runs is kept and shows up as waiting afterwards. A
+link, or a file that is not text, under `core/` or `manual/` cannot be published at all; *Needs attention*
+says which file. Keep the files readable for the configuration group, as the rest of the repository: the
+terminal's commands read them as you. At the terminal,
 `haprion-config-status -c <cluster>` lists the same files as unsent, and `haprion-publish -c <cluster>
 "<comment>"` publishes them.
 

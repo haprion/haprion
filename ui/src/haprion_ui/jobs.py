@@ -1039,6 +1039,39 @@ def unresolved_note(job: Job) -> str | None:
     return ". ".join(said) + "." if said else None
 
 
+def fragment_note(job: Job) -> str | None:
+    """What `haprion-publish` says of manual/reservations.yaml after a publish of hand-written files (B530, H04).
+
+    An observation, not a refusal, in the terminal's words: two frontends on
+    one address split the traffic between them without HAProxy saying so, and
+    the reservations file is what prevents it.
+    """
+
+    if job.operation != "changes_publish" or not isinstance(job.result, dict):
+        return None
+    envelope = publish_answer(job.result)
+    body = envelope.get("result") if envelope is not None else None
+    review = body.get("fragment_review") if isinstance(body, dict) else None
+    if not isinstance(review, dict):
+        return None
+    said = [
+        f"{words}: {', '.join(str(path) for path in paths)}"
+        for key, words in (
+            ("unreviewed", "not written down at all"),
+            ("changed", "changed since somebody read them"),
+            ("vanished", "written down but no longer present"),
+        )
+        if isinstance(paths := review.get(key), list) and paths
+    ]
+    if not said:
+        return None
+    return (
+        "manual/reservations.yaml is not current with the handwritten configuration - "
+        + "; ".join(said)
+        + ". If any of those bind an address or a hostname, write it down there."
+    )
+
+
 def unchecked_note(job: Job) -> str | None:
     """Nodes the publish could not ask about what an object now needs (W05), in the engine's words."""
 
@@ -1293,7 +1326,11 @@ def _view(
                 unknown_note(job)
                 or deletion_note(job)
                 or publication_note(job)
-                or " ".join(note for note in (unresolved_note(job), unchecked_note(job)) if note)
+                or " ".join(
+                    note
+                    for note in (unresolved_note(job), unchecked_note(job), fragment_note(job))
+                    if note
+                )
                 or distribution_note(job),
             )
             if text
@@ -1473,13 +1510,36 @@ ACTION_NAMES: dict[tuple[str, str], tuple[str, str, str]] = {
         "Abandoning request",
         "Abandoning the request failed",
     ),
+    #
+    # A publish named after what it carries (B530, H10): saved changes keep
+    # the operation's own name.
+    #
+    ("changes_publish", "handwritten"): (
+        "Publish handwritten changes",
+        "Publishing handwritten changes",
+        "Publishing the handwritten changes failed",
+    ),
+    ("changes_publish", "regenerate"): (
+        "Publish regenerated configuration",
+        "Publishing regenerated configuration",
+        "Publishing the regenerated configuration failed",
+    ),
 }
 
 
 def action_names(job: Job) -> tuple[str, str, str] | None:
     """The job's name, running label and failure label by its action, if it has one."""
 
-    action = job.payload.get("action") if isinstance(job.payload, dict) else None
+    payload = job.payload if isinstance(job.payload, dict) else {}
+    action = payload.get("action")
+    if job.operation == "changes_publish":
+        action = (
+            "handwritten"
+            if payload.get("handwritten")
+            else "regenerate"
+            if payload.get("regenerate") is True
+            else None
+        )
     return ACTION_NAMES.get((job.operation, action)) if isinstance(action, str) else None
 
 

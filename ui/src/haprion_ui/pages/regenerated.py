@@ -78,7 +78,13 @@ def build_router(config: Config) -> APIRouter:
                 # published (B529); the page that publishes them, while they do.
                 #
                 "handwritten": f"/history/{cluster}/handwritten"
-                if handwritten_waiting(request, config, cluster) is not None
+                if handwritten_waiting(
+                    request,
+                    config,
+                    cluster,
+                    head=versions.head_commit if versions is not None else None,
+                )
+                is not None
                 else "",
                 "demo_fixture": config.demo_fixture,
             },
@@ -123,11 +129,11 @@ def build_router(config: Config) -> APIRouter:
                 "configuration again with the installed version.",
                 back=back,
             )
-        waiting = handwritten_waiting(request, config, cluster)
-        if waiting is not None:
-            return refusal_page(request, config, handwritten_problem(waiting), back=back)
         versions = history_view(request, cluster)
         head = versions.head_commit if versions is not None else ""
+        waiting = handwritten_waiting(request, config, cluster, head=head)
+        if waiting is not None:
+            return refusal_page(request, config, handwritten_problem(waiting), back=back)
         if not head or expected_head != head or fingerprint != view.fingerprint:
             return refusal_page(
                 request,

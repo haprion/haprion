@@ -31,6 +31,7 @@ from haprion.proxy_model import (
 )
 
 from haprion_ui import (
+    attention,
     db,
     health,
     held_servers,
@@ -201,12 +202,21 @@ def handwritten_payload(
     }
 
 
-def handwritten_waiting(request: Request, config: Config, cluster: str) -> Mapping[str, Any] | None:
-    """The cluster's handwritten reading while files wait or cannot be published; None otherwise."""
+def handwritten_waiting(
+    request: Request, config: Config, cluster: str, *, head: str | None
+) -> Mapping[str, Any] | None:
+    """The cluster's handwritten reading while files wait or cannot be published; None otherwise.
+
+    Only a reading of `head`, the newest version: one made before the files
+    were published says they wait until the poller reads again, and the
+    engine refuses on its own if anything does (B530, H09).
+    """
 
     _, rows = read_source(request, config, HANDWRITTEN_SOURCE, cluster=cluster)
     row = next((row for row in rows if row.cluster == cluster), None)
     if row is None or row.outcome != "done" or not isinstance(row.result, Mapping):
+        return None
+    if not head or row.result.get("head") != head:
         return None
     return row.result if row.result.get("state") in ("pending", "refused") else None
 
@@ -215,14 +225,22 @@ def handwritten_problem(result: Mapping[str, Any]) -> str:
     """Why a publish of saved changes waits while files changed by hand do (B529)."""
 
     if result.get("state") == "refused":
-        return "core/ or manual/ holds something no publish can take. Fix it before publishing."
-    paths = [
-        str(item.get("path"))
-        for item in result.get("pending") or ()
-        if isinstance(item, Mapping) and item.get("path")
-    ]
-    shown = ", ".join(paths[:3]) + (f" and {len(paths) - 3} more" if len(paths) > 3 else "")
-    return f"Changed by hand and not published: {shown}. Publish {'it' if len(paths) == 1 else 'them'} first."
+        #
+        # With the reason, as *Needs attention* says it (B530, H08).
+        #
+        why = str(result.get("message") or "").strip()
+        if len(why) > attention.REGENERATION_MESSAGE:
+            why = why[: attention.REGENERATION_MESSAGE - 1] + "…"
+        return (
+            "core/ or manual/ holds something no publish can take"
+            + (f": {why}" if why else ".")
+            + " Fix it before publishing."
+        )
+    one = len(result.get("pending") or ()) == 1
+    return (
+        f"Changed by hand and not published: {attention.handwritten_files(result)}. "
+        f"Publish {'it' if one else 'them'} first."
+    )
 
 
 def held_server_counts(
@@ -430,7 +448,9 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
     # said here, with the page that publishes them, rather than as a job that
     # fails. Read only where there is something to publish.
     #
-    waiting = handwritten_waiting(request, config, cluster) if rows and not problem else None
+    waiting = (
+        handwritten_waiting(request, config, cluster, head=head) if rows and not problem else None
+    )
     if waiting is not None:
         problem = handwritten_problem(waiting)
     return Package(

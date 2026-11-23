@@ -326,3 +326,79 @@ class TheRegeneratedPageWaits(LoginTestCase):
         self.assertEqual(answer.status_code, 400)
         self.assertIn("Changed by hand and not published", answer.text)
         queued.assert_not_called()
+
+
+class TheReviewFixes(LoginTestCase):
+    """B530: the web says what the terminal says, and only of the newest version."""
+
+    def test_a_reading_of_an_older_version_holds_nothing_back(self) -> None:
+        """H09: published since, and the poller has not read again."""
+
+        from haprion_ui import pending
+
+        request = SimpleNamespace()
+        with mock.patch("haprion_ui.pending.read_source", return_value=((), [handwritten_row()])):
+            self.assertIsNotNone(
+                pending.handwritten_waiting(request, configuration(), "alpha", head=HEAD)  # type: ignore[arg-type]
+            )
+            self.assertIsNone(
+                pending.handwritten_waiting(request, configuration(), "alpha", head="b" * 40)  # type: ignore[arg-type]
+            )
+            self.assertIsNone(
+                pending.handwritten_waiting(request, configuration(), "alpha", head=None)  # type: ignore[arg-type]
+            )
+
+    def test_a_draft_no_publish_can_take_says_why_where_the_publish_waits(self) -> None:
+        """H08."""
+
+        from haprion_ui import pending
+
+        said = pending.handwritten_problem(handwritten_row("refused").result)
+
+        self.assertIn("core/alias.cfg", said)
+        self.assertTrue(said.endswith("Fix it before publishing."))
+
+    def test_a_publish_is_named_after_what_it_carries(self) -> None:
+        """H10."""
+
+        from haprion_ui import jobs
+        from tests.test_job_page import job
+
+        for payload, name in (
+            ({"handwritten": FINGERPRINT}, "Publish handwritten changes"),
+            ({"regenerate": True}, "Publish regenerated configuration"),
+            ({"objects": {"shop": None}}, None),
+        ):
+            with self.subTest(name=name):
+                row = replace(job(state="done", operation="changes_publish"), payload=payload)
+                named = jobs.action_names(row)
+                self.assertEqual(named[0] if named else None, name)
+
+    def test_the_reservations_note_reaches_the_job(self) -> None:
+        """H04: what `haprion-publish` prints after the same publish."""
+
+        from haprion_ui import jobs
+        from tests.test_job_page import job
+
+        row = job(
+            state="done",
+            operation="changes_publish",
+            result={
+                "outcome": "done",
+                "result": {
+                    "fragment_review": {
+                        "unreviewed": ["manual/conf.d/20-extra.cfg"],
+                        "changed": [],
+                        "vanished": [],
+                    }
+                },
+            },
+        )
+
+        note = jobs.fragment_note(row)
+
+        self.assertIsNotNone(note)
+        self.assertIn("not written down at all: manual/conf.d/20-extra.cfg", str(note))
+        self.assertIsNone(
+            jobs.fragment_note(job(state="done", operation="changes_publish", result={}))
+        )

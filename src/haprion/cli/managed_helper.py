@@ -229,14 +229,14 @@ def fence(parameters: Mapping[str, JsonValue]) -> tuple[str, str]:
 # either way. Cutting three characters took the path's first letter on that
 # line, so " M managed/x" read as "anaged/x" (26-11-23).
 #
-PORCELAIN = re.compile(r"^\s*\S{1,2}\s+(.*)$")
+PORCELAIN = re.compile(r"\s*\S{1,2}\s+(.*)")
 
 
 def _paths(porcelain: str) -> list[str]:
     return [
         found.group(1).split(" -> ")[-1]
         for line in porcelain.splitlines()
-        if (found := PORCELAIN.match(line))
+        if (found := PORCELAIN.fullmatch(line))
     ]
 
 

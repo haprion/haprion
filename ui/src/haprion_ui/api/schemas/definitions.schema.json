@@ -136,6 +136,7 @@
             "traffic_stream",
             "api_token",
             "regeneration",
+            "handwritten",
             "blocklist"
           ],
           "description": "Code. What kind of fault the row reports."

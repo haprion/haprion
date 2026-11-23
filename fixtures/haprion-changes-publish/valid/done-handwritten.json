@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "changes_publish",
+  "cluster": "alpha",
+  "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "result": {
+    "changed": true,
+    "version": 12,
+    "hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "published_at": "2026-11-23T13:00:00Z",
+    "comment": "Handwritten changes: core/haproxy.cfg",
+    "validation": {
+      "valid": true,
+      "issues": []
+    },
+    "deployment_required": true,
+    "next_command": "haprion-deploy -c alpha",
+    "candidate_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "release": "/configs/haproxy-published/alpha/releases/12",
+    "already_current": false,
+    "fragment_review": {
+      "unreviewed": [],
+      "changed": [],
+      "vanished": []
+    },
+    "objects": [],
+    "removed": [],
+    "network": false,
+    "settings": false,
+    "regenerate": false,
+    "handwritten": [
+      {
+        "path": "core/haproxy.cfg",
+        "kind": "changed"
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

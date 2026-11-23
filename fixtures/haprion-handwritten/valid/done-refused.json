@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "handwritten",
+  "cluster": "alpha",
+  "request_id": "52952952-9529-4529-8529-529529529529",
+  "result": {
+    "state": "refused",
+    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "message": "'core/alias.cfg' is a symbolic link, or lies under one. A publish takes files only; replace the link with the file itself, or remove it."
+  },
+  "warnings": [],
+  "error": null
+}

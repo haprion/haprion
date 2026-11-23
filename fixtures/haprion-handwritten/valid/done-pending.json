@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "handwritten",
+  "cluster": "alpha",
+  "request_id": "52952952-9529-4529-8529-529529529529",
+  "result": {
+    "state": "pending",
+    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "pending": [
+      {
+        "path": "core/haproxy.cfg",
+        "kind": "changed"
+      },
+      {
+        "path": "manual/conf.d/20-extra.cfg",
+        "kind": "new"
+      }
+    ],
+    "diff": {
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "parent": null,
+      "truncated": false,
+      "files": [
+        {
+          "path": "core/haproxy.cfg",
+          "status": "modified",
+          "old_path": null,
+          "added": 1,
+          "removed": 1,
+          "binary": false,
+          "lines": [
+            "@@ -1,3 +1,3 @@",
+            " global",
+            "-    tune.stick-counters 4",
+            "+    tune.stick-counters 6"
+          ]
+        },
+        {
+          "path": "manual/conf.d/20-extra.cfg",
+          "status": "added",
+          "old_path": null,
+          "added": 1,
+          "removed": 0,
+          "binary": false,
+          "lines": [
+            "@@ -0,0 +1 @@",
+            "+frontend extra"
+          ]
+        }
+      ]
+    }
+  },
+  "warnings": [],
+  "error": null
+}

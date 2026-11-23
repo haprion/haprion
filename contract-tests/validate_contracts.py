@@ -357,6 +357,32 @@ def check_regeneration_semantics(document: dict[str, object], path: Path) -> Non
         )
 
 
+def check_handwritten_semantics(document: dict[str, object], path: Path) -> None:
+    """The handwritten reading (B529): each state carries what it says, and the diff only pending files."""
+
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a reading that was made carries its result")
+        return
+    assert isinstance(result, dict)
+    state = result["state"]
+    if state != "pending" and ({"fingerprint", "pending", "diff"} & set(result)):
+        raise AssertionError(f"{path}: only pending files carry a fingerprint, a list and a diff")
+    if state == "refused" and not result.get("message"):
+        raise AssertionError(f"{path}: a refusal says why")
+    if state != "pending":
+        return
+    paths = [item["path"] for item in result["pending"]]
+    if len(set(paths)) != len(paths):
+        raise AssertionError(f"{path}: a file is pending once")
+    if result["diff"]["commit"] != result["head"]:
+        raise AssertionError(f"{path}: the diff is against the version the reading names")
+    shown = {item["path"] for item in result["diff"]["files"]}
+    if not shown <= set(paths):
+        raise AssertionError(f"{path}: the diff shows only pending files")
+
+
 def check_publish_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -707,6 +733,7 @@ def check_changes_publish_semantics(document: dict[str, object], path: Path) -> 
         or result["network"]
         or result["settings"]
         or result.get("regenerate")
+        or result.get("handwritten")
     ):
         raise AssertionError(f"{path}: a changed publish names what it changed")
 
@@ -1529,6 +1556,7 @@ SEMANTIC_CHECKS = {
     "inventory": check_inventory_semantics,
     "objects": check_objects_semantics,
     "regeneration": check_regeneration_semantics,
+    "handwritten": check_handwritten_semantics,
     "publish": check_publish_semantics,
     "revert": check_revert_semantics,
     "cluster_settings": check_cluster_settings_semantics,
@@ -1622,6 +1650,13 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
             result["diff"] = None
         else:
             result["outcome"] = "changed"
+    elif operation == "handwritten":
+        if result["state"] == "pending":
+            result["diff"]["files"].append({**result["diff"]["files"][0], "path": "core/other.cfg"})
+        elif result["state"] == "refused":
+            result["message"] = ""
+        else:
+            result["fingerprint"] = "c" * 64
     elif operation == "readings":
         first = next(iter(result["reads"].values()))
         first["envelope"] = None

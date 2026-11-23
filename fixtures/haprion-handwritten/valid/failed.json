@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "failed",
+  "operation": "handwritten",
+  "cluster": "alpha",
+  "request_id": "52952952-9529-4529-8529-529529529529",
+  "result": null,
+  "warnings": [],
+  "error": {
+    "code": "handwritten_unavailable",
+    "message": "the repository is not on a branch",
+    "details": null,
+    "node": null
+  }
+}

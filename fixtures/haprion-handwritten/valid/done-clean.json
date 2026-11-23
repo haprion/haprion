@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "handwritten",
+  "cluster": "alpha",
+  "request_id": "52952952-9529-4529-8529-529529529529",
+  "result": {
+    "state": "clean",
+    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "warnings": [],
+  "error": null
+}

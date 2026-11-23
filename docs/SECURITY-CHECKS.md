@@ -327,7 +327,10 @@ what `main` holds since the last `v*` tag:
    commits inside a merge must be the app's lock or pin updates, or Dependabot's, with no merge among
    them. And the files that differ from the tag may only be the locks, the WAF pins, the version files
    and `.github/`. Anything else is a person's change, which an automatic release would ship unreviewed:
-   nothing is released, and while a security fix waits behind it an issue says so
+   nothing is released, and an issue says so. A release made by hand pushes its version commit before
+   the tag, and CI starts the workflow before the tag is there; while `main`'s version is above the
+   tag and the commit that set it is younger than a day, the plan waits for the tag instead. After a
+   day the tag is taken as forgotten, and the issue says so
 2. **When.** A security fix is what the watch knows to be one: the locks' proposal, which only moves a
    package an advisory names, and a WAF proposal made while govulncheck finds something the pinned
    engine reaches (its commit subject says *for a known vulnerability*). The first one merged starts a

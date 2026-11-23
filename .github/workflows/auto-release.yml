@@ -18,7 +18,9 @@ name: automatic release
 #   blocked  a change on main since the tag is not one the watch or Dependabot
 #            made, or could not be checked as one; nothing is released, and an
 #            issue says why for as long as it lasts
-#   wait, nothing
+#   wait     a fix waits for its time; or main's version is above the tag, a
+#            release made by hand whose tag is not pushed yet (a day at most)
+#   nothing
 #
 # A build that fails twice in a row, and a proposal that stays red when it is
 # run again, are issues too. The package repository is asked too: when it

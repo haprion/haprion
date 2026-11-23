@@ -13,7 +13,9 @@ locks and the WAF pins need (B353, B354). `decide` reads main since the last
     blocked  a commit since the tag is not one the watch or Dependabot made:
              a person's change waits for a release made by hand, and an
              automatic one would ship it unreviewed
-    wait     something is waiting, and its time has not come (`due_at`)
+    wait     something is waiting, and its time has not come (`due_at`); or
+             main holds a person's change and a version above the tag: a
+             release made by hand is on its way
     release  propose the next patch version now
     rebuild  the last tag is an automatic one and has no GitHub release: build
              the tagged commit again, twice, and make the release (no new tag)
@@ -27,6 +29,13 @@ its release (apt-repo.yml's run was replaced or failed) are what the workflow
 tells the plan with `--last-release`, `--released-at` and `--published` (the
 versions the published `Packages` lists, one per line); the second is the
 plan's `repository` text, which the workflow turns into an issue.
+
+A release made by hand pushes its version commit to main before the tag, and
+CI starts this workflow as soon as the push's gates have passed, before the
+tag is there. A person's change on main is therefore no block while main's
+version is above the tag and the commit that set it is younger than a day:
+the plan waits for the tag. A version that has waited longer is a tag
+forgotten, and the plan blocks as it does without one.
 
 A security fix is what the watch knows to be one: the locks' proposal, which
 only ever moves a package an advisory names (B353), and a WAF proposal made
@@ -85,6 +94,12 @@ DEFAULT_APP = "haprion-upstream-watch[bot]"
 TAG = re.compile(r"v(\d{1,4})\.(\d{1,4})\.(\d{1,4})")
 SECURITY_WAIT = timedelta(hours=24)
 PUBLISH_WAIT = timedelta(hours=3)
+#
+# How long a version above the tag is a release made by hand on its way. The
+# longest measured from the version commit to the release was 18.5 hours
+# (1.2.1, over a night, 2026-11-23); a forgotten tag shows within a day.
+#
+HAND_RELEASE_WAIT = timedelta(hours=24)
 
 #
 # Where the version is written, and the line that holds it in each.
@@ -150,6 +165,15 @@ class Change:
     """For `other`: what is wrong with it."""
     merge_commit: str = ""
     """The commit on main's first-parent line that brought it in."""
+
+
+@dataclass(frozen=True, slots=True)
+class Untagged:
+    """Main's version, above the last tag: a release made by hand whose tag is not pushed yet."""
+
+    version: str
+    since: datetime
+    """When the commit that set the version was made (its committer time)."""
 
 
 @dataclass(slots=True)
@@ -319,6 +343,54 @@ def outside_the_watch(source: Path, tag: str, revision: str = "HEAD") -> str:
     return ""
 
 
+def _numbers(version: str) -> tuple[int, int, int] | None:
+    match = re.fullmatch(r"(\d{1,4})\.(\d{1,4})\.(\d{1,4})", version)
+    if match is None:
+        return None
+    major, minor, patch = (int(part) for part in match.groups())
+    return major, minor, patch
+
+
+def untagged_version(source: Path, tag: str) -> Untagged | None:
+    """Main's version when it is above the tag's, with the time the commit that set it was made."""
+
+    version = head_version(source)
+    above, tagged = _numbers(version), _numbers(tag[1:])
+    if above is None or tagged is None or above <= tagged:
+        return None
+    log = _git(source, "log", "--format=%H%x00%cI", f"{tag}..HEAD", "--", "pyproject.toml")
+    for line in log.splitlines():
+        commit, made = line.split("\x00")
+        if head_version(source, commit) != version:
+            continue
+        if head_version(source, f"{commit}^") != version:
+            return Untagged(version, datetime.fromisoformat(made).astimezone(UTC))
+    return None
+
+
+def _by_hand(result: Plan, reason: str, now: datetime, untagged: Untagged | None) -> Plan:
+    """A person's change blocks, unless main's version says a release made by hand is on its way."""
+
+    result.outcome = "blocked"
+    result.reason = reason
+    if untagged is None:
+        return result
+    since = untagged.since.isoformat()
+    due = untagged.since + HAND_RELEASE_WAIT
+    if now < due:
+        result.outcome = "wait"
+        result.due_at = due.isoformat()
+        result.reason = (
+            f"main says version {untagged.version} since {since} and it has no tag yet: "
+            "a release made by hand is on its way"
+        )
+    else:
+        result.reason = (
+            f"{reason}; main has said version {untagged.version} since {since} without a tag"
+        )
+    return result
+
+
 def _first_of_next_month(when: datetime) -> datetime:
     year, month = (when.year + 1, 1) if when.month == 12 else (when.year, when.month + 1)
     return datetime(year, month, 1, tzinfo=UTC)
@@ -331,6 +403,7 @@ def plan(
     *,
     head_version: str,
     outside: str = "",
+    untagged: Untagged | None = None,
 ) -> Plan:
     """What the workflow does next."""
 
@@ -338,21 +411,23 @@ def plan(
     others = [change for change in changes if change.kind == "other"]
     if others:
         first = others[0]
-        result.outcome = "blocked"
-        result.reason = (
+        result.security = any(change.security for change in changes)
+        return _by_hand(
+            result,
             f"{first.commit[:8]} ({first.subject}) is not the watch's or Dependabot's "
-            f"({first.why}); it waits for a release made by hand"
+            f"({first.why}); it waits for a release made by hand",
+            now,
+            untagged,
         )
-        result.security = any(change.security for change in changes)
-        return result
     if outside:
-        result.outcome = "blocked"
-        result.reason = (
-            f"{outside} changed since {tag} and is no file the watch or Dependabot changes; "
-            "it waits for a release made by hand"
-        )
         result.security = any(change.security for change in changes)
-        return result
+        return _by_hand(
+            result,
+            f"{outside} changed since {tag} and is no file the watch or Dependabot changes; "
+            "it waits for a release made by hand",
+            now,
+            untagged,
+        )
     shipped = [change for change in changes if change.shipped]
     security = [change for change in shipped if change.security]
     result.security = bool(security)
@@ -530,6 +605,11 @@ def decide(
         now,
         head_version=head_version(source, merge or "HEAD"),
         outside=outside_the_watch(source, tag, merge or "HEAD"),
+        #
+        # The workflow's own version proposal, merged, is no release made by
+        # hand: the plan tags it, or blocks on what is wrong with it.
+        #
+        untagged=None if version else untagged_version(source, tag),
     )
     if result.outcome == "tag":
         problem, result.pull_head = tree_problem(source, merge)

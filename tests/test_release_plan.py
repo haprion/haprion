@@ -257,6 +257,67 @@ class ReleasePlanTest(unittest.TestCase):
         self.assertTrue(result.security)
         self.assertIn("Generate something new", result.reason)
 
+    def version_by_hand(self, version: str, when: str) -> None:
+        """A release made by hand: a person's change, then the version commit, pushed before the tag."""
+
+        self.repository.write("src/haprion/generate.py", "x = 1\n")
+        self.repository.commit("operator", "Generate something new", "2026-11-15T10:00:00+00:00")
+        PLAN.bump(self.repository.root, version)
+        self.repository.write("src/haprion/compatibility.json", '{"installed": "1.1.0"}\n')
+        self.repository.commit("operator", f"Version {version}; installed is v1.1.0's", when)
+
+    def test_a_version_on_main_without_its_tag_waits_for_the_release_made_by_hand(self) -> None:
+        # CI starts the automatic release when its gates pass on the push of the
+        # version commit, and the tag follows a little later (v1.3.1: 25 s).
+        self.locks(4, "2026-11-15T09:00:00+00:00")
+        self.version_by_hand("1.2.0", "2026-11-15T12:00:00+00:00")
+
+        waiting = self.repository.decide("2026-11-15T12:25:24+00:00")
+        forgotten = self.repository.decide("2026-11-16T12:00:00+00:00")
+
+        self.assertEqual(waiting.outcome, "wait")
+        self.assertEqual(waiting.due_at, "2026-11-16T12:00:00+00:00")
+        self.assertIsNone(waiting.next)
+        self.assertTrue(waiting.security)
+        self.assertIn("1.2.0", waiting.reason)
+        self.assertIn("made by hand", waiting.reason)
+        self.assertEqual(forgotten.outcome, "blocked")
+        self.assertIn("Generate something new", forgotten.reason)
+        self.assertIn("1.2.0", forgotten.reason)
+
+    def test_the_wait_counts_from_the_version_commit_not_from_what_came_after(self) -> None:
+        # v1.3.0's tag stood on a fix after the version commit; commits after
+        # it are still the same release, and do not move the time on.
+        self.version_by_hand("1.2.0", "2026-11-15T12:00:00+00:00")
+        self.repository.write("src/haprion/generate.py", "x = 2\n")
+        self.repository.commit("operator", "Fix something late", "2026-11-16T11:00:00+00:00")
+
+        waiting = self.repository.decide("2026-11-16T11:30:00+00:00")
+        forgotten = self.repository.decide("2026-11-16T12:00:00+00:00")
+
+        self.assertEqual(waiting.outcome, "wait")
+        self.assertEqual(waiting.due_at, "2026-11-16T12:00:00+00:00")
+        self.assertEqual(forgotten.outcome, "blocked")
+
+    def test_the_watch_s_own_version_merge_is_no_release_made_by_hand(self) -> None:
+        self.locks(4, "2026-11-15T09:00:00+00:00")
+        self.repository.write("src/haprion/generate.py", "x = 1\n")
+        self.repository.commit("operator", "Generate something new", "2026-11-15T10:00:00+00:00")
+        self.bump_merged("1.1.1")
+
+        result = self.repository.decide("2026-11-16T11:00:00+00:00")
+
+        self.assertEqual(result.outcome, "blocked")
+        self.assertIn("Generate something new", result.reason)
+
+    def test_a_version_that_is_not_above_the_tag_is_no_release_on_its_way(self) -> None:
+        self.version_by_hand("1.0.9", "2026-11-15T12:00:00+00:00")
+
+        result = self.repository.decide("2026-11-15T12:30:00+00:00")
+
+        self.assertEqual(result.outcome, "blocked")
+        self.assertNotIn("1.0.9", result.reason)
+
     def test_a_file_name_with_a_blank_is_one_file_not_two(self) -> None:
         # Split on blanks, this one name reads as two lock files.
         self.repository.merge(

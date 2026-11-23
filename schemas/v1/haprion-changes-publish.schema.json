@@ -33,6 +33,19 @@
         "network": { "type": "boolean" },
         "settings": { "type": "boolean" },
         "regenerate": { "description": "True when the request asked for the generated layer to be made again with the installed product; absent from an older release.", "type": "boolean" },
+        "handwritten": {
+          "description": "For a publish of the files written by hand (parameter handwritten, B529): the files of core/ and manual/ it took that differ from the version before, each new, changed or deleted. With fragment_review and validation, the terminal publish's own fields. Absent from every other publish.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "kind"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "kind": { "enum": ["new", "changed", "deleted"] }
+            }
+          }
+        },
         "checked_only": {
      "description": "True for a check: everything was asked and nothing was written, so no version or release exists for it.",
      "type": "boolean"

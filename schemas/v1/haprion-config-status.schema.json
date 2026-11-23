@@ -65,6 +65,11 @@
           "additionalProperties": false
         },
         "unsent": { "$ref": "#/$defs/pending" },
+        "unsent_refused": {
+          "description": "Present when core/ or manual/ hold something no publish can take - a link, a file that is not text; unsent is then empty and this says what.",
+          "type": "string",
+          "minLength": 1
+        },
         "interface_owned": { "$ref": "#/$defs/pending" }
       },
       "additionalProperties": false

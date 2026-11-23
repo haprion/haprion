@@ -15,6 +15,7 @@ it did not change could otherwise undo somebody else's change through this path.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
@@ -80,8 +81,10 @@ PARAMETERS = frozenset(
         "requested_by",
         "regenerate",
         "check",
+        "handwritten",
     }
 )
+FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 #
 # One publish carries as many objects as its request holds (B483, 26-11-06;
 # it was 64, a chosen count, B257). Generating and validating the candidate
@@ -135,6 +138,7 @@ def build_request(
     requested_by: str | None = None,
     regenerate: bool = False,
     check: bool = False,
+    handwritten: str | None = None,
 ) -> str:
     """Build the exact bounded request the UI worker sends to this helper.
 
@@ -150,6 +154,10 @@ def build_request(
     ports and features, the sandbox - and stops before a version or a release is
     written: what `--check` of the terminal's apply commands says is what the
     publish would say (K05).
+
+    `handwritten` publishes the draft area's `core/` and `manual/` as
+    `haprion-publish` does, and nothing else, while their fingerprint is still
+    this one (B529): the files the page showed.
     """
 
     parameters: dict[str, object] = {
@@ -169,6 +177,8 @@ def build_request(
         parameters["regenerate"] = True
     if check:
         parameters["check"] = True
+    if handwritten is not None:
+        parameters["handwritten"] = handwritten
     return json.dumps(
         {
             "schema_version": 1,
@@ -248,6 +258,20 @@ def _objects(parameters: Mapping[str, JsonValue]) -> dict[str, bytes | None]:
     return objects
 
 
+def _handwritten(parameters: Mapping[str, JsonValue]) -> str | None:
+    """The fingerprint of the handwritten files to publish, when the request is that publish."""
+
+    if "handwritten" not in parameters:
+        return None
+    value = parameters["handwritten"]
+    if not isinstance(value, str) or not FINGERPRINT.fullmatch(value):
+        raise HelperProtocolError(
+            "parameters.handwritten must be the fingerprint the handwritten reading gave",
+            exit_code=exit_codes.REFUSED,
+        )
+    return value
+
+
 def _document(parameters: Mapping[str, JsonValue], key: str, *, limit: int) -> bytes | None:
     if key not in parameters:
         return None
@@ -291,6 +315,10 @@ def _refuse_blocklist_names(groups: Mapping[str, Any], definitions: Path) -> Non
         )
 
 
+def _never(_base: Mapping[str, bytes]) -> Mapping[str, bytes]:
+    raise AssertionError("a publish of handwritten files changes nothing in managed/")
+
+
 def _read(
     parameters: Mapping[str, JsonValue], *, definitions: Path = blocklist_store.DEFINITIONS
 ) -> Callable[[PathPolicy, Cluster], Change]:
@@ -299,16 +327,50 @@ def _read(
     settings = _document(parameters, "settings", limit=cluster_settings.MAX_BYTES)
     regenerate = flag(parameters, "regenerate")
     check = flag(parameters, "check")
-    if not objects and network is None and settings is None and not regenerate:
+    handwritten = _handwritten(parameters)
+    if handwritten is not None and (
+        objects or network is not None or settings is not None or regenerate or check
+    ):
+        #
+        # One sender per version (B529): what a person wrote by hand is not
+        # mixed with what the interface saved, and the terminal's publish it
+        # takes after has no check.
+        #
+        raise HelperProtocolError(
+            "parameters.handwritten publishes core/ and manual/ alone: it carries no objects, "
+            "network, settings, regenerate or check",
+            exit_code=exit_codes.REFUSED,
+        )
+    if (
+        not objects
+        and network is None
+        and settings is None
+        and not regenerate
+        and handwritten is None
+    ):
         raise HelperProtocolError(
             "a publish carries at least one of parameters.objects, network or settings, "
-            "or parameters.regenerate",
+            "or parameters.regenerate or handwritten",
             exit_code=exit_codes.REFUSED,
         )
     expected_head, comment = fence(parameters)
     allow_certificate_mismatch = flag(parameters, "allow_certificate_mismatch")
 
     def change(policy: PathPolicy, cluster: Cluster) -> Change:
+        if handwritten is not None:
+            return Change(
+                expected_head=expected_head,
+                comment=comment,
+                apply=_never,
+                named={
+                    "objects": [],
+                    "removed": [],
+                    "network": False,
+                    "settings": False,
+                    "regenerate": False,
+                },
+                handwritten=handwritten,
+            )
         #
         # Coverage is asked when the package changes what a certificate has to
         # answer for - an object, or a network that moves one - and not for a

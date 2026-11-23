@@ -396,6 +396,43 @@ class WaitingChangeTests(StatusFixture):
         self.assertNotIn("managed/generated.cfg", shown[waiting:interface])
 
 
+class OneReaderTests(StatusFixture):
+    """Unsent is what the publish would take (B529): the reader `haprion.handwritten`."""
+
+    def test_a_link_is_said_and_not_listed(self) -> None:
+        (self.repo / "core/alias.cfg").symlink_to("haproxy.cfg")
+
+        code, shown, _ = self.run_status(published=stamp("alpha", 1, self.commit))
+
+        self.assertEqual(code, 0)
+        self.assertIn(
+            "  core/ and manual/ cannot be published as they are: 'core/alias.cfg'", shown
+        )
+        self.assertNotIn("Nothing unsent", shown)
+
+    def test_the_answer_says_it_too(self) -> None:
+        (self.repo / "core/alias.cfg").symlink_to("haproxy.cfg")
+
+        _, shown, _ = self.run_status(
+            "-c", "alpha", "--json", published=stamp("alpha", 1, self.commit)
+        )
+
+        result = assert_contract("haprion-config-status", shown)["result"]
+        self.assertEqual(result["unsent"], [])
+        self.assertIn("core/alias.cfg", result["unsent_refused"])
+
+    def test_a_staged_file_that_is_the_version_is_not_unsent(self) -> None:
+        """The files are compared with the version, as the publish compares them."""
+
+        (self.repo / "core/haproxy.cfg").write_text("global\n  daemon\n")
+        git(self.repo, "add", "-A")
+        (self.repo / "core/haproxy.cfg").write_text("global\n")
+
+        _, shown, _ = self.run_status(published=stamp("alpha", 1, self.commit))
+
+        self.assertIn("Nothing unsent", shown)
+
+
 class JsonTests(StatusFixture):
     """K12: the command answers in a contract when asked, like the rest."""
 

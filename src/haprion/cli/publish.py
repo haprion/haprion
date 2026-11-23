@@ -32,7 +32,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TextIO
 
-from haprion import exit_codes
+from haprion import exit_codes, handwritten
 from haprion.cli import publish_regenerate
 from haprion.cli.caller import CallerError, looked_up, usage, without_answer
 from haprion.cli.caller import config_path as _config_path
@@ -133,44 +133,25 @@ def _parse(argv: list[str]) -> tuple[str, str, bool]:
 def collect_layers(repo: Path) -> dict[str, str]:
     """The draft area's `core/` and `manual/`, as git would stage them.
 
-    Tracked files plus untracked files that `.gitignore` does not exclude - the
-    same set `git add -A -- core manual` produced in the shell path. A tracked
-    file that has been deleted is simply absent from the result, and the helper
-    turns that absence into a deletion.
+    Read by `haprion.handwritten`, the one reader the interface's publish and
+    the poller's reading use too (B529): tracked files plus untracked files
+    that `.gitignore` does not exclude - the set `git add -A -- core manual`
+    produced in the shell path. A tracked file that has been deleted is simply
+    absent from the result, and the helper turns that absence into a deletion.
+    A symbolic link is refused; it used to be skipped, which removed a tracked
+    link from the version without a word.
     """
 
-    listing = _git(
-        repo,
-        "ls-files",
-        "-z",
-        "--cached",
-        "--others",
-        "--exclude-standard",
-        "--",
-        *(prefix.rstrip("/") for prefix in SNAPSHOT_PREFIXES),
-    ).decode()
-
-    files: dict[str, str] = {}
-    for relative in listing.split("\0"):
-        if not relative:
-            continue
-        path = repo / relative
-        if not path.is_file() or path.is_symlink():
-            continue
-        try:
-            files[relative] = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
-            raise CallerError(
-                f"'{relative}' cannot be read as UTF-8 text: {exc}\n"
-                "Configuration is text; remove or fix the file before publishing."
-            ) from exc
-
-    if not files:
+    try:
+        layers = handwritten.read_layers(repo)
+    except handwritten.HandwrittenError as exc:
+        raise CallerError(str(exc), exit_code=exc.exit_code) from exc
+    if not layers:
         raise CallerError(
             f"there is nothing to publish in {repo}: "
             f"{' and '.join(prefix.rstrip('/') for prefix in SNAPSHOT_PREFIXES)} are empty."
         )
-    return files
+    return {path: content.decode("utf-8") for path, content in layers.items()}
 
 
 def _report_managed(repo: Path, writer: TextIO) -> None:

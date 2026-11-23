@@ -29,7 +29,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haprion import advanced, exit_codes, release_checks
+from haprion import advanced, exit_codes, handwritten, labels, release_checks
 from haprion.candidate_validation import (
     DERIVED_LIMITS,
     VALIDATION_CERTIFICATE,
@@ -39,6 +39,7 @@ from haprion.candidate_validation import (
     read_validation_certificate,
     validate_candidate,
 )
+from haprion.cli import publish_helper
 from haprion.cli.helper_guard import guarded
 from haprion.cluster_lock import hold
 from haprion.config import Cluster, ConfigError, PathPolicy, load_policy, load_runtime_config
@@ -67,6 +68,7 @@ from haprion.release_layout import (
 )
 from haprion.repo_health import unsaved_changes
 from haprion.repo_snapshot import (
+    SNAPSHOT_PREFIXES,
     build_candidate_tree,
     commit_and_swap,
     committed_snapshot,
@@ -147,6 +149,8 @@ class Change:
     on_retry: Callable[[], Mapping[str, Any]] | None = None
     check: bool = False
     """Ask everything and write nothing: the answer says whether it would publish (K05)."""
+    handwritten: str | None = None
+    """The fingerprint of the draft's `core/` and `manual/` to publish, and nothing else (B529)."""
 
 
 class Refuse:
@@ -218,11 +222,53 @@ def fence(parameters: Mapping[str, JsonValue]) -> tuple[str, str]:
     return expected_head, comment
 
 
+#
+# One line of `git status --porcelain`: two status characters, a space, the
+# path. `unsaved_changes` strips the answer, so the first line can have lost
+# the blank first status character; the path is what follows the status
+# either way. Cutting three characters took the path's first letter on that
+# line, so " M managed/x" read as "anaged/x" (26-11-23).
+#
+PORCELAIN = re.compile(r"^\s*\S{1,2}\s+(.*)$")
+
+
+def _paths(porcelain: str) -> list[str]:
+    return [
+        found.group(1).split(" -> ")[-1]
+        for line in porcelain.splitlines()
+        if (found := PORCELAIN.match(line))
+    ]
+
+
 def _only_managed(porcelain: str) -> bool:
     """Whether every path `git status --porcelain` names is the application's own layer."""
 
-    paths = [line[3:].split(" -> ")[-1] for line in porcelain.splitlines() if line.strip()]
+    paths = _paths(porcelain)
     return bool(paths) and all(path.startswith(MANAGED_PREFIX) for path in paths)
+
+
+def _only_handwritten(porcelain: str) -> bool:
+    """Whether every path `git status --porcelain` names is in `core/` or `manual/`."""
+
+    paths = _paths(porcelain)
+    return bool(paths) and all(path.startswith(SNAPSHOT_PREFIXES) for path in paths)
+
+
+def handwritten_waiting(cluster: str, porcelain: str, *, doing: str) -> str:
+    """The refusal of a publish while files written by hand are not published (B529).
+
+    Worded for both readers - the interface's page and the terminal - with the
+    files named, so the person knows what is waiting and where it is published.
+    """
+
+    paths = _paths(porcelain)
+    shown = ", ".join(paths[:5]) + (f" and {len(paths) - 5} more" if len(paths) > 5 else "")
+    return (
+        f"{labels.noun(len(paths), 'file').capitalize()} in core/ or manual/ changed by hand "
+        f"{'is' if len(paths) == 1 else 'are'} not published: {shown}. Publish "
+        f"{'it' if len(paths) == 1 else 'them'} first, on the page Handwritten changes or with "
+        f'haprion-publish -c {cluster} "<comment>", before {doing}.'
+    )
 
 
 def network_of(base_files: Mapping[str, bytes], *, doing: str) -> bytes:
@@ -393,6 +439,22 @@ def _publish(
     clock: Callable[[], datetime],
     refuse: Refuse,
 ) -> int:
+    if change.handwritten is not None:
+        return _publish_handwritten(
+            words=words,
+            request=request,
+            names=names,
+            cluster=cluster,
+            change=change,
+            output=output,
+            run_root=run_root,
+            require_secure=require_secure,
+            validator=validator,
+            group=group,
+            change_owner=change_owner,
+            clock=clock,
+            refuse=refuse,
+        )
     repo = cluster.config_path
     branch, head = resolve_head(repo)
     #
@@ -429,8 +491,10 @@ def _publish(
     if dirty:
         return refuse(
             "dirty_worktree",
-            "there are unsaved changes in the cluster worktree. Publish or discard them before "
-            f"{words.doing}.",
+            handwritten_waiting(request.cluster, dirty, doing=words.doing)
+            if _only_handwritten(dirty)
+            else "there are unsaved changes in the cluster worktree. Publish or discard them "
+            f"before {words.doing}.",
             exit_codes.BLOCKED,
         )
     if head != change.expected_head and not retry:
@@ -622,6 +686,88 @@ def _publish(
             ),
         ),
         0,
+    )
+
+
+def _publish_handwritten(
+    *,
+    words: Words,
+    request: HelperRequest,
+    names: tuple[str, str],
+    cluster: Cluster,
+    change: Change,
+    output: TextIO,
+    run_root: Path,
+    require_secure: bool,
+    validator: SandboxValidator,
+    group: str,
+    change_owner: ChangeOwner,
+    clock: Callable[[], datetime],
+    refuse: Refuse,
+) -> int:
+    """The draft's `core/` and `manual/`, published as `haprion-publish` publishes them (B529).
+
+    Read here, as root, with the reader the terminal's command uses, and taken
+    only while they are still the files the page showed (`change.handwritten`).
+    From there it is the terminal's publish itself (`publish_helper._publish`):
+    `managed/` carried over from the version untouched, the same sandbox and
+    checks, and afterwards only the index moved - a file written again during
+    the publish stays in the draft area as a change of its own, never erased.
+    """
+
+    repo = cluster.config_path
+    _, head = resolve_head(repo)
+    retry = head != change.expected_head and recorded_on(
+        repo, head, base=change.expected_head, request_id=request.request_id
+    )
+    if head != change.expected_head and not retry:
+        return refuse("expected_target_changed", words.moved, exit_codes.BLOCKED)
+    dirty = unsaved_changes(repo)
+    if dirty and not _only_handwritten(dirty):
+        return refuse(
+            "dirty_worktree",
+            "there are unsaved changes in managed/, which the interface writes. "
+            "Discard them before publishing the files changed by hand.",
+            exit_codes.BLOCKED,
+        )
+    try:
+        files = handwritten.read_layers(repo)
+    except handwritten.HandwrittenError as exc:
+        return refuse("handwritten_invalid", str(exc), exc.exit_code)
+    if handwritten.fingerprint(files) != change.handwritten:
+        return refuse(
+            "handwritten_changed",
+            "the files in core/ or manual/ changed after the page was drawn. "
+            "Nothing was published; read the page again before publishing.",
+            exit_codes.BLOCKED,
+        )
+    if not files:
+        return refuse(
+            "handwritten_invalid",
+            "core/ and manual/ are empty; there is nothing to publish.",
+            exit_codes.REFUSED,
+        )
+    found = handwritten.pending(handwritten.published_layers(repo, head), files)
+    return publish_helper._publish(
+        request=request,
+        names=names,
+        cluster=cluster,
+        files=dict(files),
+        expected_head=head,
+        comment=change.comment,
+        output=output,
+        run_root=run_root,
+        require_secure=require_secure,
+        validator=validator,
+        group=group,
+        change_owner=change_owner,
+        clock=clock,
+        refuse=refuse,
+        operation=words.operation,
+        named={
+            **change.named,
+            "handwritten": [{"path": item.path, "kind": item.kind} for item in found],
+        },
     )
 
 

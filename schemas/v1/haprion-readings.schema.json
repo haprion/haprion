@@ -69,6 +69,7 @@
               "cluster_settings",
               "objects",
               "regeneration",
+              "handwritten",
               "receiver_fetches",
               "blocklist_states"
             ]

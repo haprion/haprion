@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-handwritten.schema.json",
+  "title": "The handwritten reading's JSON result",
+  "description": "Whether the draft area's core/ and manual/ hold anything the version the branch is on does not, asked inside haprion-readings-helper (B529).",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "handwritten" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": {
+          "oneOf": [{ "$ref": "#/$defs/handwritten_result" }, { "type": "null" }]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "const": "done" } } },
+          "then": { "properties": { "result": { "$ref": "#/$defs/handwritten_result" } } }
+        }
+      ]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "handwritten_result": {
+      "description": "clean: nothing differs. pending: the files that differ, the difference and the fingerprint a publish names to take exactly these files. refused: the draft holds something no publish can take; message says what.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["state", "head"],
+          "additionalProperties": false,
+          "properties": {
+            "state": { "const": "clean" },
+            "head": { "$ref": "common.schema.json#/$defs/hash" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["state", "head", "fingerprint", "pending", "diff"],
+          "additionalProperties": false,
+          "properties": {
+            "state": { "const": "pending" },
+            "head": { "$ref": "common.schema.json#/$defs/hash" },
+            "fingerprint": {
+              "description": "The files' paths and contents as one digest. changes_publish takes them only while it still matches (parameter handwritten).",
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "pending": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["path", "kind"],
+                "additionalProperties": false,
+                "properties": {
+                  "path": { "type": "string", "minLength": 1 },
+                  "kind": { "enum": ["new", "changed", "deleted"] }
+                }
+              }
+            },
+            "diff": {
+              "description": "The version's core/ and manual/ against the draft's, in the shape of a version's diff and within its bounds (200 files, 256 KiB).",
+              "$ref": "haprion-list.schema.json#/$defs/version_diff"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["state", "head", "message"],
+          "additionalProperties": false,
+          "properties": {
+            "state": { "const": "refused" },
+            "head": { "$ref": "common.schema.json#/$defs/hash" },
+            "message": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    }
+  }
+}

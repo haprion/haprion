@@ -30,7 +30,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, TextIO
 
-from haprion import exit_codes
+from haprion import exit_codes, handwritten
 from haprion.cli.caller import config_path as _config_path
 from haprion.cli.caller import looked_up, usage
 from haprion.envelope import envelope, failure, new_request_id
@@ -50,11 +50,11 @@ ANSWERS_AS = "config_status"
 USAGE = "Usage:\n  haprion-config-status -c <cluster> [--diff | --json]\n"
 
 #
-# What the manual path owns, and what the interface owns. `managed/` is written
-# by the interface and is not published from here, so it is reported separately
-# rather than mixed into the list someone is about to publish.
+# What the interface owns. `managed/` is written by the interface and is not
+# published from here, so it is reported separately rather than mixed into the
+# list someone is about to publish; `core/` and `manual/` are read by
+# `haprion.handwritten`.
 #
-MANUAL_PATHS = ("core", "manual")
 INTERFACE_PATHS = ("managed",)
 
 UNREADABLE = "could not be read (missing permission or helper)"
@@ -333,9 +333,19 @@ def main(
             "dependency_unavailable", describe_problem(cluster_id, repo), exit_codes.UNAVAILABLE
         )
 
+    refused: str | None = None
     try:
         saved = current_version(repo)
-        waiting = pending_changes(repo, *MANUAL_PATHS)
+        #
+        # What is unsent is read by the reader the publish takes its files
+        # with, and the interface asks the same (B529): the files compared with
+        # the version, so this list and the page's are one list.
+        #
+        try:
+            draft, _ = handwritten.read_draft(repo, saved.commit)
+            waiting = tuple(PendingChange(path=item.path, kind=item.kind) for item in draft.pending)
+        except handwritten.HandwrittenError as exc:
+            waiting, refused = (), str(exc)
         interface_owned = pending_changes(repo, *INTERFACE_PATHS)
     except GitError as exc:
         return stopped("dependency_unavailable", str(exc), exc.exit_code, said=f"ERROR: {exc}")
@@ -363,6 +373,7 @@ def main(
                     else None,
                     "regeneration": _regeneration(regenerated),
                     "unsent": [{"path": c.path, "kind": c.kind} for c in waiting],
+                    **({"unsent_refused": refused} if refused is not None else {}),
                     "interface_owned": [{"path": c.path, "kind": c.kind} for c in interface_owned],
                 },
             ),
@@ -388,7 +399,9 @@ def main(
 
     writer.write("\n")
 
-    if not waiting:
+    if refused is not None:
+        writer.write(f"  core/ and manual/ cannot be published as they are: {refused}\n")
+    elif not waiting:
         writer.write("  Nothing unsent. Everything you have changed is published.\n")
     else:
         _listing(writer, "  Unsent - changes that have not become a version yet:", waiting)

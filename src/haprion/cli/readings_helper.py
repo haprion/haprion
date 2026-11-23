@@ -9,7 +9,9 @@ for two clusters, and with every call sudo-rs's warning and two PAM lines, some
 70 % of the manager's journal (measured 26-10-08). The readings stay as fresh
 as they were; only the number of privileged calls changes.
 
-This helper asks for them in one call. It runs each reading's own helper - its
+This helper asks for them in one call. The handwritten reading (B529), whether
+`core/` or `manual/` holds anything not published, came later and was never a
+helper of its own. It runs each reading's own helper - its
 `main`, in this process, with the request that helper always received - so
 nothing is read a second way: every reading is validated, refused and answered
 exactly as before, and the answer carries each helper's own envelope and exit
@@ -40,6 +42,7 @@ from haprion.cli import (
     blocklist_states_helper,
     cert_list_helper,
     cluster_settings_helper,
+    handwritten_helper,
     list_backups_helper,
     list_helper,
     network_helper,
@@ -85,6 +88,7 @@ READINGS: Mapping[str, Helper] = {
     cluster_settings_helper.OPERATION: cluster_settings_helper.main,
     objects_helper.OPERATION: objects_helper.main,
     regeneration_helper.OPERATION: regeneration_helper.main,
+    handwritten_helper.OPERATION: handwritten_helper.main,
     receiver_fetches_helper.OPERATION: receiver_fetches_helper.main,
     blocklist_states_helper.OPERATION: blocklist_states_helper.main,
 }

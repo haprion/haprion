@@ -458,8 +458,15 @@ def _publish(
     change_owner: ChangeOwner,
     clock: Callable[[], datetime],
     refuse: Refuse,
+    operation: str = PUBLISH_OPERATION,
+    named: Mapping[str, Any] | None = None,
 ) -> int:
-    """The publish itself, with the cluster's lock already held."""
+    """The publish itself, with the cluster's lock already held.
+
+    `operation` and `named` are for the interface's publish of the same files
+    (`changes_publish` with `handwritten`, B529): its answer is that
+    operation's, with the names its contract requires beside this result.
+    """
 
     repo = cluster.config_path
 
@@ -575,7 +582,7 @@ def _publish(
         return write_document(
             output,
             envelope(
-                operation=PUBLISH_OPERATION,
+                operation=operation,
                 outcome="done",
                 cluster=request.cluster,
                 request_id=request.request_id,
@@ -591,7 +598,8 @@ def _publish(
                     release=str(installed.release),
                     already_current=installed.already_current,
                     review=_fragment_review(current_files),
-                ),
+                )
+                | dict(named or {}),
             ),
             0,
         )
@@ -674,7 +682,7 @@ def _publish(
     return write_document(
         output,
         envelope(
-            operation=PUBLISH_OPERATION,
+            operation=operation,
             outcome="done",
             cluster=request.cluster,
             request_id=request.request_id,
@@ -691,7 +699,8 @@ def _publish(
                 release=str(installed.release),
                 already_current=installed.already_current,
                 review=_fragment_review(published_files),
-            ),
+            )
+            | dict(named or {}),
         ),
         0,
     )

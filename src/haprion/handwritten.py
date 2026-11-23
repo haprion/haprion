@@ -34,6 +34,7 @@ from pathlib import Path
 
 from haprion import exit_codes
 from haprion.candidate_validation import MAX_CANDIDATE_BYTES, MAX_CANDIDATE_FILES, MAX_FILE_BYTES
+from haprion.git_command import GitError
 from haprion.git_command import git as _git
 from haprion.regeneration import artifact_diff
 from haprion.repo_snapshot import SNAPSHOT_PREFIXES, read_tree_files
@@ -45,6 +46,10 @@ from haprion.version_diff import VersionDiff
 #
 FINGERPRINT_FORM = b"haprion-handwritten-1\n"
 NEW, CHANGED, DELETED = "new", "changed", "deleted"
+#
+# The layers as git's pathspec names them.
+#
+LAYERS: tuple[str, ...] = tuple(prefix.rstrip("/") for prefix in SNAPSHOT_PREFIXES)
 
 
 class HandwrittenError(Exception):
@@ -53,6 +58,13 @@ class HandwrittenError(Exception):
     def __init__(self, message: str, *, exit_code: int = exit_codes.REFUSED):
         super().__init__(message)
         self.exit_code = exit_code
+
+
+class HandwrittenUnreadable(HandwrittenError):
+    """The draft area could not be read at all: a reading that failed, not a draft that is wrong (B530, H07)."""
+
+    def __init__(self, message: str):
+        super().__init__(message, exit_code=exit_codes.UNAVAILABLE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +99,7 @@ def _listed(repo: Path) -> list[str]:
         "--others",
         "--exclude-standard",
         "--",
-        *(prefix.rstrip("/") for prefix in SNAPSHOT_PREFIXES),
+        *LAYERS,
     ).decode("utf-8", "surrogateescape")
     return sorted({path for path in raw.split("\0") if path})
 
@@ -99,6 +111,20 @@ def _no_link(relative: str) -> HandwrittenError:
     )
 
 
+def _unreadable(relative: str, exc: OSError) -> HandwrittenError:
+    if exc.errno == errno.EACCES:
+        #
+        # The terminal's commands read as the person running them; the
+        # configuration group must be able to read every file, as the rest of
+        # the repository (B530, H12).
+        #
+        return HandwrittenError(
+            f"'{relative}' cannot be read: {exc.strerror}. The configuration group must be able "
+            "to read it: sudo chmod g+r on the file."
+        )
+    return HandwrittenError(f"'{relative}' cannot be read: {exc.strerror}")
+
+
 def _read(repo: Path, relative: str) -> bytes | None:
     """One file's bytes, or None when it is gone; refused when anything on its path is a link."""
 
@@ -107,7 +133,9 @@ def _read(repo: Path, relative: str) -> bytes | None:
     try:
         directory = os.open(repo, flags | os.O_DIRECTORY)
     except OSError as exc:
-        raise HandwrittenError(f"the draft area {repo} cannot be opened: {exc.strerror}") from exc
+        raise HandwrittenUnreadable(
+            f"the draft area {repo} cannot be opened: {exc.strerror}"
+        ) from exc
     try:
         for part in parts[:-1]:
             try:
@@ -116,8 +144,18 @@ def _read(repo: Path, relative: str) -> bytes | None:
                 return None
             except OSError as exc:
                 if exc.errno in (errno.ELOOP, errno.ENOTDIR):
-                    raise _no_link(relative) from exc
-                raise HandwrittenError(f"'{relative}' cannot be read: {exc.strerror}") from exc
+                    #
+                    # A link, or a directory that became a file: git takes the
+                    # second as the files under it removed (B530, H06).
+                    #
+                    try:
+                        found = os.lstat(part, dir_fd=directory)
+                    except OSError:
+                        raise _no_link(relative) from exc
+                    if stat.S_ISLNK(found.st_mode):
+                        raise _no_link(relative) from exc
+                    return None
+                raise _unreadable(relative, exc) from exc
             os.close(directory)
             directory = inner
         try:
@@ -127,7 +165,7 @@ def _read(repo: Path, relative: str) -> bytes | None:
         except OSError as exc:
             if exc.errno == errno.ELOOP:
                 raise _no_link(relative) from exc
-            raise HandwrittenError(f"'{relative}' cannot be read: {exc.strerror}") from exc
+            raise _unreadable(relative, exc) from exc
     finally:
         os.close(directory)
     with os.fdopen(handle, "rb") as opened:
@@ -150,7 +188,10 @@ def read_layers(repo: Path) -> dict[str, bytes]:
     the number and size of files are.
     """
 
-    listed = _listed(repo)
+    try:
+        listed = _listed(repo)
+    except GitError as exc:
+        raise HandwrittenUnreadable(f"the draft area {repo} cannot be listed: {exc}") from exc
     files: dict[str, bytes] = {}
     total = 0
     for relative in listed:
@@ -222,6 +263,20 @@ def read_draft(repo: Path, head: str) -> tuple[Draft, dict[str, bytes]]:
         ),
         published,
     )
+
+
+def settle_index(repo: Path, head: str) -> None:
+    """Point the index's `core/` and `manual/` at version `head`; no file is written (B530, H02).
+
+    When the files are the version's and only git's index says otherwise - a
+    publish stopped before it moved the index, a file staged by hand - this is
+    the whole repair: what git reports then matches what the reader reports.
+    """
+
+    if _git(repo, "rev-parse", "--is-bare-repository").decode().strip() == "true":
+        return
+    if _git(repo, "diff", "--cached", "--name-only", head, "--", *LAYERS).strip():
+        _git(repo, "reset", "-q", head, "--", *LAYERS)
 
 
 def listed_paths(found: tuple[Pending, ...], *, at_most: int = 5) -> str:

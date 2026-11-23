@@ -309,7 +309,10 @@ class WindowTests(RevertFixture):
                 policy_path, "-c", "alpha", "2", before_helper=someone_else_edits
             )
             self.assertEqual(code, 75)
-            self.assertIn("unsaved changes", output)
+            #
+            # A hand edit is named as one, with where it is published (B530, H11).
+            #
+            self.assertIn("changed by hand is not published: core/haproxy.cfg", output)
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
             #
             # And the edit survived: a refused revert must not eat it.
@@ -497,8 +500,8 @@ class RefusalTests(RevertFixture):
             (self.repo / "core/haproxy.cfg").write_bytes(HAPROXY_CFG + b"  # unsaved\n")
             code, output = self.run_caller(policy_path, "-c", "alpha", "2")
             self.assertEqual(code, 75)
-            self.assertIn("unsaved changes", output)
-            self.assertIn("core/haproxy.cfg", output)
+            self.assertIn("changed by hand is not published: core/haproxy.cfg", output)
+            self.assertIn("Handwritten changes", output)
             self.assertEqual(self.requests, [])
 
     def test_a_version_that_does_not_exist_is_named(self) -> None:

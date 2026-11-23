@@ -17,9 +17,9 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from haprion import handwritten
+from haprion import handwritten, repo_health
 from haprion.candidate_validation import ValidationResult
-from haprion.cli import changes_publish, managed_helper
+from haprion.cli import changes_publish
 from tests.contract_schema import assert_contract
 from tests.test_changes_publish_objects import REQUEST_ID, ObjectsPublishFixture, proxy
 from tests.test_publish_helper import HAPROXY_CFG, Recorder, git
@@ -201,21 +201,116 @@ class PublishingTheHandwrittenFiles(HandwrittenFixture):
 
 
 class ReadingTheStatus(unittest.TestCase):
-    def test_the_first_line_keeps_its_path_when_the_answer_was_stripped(self) -> None:
-        """`unsaved_changes` strips; " M managed/x" arrived as "M managed/x" (26-11-23)."""
+    """`git status -z`: no name is quoted, and a rename names its new path once (B530, H01)."""
 
-        stripped = " M managed/network.yaml\n?? managed/proxies/new.yaml".strip()
+    def test_a_space_or_a_letter_outside_ascii_arrives_as_it_is(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            repo = Path(raw)
+            git(repo, "init", "-q", "-b", "main")
+            git(repo, "config", "user.email", "operator@example.com")
+            git(repo, "config", "user.name", "operator")
+            (repo / "core").mkdir()
+            (repo / "managed").mkdir()
+            (repo / "core/a.cfg").write_text("a\n", encoding="utf-8")
+            (repo / "managed/old.yaml").write_text("x: 1\n", encoding="utf-8")
+            git(repo, "add", "-A")
+            git(repo, "commit", "-qm", "first")
+            (repo / "core/blocked ips.map").write_text("192.0.2.1\n", encoding="utf-8")
+            (repo / "core/v\u00e4xj\u00f6.map").write_text("x\n", encoding="utf-8")
+            git(repo, "mv", "managed/old.yaml", "managed/new name.yaml")
 
-        self.assertEqual(
-            managed_helper._paths(stripped),
-            ["managed/network.yaml", "managed/proxies/new.yaml"],
-        )
-        self.assertTrue(managed_helper._only_managed(stripped))
-        self.assertTrue(managed_helper._only_handwritten("M core/haproxy.cfg"))
-        self.assertEqual(
-            managed_helper._paths("R  core/a.cfg -> core/b.cfg"),
-            ["core/b.cfg"],
-        )
+            self.assertEqual(
+                sorted(repo_health.unsaved_paths(repo)),
+                ["core/blocked ips.map", "core/v\u00e4xj\u00f6.map", "managed/new name.yaml"],
+            )
+            self.assertEqual(
+                repo_health.unsaved_paths(repo, *handwritten.LAYERS), ("managed/new name.yaml",)
+            )
+
+
+class WhatOnlyGitSees(HandwrittenFixture):
+    """A difference that is no content - a mode, an index - holds no publish back (B530, H02)."""
+
+    def test_a_mode_change_holds_no_publish_back(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            os.chmod(self.repo / "core/haproxy.cfg", 0o744)
+
+            code, document, _err = self.publish_objects(policy, self.request())
+
+            self.assertEqual(code, 0, document)
+
+    def test_an_index_staged_by_hand_is_pointed_back_at_the_version(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            (self.repo / "core/haproxy.cfg").write_bytes(EDITED)
+            git(self.repo, "add", "core/haproxy.cfg")
+            (self.repo / "core/haproxy.cfg").write_bytes(HAPROXY_CFG)
+
+            code, document, _err = self.publish_objects(policy, self.request())
+
+            self.assertEqual(code, 0, document)
+            self.assertEqual(git(self.repo, "status", "--porcelain"), "")
+
+    def test_names_git_would_quote_are_published_from_the_page(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            (self.repo / "core/blocked ips.map").write_text("192.0.2.1\n", encoding="utf-8")
+            (self.repo / "core/v\u00e4xj\u00f6.map").write_text("x\n", encoding="utf-8")
+
+            refused, said, _err = self.publish_objects(policy, self.request())
+            code, document, _err = self.publish_while(policy, self.hand_request())
+
+            self.assertEqual(refused, 75)
+            self.assertIn("core/blocked ips.map", said["error"]["message"])
+            self.assertIn("Handwritten changes", said["error"]["message"])
+            self.assertEqual(code, 0, document)
+
+
+class APublishOfSavedChangesKeepsAHandEdit(HandwrittenFixture):
+    def test_a_file_written_during_the_publish_is_still_there_after_it(self) -> None:
+        """The version is written out by what it changed, not by a hard reset (B530, H03)."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+
+            code, document, _err = self.publish_while(
+                policy,
+                self.request(),
+                during=lambda: (self.repo / "core/haproxy.cfg").write_bytes(EDITED),
+            )
+
+            self.assertEqual(code, 0, document)
+            self.assertEqual((self.repo / "core/haproxy.cfg").read_bytes(), EDITED)
+            self.assertEqual(git(self.repo, "status", "--porcelain"), "M core/haproxy.cfg")
+            self.assertTrue((self.repo / "managed/proxies/shop.yaml").is_file())
+
+
+class TheSameRequestAgain(HandwrittenFixture):
+    def test_it_finishes_the_version_it_recorded_and_leaves_a_newer_edit_waiting(self) -> None:
+        """B530, H05: the version's own files, not the draft as it is now."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            (self.repo / "core/haproxy.cfg").write_bytes(EDITED)
+            request = self.hand_request()
+            first, _document, _err = self.publish_while(policy, request)
+            recorded = git(self.repo, "rev-parse", "HEAD")
+            later = EDITED.replace(b"stick-counters 6", b"stick-counters 7")
+            (self.repo / "core/haproxy.cfg").write_bytes(later)
+            request.seek(0)
+
+            code, document, _err = self.publish_while(policy, request)
+
+            self.assertEqual((first, code), (0, 0), document)
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), recorded)
+            self.assertEqual((self.repo / "core/haproxy.cfg").read_bytes(), later)
+            self.assertEqual(git(self.repo, "status", "--porcelain"), "M core/haproxy.cfg")
 
 
 class SavedChangesWhileHandwrittenFilesWait(HandwrittenFixture):

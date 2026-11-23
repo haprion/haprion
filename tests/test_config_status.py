@@ -421,6 +421,18 @@ class OneReaderTests(StatusFixture):
         self.assertEqual(result["unsent"], [])
         self.assertIn("core/alias.cfg", result["unsent_refused"])
 
+    def test_diff_prints_the_lines_the_page_shows(self) -> None:
+        """B530, H13: the handwritten changes' lines, as the Handwritten changes page draws them."""
+
+        (self.repo / "core/haproxy.cfg").write_text("global\n  tune.stick-counters 6\n")
+
+        _, shown, _ = self.run_status(
+            "-c", "alpha", "--diff", published=stamp("alpha", 1, self.commit)
+        )
+
+        self.assertIn("=== core/haproxy.cfg (modified, +1 -0)", shown)
+        self.assertIn("+  tune.stick-counters 6", shown)
+
     def test_a_staged_file_that_is_the_version_is_not_unsent(self) -> None:
         """The files are compared with the version, as the publish compares them."""
 

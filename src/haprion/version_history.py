@@ -221,6 +221,21 @@ def version_summary(repo: Path, version: int, commit: str) -> VersionSummary:
     )
 
 
+def write_out(repo: Path, base: str, commit: str) -> None:
+    """Write out what `commit` changed from `base`, and nothing else (B530, H03).
+
+    A two-tree merge, as `git checkout` does it: the index and the files that
+    differ between the two versions move to `commit`; a file the two do not
+    differ in is left as it is, a person's unpublished edit included. Refused
+    by git, as `GitError`, when one of the files that do differ was changed
+    on disk too - nothing is overwritten then.
+    """
+
+    if _is_bare(repo):
+        return
+    _git(repo, "read-tree", "-m", "-u", base, commit)
+
+
 def restore_worktree(repo: Path, commit: str) -> None:
     """Make the draft area show the version that now applies.
 

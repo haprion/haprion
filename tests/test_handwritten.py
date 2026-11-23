@@ -166,6 +166,47 @@ class NoLinkIsFollowed(DraftFixture):
         self.assertIn("core/alias.cfg", str(raised.exception))
 
 
+class WhatTheReaderSaysOfAnOddDraft(DraftFixture):
+    def test_a_directory_that_became_a_file_is_a_removal_and_a_new_file(self) -> None:
+        """B530, H06: as `git add -A` takes it, not as a link."""
+
+        self.write("core/maps/hosts.map", "192.0.2.1 a\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "--quiet", "-m", "maps")
+        self.head = git(self.repo, "rev-parse", "HEAD")
+        (self.repo / "core/maps/hosts.map").unlink()
+        (self.repo / "core/maps").rmdir()
+        self.write("core/maps", "now a file\n")
+
+        self.assertEqual(
+            self.draft().pending,
+            (
+                handwritten.Pending("core/maps", handwritten.NEW),
+                handwritten.Pending("core/maps/hosts.map", handwritten.DELETED),
+            ),
+        )
+
+    def test_a_draft_area_that_cannot_be_opened_is_a_reading_that_failed(self) -> None:
+        """B530, H07: unreadable, not a draft that is wrong."""
+
+        with self.assertRaises(handwritten.HandwrittenUnreadable):
+            handwritten.read_layers(self.root / "missing")
+
+    def test_a_file_the_reader_may_not_read_says_what_to_do(self) -> None:
+        """B530, H12: the terminal reads as the person running it."""
+
+        if os.geteuid() == 0:
+            self.skipTest("root reads every file")
+        os.chmod(self.repo / "core/haproxy.cfg", 0)
+        self.addCleanup(os.chmod, self.repo / "core/haproxy.cfg", 0o600)
+
+        with self.assertRaises(handwritten.HandwrittenError) as raised:
+            handwritten.read_layers(self.repo)
+
+        self.assertIn("chmod g+r", str(raised.exception))
+        self.assertNotIsInstance(raised.exception, handwritten.HandwrittenUnreadable)
+
+
 class OnlyText(DraftFixture):
     def test_a_file_that_is_not_utf8_is_refused_by_name(self) -> None:
         self.write("manual/conf.d/latin.cfg", b"caf\xe9\n")

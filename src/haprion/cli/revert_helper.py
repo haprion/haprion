@@ -56,7 +56,7 @@ from haprion.candidate_validation import (
 from haprion.cert_inventory import coverage_for
 from haprion.certificates import blocklist_names
 from haprion.cli.helper_guard import guarded
-from haprion.cli.managed_helper import Refusal
+from haprion.cli.managed_helper import Refusal, handwritten_refusal, outside_layers
 from haprion.cluster_lock import DEFAULT_LOCK_ROOT, hold
 from haprion.config import (
     DEFAULT_POLICY_PATH,
@@ -92,7 +92,7 @@ from haprion.release_layout import (
     build_node_artifact,
     build_release_index,
 )
-from haprion.repo_health import unsaved_changes
+from haprion.repo_health import unsaved_paths
 from haprion.repo_snapshot import (
     build_candidate_tree,
     commit_and_swap,
@@ -388,8 +388,11 @@ def _revert(
     # Checked again on this side. The draft may have become dirty after the
     # operator approved the preview, and the reset below would overwrite it.
     #
-    dirty = unsaved_changes(repo)
-    if dirty and stopped_before_the_files(repo, head):
+    #
+    # Asked whatever the files show: a stopped revert changed core/ too, and
+    # the reader would otherwise call the version before it a hand edit (B530).
+    #
+    if unsaved_paths(repo) and stopped_before_the_files(repo, head):
         #
         # A helper's version is the head and the draft still shows the one
         # before it: a run stopped between moving the branch and writing the
@@ -399,13 +402,24 @@ def _revert(
         # 26-10-30, D3).
         #
         restore_worktree(repo, head)
-        dirty = unsaved_changes(repo)
+    dirty = outside_layers(repo)
     if dirty:
         return refuse(
             "dirty_worktree",
-            f"there are unsaved changes in {repo}. Publish or discard them before reverting.",
+            f"there are unsaved changes in {repo} outside core/ and manual/: "
+            f"{', '.join(dirty[:5])}{' and more' if len(dirty) > 5 else ''}. "
+            "Publish or discard them before reverting.",
             exit_codes.BLOCKED,
         )
+    #
+    # core/ and manual/ by the reader, as every publish asks them (B530, H11):
+    # the files named, and where they are published. A difference only git
+    # sees - a mode, an index - is no person's work, and the reset below
+    # rewrites it.
+    #
+    waiting = handwritten_refusal(repo, head, request.cluster, doing="reverting")
+    if waiting is not None:
+        return refuse(*waiting)
 
     #
     # A revert is a decision about the history its caller read, and it is

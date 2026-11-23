@@ -334,6 +334,7 @@ def main(
         )
 
     refused: str | None = None
+    unsent_diff = None
     try:
         saved = current_version(repo)
         #
@@ -342,8 +343,14 @@ def main(
         # the version, so this list and the page's are one list.
         #
         try:
-            draft, _ = handwritten.read_draft(repo, saved.commit)
+            draft, versioned = handwritten.read_draft(repo, saved.commit)
             waiting = tuple(PendingChange(path=item.path, kind=item.kind) for item in draft.pending)
+            #
+            # The lines too, with --diff, as the Handwritten changes page shows
+            # them (B530, H13).
+            #
+            if show_diff and draft.pending:
+                unsent_diff = draft.diff(versioned)
         except handwritten.HandwrittenError as exc:
             waiting, refused = (), str(exc)
         interface_owned = pending_changes(repo, *INTERFACE_PATHS)
@@ -405,6 +412,8 @@ def main(
         writer.write("  Nothing unsent. Everything you have changed is published.\n")
     else:
         _listing(writer, "  Unsent - changes that have not become a version yet:", waiting)
+        if unsent_diff is not None:
+            writer.write("\n" + render(unsent_diff))
         writer.write(f'\n  Publish them with:\n    haprion-publish -c {cluster_id} "<comment>"\n')
 
     if interface_owned:

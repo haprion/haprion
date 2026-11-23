@@ -42,11 +42,17 @@ CLEAN, PENDING, REFUSED = "clean", "pending", "refused"
 
 
 def reading(repo: Path) -> dict[str, Any]:
-    """The draft area of `repo` against the version its branch is on, as the result says it."""
+    """The draft area of `repo` against the version its branch is on, as the result says it.
+
+    A draft area that cannot be read at all raises `HandwrittenUnreadable`: a
+    reading that failed, said as one, never a draft that is wrong (B530, H07).
+    """
 
     _, head = resolve_head(repo)
     try:
         draft, published = handwritten.read_draft(repo, head)
+    except handwritten.HandwrittenUnreadable:
+        raise
     except handwritten.HandwrittenError as exc:
         return {"state": REFUSED, "head": head, "message": str(exc)}
     if not draft.pending:
@@ -108,7 +114,7 @@ def main(
 
     try:
         result = reading(Path(cluster.config_path))
-    except (PublishError, GitError) as exc:
+    except (PublishError, GitError, handwritten.HandwrittenUnreadable) as exc:
         errors.write(f"ERROR: {exc}\n")
         return write_document(
             writer,

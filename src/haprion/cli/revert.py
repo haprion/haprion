@@ -33,11 +33,12 @@ from typing import TextIO
 from haprion import exit_codes
 from haprion.cli.caller import CallerError, usage
 from haprion.cli.caller import config_path as _config_path
+from haprion.cli.managed_helper import handwritten_refusal, outside_layers
 from haprion.digits import is_digits
 from haprion.envelope import failure
 from haprion.git_command import GitError
 from haprion.helper_protocol import config_error_code, write_document
-from haprion.repo_health import describe_problem, is_repo_root, unsaved_changes
+from haprion.repo_health import describe_problem, is_repo_root, unsaved_paths
 from haprion.repo_snapshot import PublishError, resolve_head
 from haprion.version_history import (
     count_versions,
@@ -229,14 +230,25 @@ def main(
         # version behind; the helper finishes it, so it is not a refusal here
         # (review 26-10-30, E5). Anything a person changed still is.
         #
-        dirty = unsaved_changes(repo)
-        if dirty and not stopped_before_the_files(repo, resolve_head(repo)[1]):
+        _, current = resolve_head(repo)
+        finishing = bool(unsaved_paths(repo)) and stopped_before_the_files(repo, current)
+        dirty = () if finishing else outside_layers(repo)
+        if dirty:
             return refuse(
                 "dirty_worktree",
-                f"there are unsaved changes in {repo}.\n\n{dirty}\n\n"
-                "Publish or discard them before reverting.",
+                f"there are unsaved changes in {repo} outside core/ and manual/:\n\n"
+                + "\n".join(f"  {path}" for path in dirty)
+                + "\n\nPublish or discard them before reverting.",
                 exit_codes.BLOCKED,
             )
+        #
+        # core/ and manual/ as the helper asks them (B530): by the reader.
+        #
+        waiting = (
+            None if finishing else handwritten_refusal(repo, current, cluster_id, doing="reverting")
+        )
+        if waiting is not None:
+            return refuse(*waiting)
 
         total = count_versions(repo)
         version = _target_version(cluster_id, requested, total)

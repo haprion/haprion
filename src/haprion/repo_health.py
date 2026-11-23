@@ -129,6 +129,30 @@ def unsaved_changes(repo: Path) -> str:
     return _git(repo, "status", "--porcelain").decode().strip()
 
 
+def unsaved_paths(repo: Path, *excluded: str) -> tuple[str, ...]:
+    """The paths `git status` names outside the `excluded` directories, each once.
+
+    Read with `-z`, so a name with a space or a letter outside ASCII arrives as
+    it is and is never quoted (B530: `"core/blocked ips.map"` read as a path
+    outside `core/`). A rename names its new path; the old one is skipped.
+    """
+
+    pathspec = [".", *(f":(exclude){name.rstrip('/')}" for name in excluded)]
+    raw = _git(
+        repo, "status", "--porcelain", "-z", "--untracked-files=all", "--", *pathspec
+    ).decode("utf-8", "surrogateescape")
+    fields = raw.split("\0")
+    found: list[str] = []
+    index = 0
+    while index < len(fields) and fields[index]:
+        entry = fields[index]
+        path = entry[3:]
+        if path not in found:
+            found.append(path)
+        index += 2 if entry[:1] in ("R", "C") else 1
+    return tuple(found)
+
+
 @dataclass(frozen=True, slots=True)
 class PendingChange:
     """One file in the draft area that is not in any version yet."""

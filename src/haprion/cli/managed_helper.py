@@ -23,7 +23,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -44,6 +44,7 @@ from haprion.cli.helper_guard import guarded
 from haprion.cluster_lock import hold
 from haprion.config import Cluster, ConfigError, PathPolicy, load_policy, load_runtime_config
 from haprion.envelope import envelope, failure
+from haprion.git_command import GitError
 from haprion.helper_protocol import (
     MAX_REQUEST_BYTES,
     HelperProtocolError,
@@ -66,12 +67,12 @@ from haprion.release_layout import (
     build_node_artifact,
     build_release_index,
 )
-from haprion.repo_health import unsaved_changes
+from haprion.repo_health import unsaved_paths
 from haprion.repo_snapshot import (
-    SNAPSHOT_PREFIXES,
     build_candidate_tree,
     commit_and_swap,
     committed_snapshot,
+    first_parent,
     read_tree_files,
     resolve_head,
 )
@@ -82,9 +83,9 @@ from haprion.version_history import (
     count_versions,
     recorded_on,
     request_names,
-    restore_worktree,
     stopped_before_the_files,
     version_message,
+    write_out,
 )
 
 COMMIT_ID = re.compile(r"^[0-9a-f]{40}$")
@@ -222,53 +223,68 @@ def fence(parameters: Mapping[str, JsonValue]) -> tuple[str, str]:
     return expected_head, comment
 
 
-#
-# One line of `git status --porcelain`: two status characters, a space, the
-# path. `unsaved_changes` strips the answer, so the first line can have lost
-# the blank first status character; the path is what follows the status
-# either way. Cutting three characters took the path's first letter on that
-# line, so " M managed/x" read as "anaged/x" (26-11-23).
-#
-PORCELAIN = re.compile(r"\s*\S{1,2}\s+(.*)")
+def _only_managed(paths: tuple[str, ...]) -> bool:
+    """Whether every path is the application's own layer."""
 
-
-def _paths(porcelain: str) -> list[str]:
-    return [
-        found.group(1).split(" -> ")[-1]
-        for line in porcelain.splitlines()
-        if (found := PORCELAIN.fullmatch(line))
-    ]
-
-
-def _only_managed(porcelain: str) -> bool:
-    """Whether every path `git status --porcelain` names is the application's own layer."""
-
-    paths = _paths(porcelain)
     return bool(paths) and all(path.startswith(MANAGED_PREFIX) for path in paths)
 
 
-def _only_handwritten(porcelain: str) -> bool:
-    """Whether every path `git status --porcelain` names is in `core/` or `manual/`."""
-
-    paths = _paths(porcelain)
-    return bool(paths) and all(path.startswith(SNAPSHOT_PREFIXES) for path in paths)
+def _named(paths: tuple[str, ...], *, at_most: int = 5) -> str:
+    shown = ", ".join(paths[:at_most])
+    return shown + (f" and {len(paths) - at_most} more" if len(paths) > at_most else "")
 
 
-def handwritten_waiting(cluster: str, porcelain: str, *, doing: str) -> str:
+def handwritten_waiting(cluster: str, found: tuple[handwritten.Pending, ...], *, doing: str) -> str:
     """The refusal of a publish while files written by hand are not published (B529).
 
     Worded for both readers - the interface's page and the terminal - with the
-    files named, so the person knows what is waiting and where it is published.
+    files named as the reader names them (B530), so the person knows what is
+    waiting and where it is published.
     """
 
-    paths = _paths(porcelain)
-    shown = ", ".join(paths[:5]) + (f" and {len(paths) - 5} more" if len(paths) > 5 else "")
+    one = len(found) == 1
     return (
-        f"{labels.noun(len(paths), 'file').capitalize()} in core/ or manual/ changed by hand "
-        f"{'is' if len(paths) == 1 else 'are'} not published: {shown}. Publish "
-        f"{'it' if len(paths) == 1 else 'them'} first, on the page Handwritten changes or with "
+        f"{labels.noun(len(found), 'file').capitalize()} in core/ or manual/ changed by hand "
+        f"{'is' if one else 'are'} not published: {handwritten.listed_paths(found)}. Publish "
+        f"{'it' if one else 'them'} first, on the page Handwritten changes or with "
         f'haprion-publish -c {cluster} "<comment>", before {doing}.'
     )
+
+
+def outside_layers(repo: Path) -> tuple[str, ...]:
+    """What `git status` names outside `core/` and `manual/`, which the reader answers for."""
+
+    return unsaved_paths(repo, *handwritten.LAYERS)
+
+
+def handwritten_refusal(
+    repo: Path, head: str, cluster: str, *, doing: str
+) -> tuple[str, str, int] | None:
+    """Why a publish waits for the files written by hand, or None when nothing does (B530).
+
+    The reader's answer, the one the page, *Needs attention* and
+    `haprion-config-status` give: git's own view of `core/` and `manual/` -
+    a mode, an index staged by hand - is not work waiting, and refusing on it
+    left a refusal nobody could act on (H02).
+    """
+
+    try:
+        draft, _ = handwritten.read_draft(repo, head)
+    except handwritten.HandwrittenUnreadable as exc:
+        return "handwritten_unavailable", str(exc), exc.exit_code
+    except handwritten.HandwrittenError as exc:
+        return (
+            "handwritten_invalid",
+            f"core/ or manual/ holds something no publish can take: {exc} Fix it before {doing}.",
+            exit_codes.BLOCKED,
+        )
+    if draft.pending:
+        return (
+            "dirty_worktree",
+            handwritten_waiting(cluster, draft.pending, doing=doing),
+            exit_codes.BLOCKED,
+        )
+    return None
 
 
 def network_of(base_files: Mapping[str, bytes], *, doing: str) -> bytes:
@@ -465,8 +481,14 @@ def _publish(
     retry = head != change.expected_head and recorded_on(
         repo, head, base=change.expected_head, request_id=request.request_id
     )
-    dirty = unsaved_changes(repo)
-    if dirty and ((retry and _only_managed(dirty)) or stopped_before_the_files(repo, head)):
+    dirty = outside_layers(repo)
+    #
+    # A stopped version is asked whatever the files show: one that changed
+    # core/ would otherwise read as a hand edit to the reader (B530).
+    #
+    if (dirty and retry and _only_managed(dirty)) or (
+        unsaved_paths(repo) and stopped_before_the_files(repo, head)
+    ):
         #
         # The run stopped between its commit and writing the worktree out, so
         # the application's own layer still shows the version before. Written
@@ -486,17 +508,28 @@ def _publish(
                 "out and goes on; a check leaves them as they are. Run the same request without the check first.",
                 exit_codes.BLOCKED,
             )
-        restore_worktree(repo, head)
-        dirty = unsaved_changes(repo)
+        #
+        # Only what that version changed is written out, so a file changed by
+        # hand meanwhile stays as it is (B530, H03). One that cannot be merged
+        # leaves the refusal below.
+        #
+        parent = first_parent(repo, head)
+        if parent is not None:
+            with suppress(GitError):
+                write_out(repo, parent, head)
+        dirty = outside_layers(repo)
     if dirty:
         return refuse(
             "dirty_worktree",
-            handwritten_waiting(request.cluster, dirty, doing=words.doing)
-            if _only_handwritten(dirty)
-            else "there are unsaved changes in the cluster worktree. Publish or discard them "
-            f"before {words.doing}.",
+            f"there are unsaved changes in the cluster worktree outside core/ and manual/: "
+            f"{_named(dirty)}. Publish or discard them before {words.doing}.",
             exit_codes.BLOCKED,
         )
+    waiting = handwritten_refusal(repo, head, request.cluster, doing=words.doing)
+    if waiting is not None:
+        return refuse(*waiting)
+    if not change.check:
+        handwritten.settle_index(repo, head)
     if head != change.expected_head and not retry:
         return refuse("expected_target_changed", words.moved, exit_codes.BLOCKED)
 
@@ -644,11 +677,21 @@ def _publish(
                 f"{words.message}: {change.comment}", request.request_id, names
             ),
         )
-        # The worktree was verified clean immediately above, and everything this
-        # commit touched is application-owned, so writing the committed result out
-        # cannot erase a human draft. Leaving it behind would instead make the
-        # next publish read this version's own files as an unrelated dirty change.
-        restore_worktree(repo, commit)
+        #
+        # Written out, or the next publish reads this version's own files as an
+        # unrelated dirty change - but only what the commit changed: the check
+        # above was made before the sandbox, and a `sudoedit` since then is a
+        # person's work, which a hard reset erased (B530, H03).
+        #
+        try:
+            write_out(repo, head, commit)
+        except GitError as exc:
+            return refuse(
+                "publish_incomplete",
+                f"version {count_versions(repo, commit)} was recorded, but its files could not "
+                f"be written out to the draft area: {exc}. Run the same request again to finish it.",
+                exit_codes.BLOCKED,
+            )
         metadata = ReleaseMetadata(
             cluster=request.cluster,
             version=count_versions(repo, commit),
@@ -722,32 +765,46 @@ def _publish_handwritten(
     )
     if head != change.expected_head and not retry:
         return refuse("expected_target_changed", words.moved, exit_codes.BLOCKED)
-    dirty = unsaved_changes(repo)
-    if dirty and not _only_handwritten(dirty):
+    dirty = outside_layers(repo)
+    if dirty:
         return refuse(
             "dirty_worktree",
-            "there are unsaved changes in managed/, which the interface writes. "
-            "Discard them before publishing the files changed by hand.",
+            f"there are unsaved changes outside core/ and manual/: {_named(dirty)}. "
+            "Publish or discard them before publishing the files changed by hand.",
             exit_codes.BLOCKED,
         )
-    try:
-        files = handwritten.read_layers(repo)
-    except handwritten.HandwrittenError as exc:
-        return refuse("handwritten_invalid", str(exc), exc.exit_code)
-    if handwritten.fingerprint(files) != change.handwritten:
-        return refuse(
-            "handwritten_changed",
-            "the files in core/ or manual/ changed after the page was drawn. "
-            "Nothing was published; read the page again before publishing.",
-            exit_codes.BLOCKED,
-        )
+    if retry:
+        #
+        # This request's version is recorded and its release is not yet
+        # installed. Finished with the version's own files, which is what the
+        # first run published; anything changed by hand since stays in the
+        # draft area as waiting (B530, H05). The index is pointed at the
+        # version, which the first run did not get to (H02).
+        #
+        files = handwritten.published_layers(repo, head)
+        handwritten.settle_index(repo, head)
+        found = handwritten.pending(handwritten.published_layers(repo, change.expected_head), files)
+    else:
+        try:
+            files = handwritten.read_layers(repo)
+        except handwritten.HandwrittenUnreadable as exc:
+            return refuse("handwritten_unavailable", str(exc), exc.exit_code)
+        except handwritten.HandwrittenError as exc:
+            return refuse("handwritten_invalid", str(exc), exc.exit_code)
+        if handwritten.fingerprint(files) != change.handwritten:
+            return refuse(
+                "handwritten_changed",
+                "the files in core/ or manual/ changed after the page was drawn. "
+                "Nothing was published; read the page again before publishing.",
+                exit_codes.BLOCKED,
+            )
+        found = handwritten.pending(handwritten.published_layers(repo, head), files)
     if not files:
         return refuse(
             "handwritten_invalid",
             "core/ and manual/ are empty; there is nothing to publish.",
             exit_codes.REFUSED,
         )
-    found = handwritten.pending(handwritten.published_layers(repo, head), files)
     return publish_helper._publish(
         request=request,
         names=names,

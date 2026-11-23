@@ -182,6 +182,20 @@ nothing, or when nothing is published yet. When the installed release cannot gen
 configuration, a row of its own says so with the reason, and a publish would be refused the same way.
 For troubleshooting, `haprion-config-status -c <cluster> --diff` prints the same difference.
 
+**Changes made by hand.** The files in a cluster's `core/` and `manual/` are edited at the terminal, with
+`sudoedit`. Until they are published, *Needs attention* says *Handwritten changes not published* and names
+the files. Its **Versions** button opens the page that shows the difference from the newest version, line by
+line. The comment is filled in with the file names; change it if you like. **Publish & deploy** publishes
+exactly those files and deploys them. If the files change after the page was opened, nothing is published
+and the page asks you to read it again. Only the files are published: saved changes stay saved, and the
+generated configuration is not made again.
+
+While files changed by hand wait, no other publish goes through. *Versions* and the update page say so
+and link to the page instead of offering a button. A link, or a file that is not text, under `core/` or
+`manual/` cannot be published at all; *Needs attention* says which file. At the terminal,
+`haprion-config-status -c <cluster>` lists the same files as unsent, and `haprion-publish -c <cluster>
+"<comment>"` publishes them.
+
 **Publish & deploy.** When a cluster has saved changes, its dashboard card offers *Publish & deploy N
 changes* instead of *Deploy configuration*. A dialog lists the changes and takes the comment. One job then
 publishes and deploys: the worker deploys the version the publish recorded. The job ends when the deploy
@@ -9388,7 +9402,8 @@ own - the hardest kind of divergence to find.
 
 **Where the results go.** The results go to cache tables with one row per cluster:
 `cluster_status`, `cluster_inventory`, `cluster_history`, `cluster_certificates`,
-`cluster_network`, `cluster_backups`, `cluster_settings`, `cluster_objects`, `cluster_regeneration` and `cluster_list`.
+`cluster_network`, `cluster_backups`, `cluster_settings`, `cluster_objects`, `cluster_regeneration`,
+`cluster_handwritten` and `cluster_list`.
 Every page shows how old the answer it uses is. `observed_at` is set by the database - by default on
 insert and by a trigger on update - and the poller holds no `update` on that column. A poller that
 could write it could report a cluster it never reached as freshly observed.

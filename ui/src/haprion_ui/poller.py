@@ -403,6 +403,12 @@ SOURCES: tuple[Source, ...] = (
         ),
         reading=dict,
     ),
+    #
+    # Whether core/ or manual/ holds files written by hand that are not
+    # published (B529): the reader the publish takes them with, so what the
+    # page shows is what *Publish & deploy* sends.
+    #
+    Source("handwritten", None, db.record_cluster_handwritten, reading=_nothing),
 )
 
 

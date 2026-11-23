@@ -182,6 +182,7 @@ REFUSED_CALLS: dict[str, list[str]] = {
     "haprion-probe": [*BAD_CLUSTER, "-t", "192.0.2.10:80"],
     "haprion-profiles apply": ["apply", "/nonexistent.yaml"],
     "haprion-profiles remove": ["remove", "dns", "Bad Id!"],
+    "haprion-publish": [*BAD_CLUSTER, "Handwritten changes"],
     "haprion-publish --regenerate": [*BAD_CLUSTER, "--regenerate"],
     "haprion-revert": [*BAD_CLUSTER],
     "haprion-server-state": [*BAD_CLUSTER, "-o", "shop", "drain", "192.0.2.10:80"],
@@ -363,6 +364,7 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
     "/history/{cluster}/regenerated": Command(
         "haprion-publish --regenerate", "haprion-changes-publish"
     ),
+    "/history/{cluster}/handwritten": Command("haprion-publish", "haprion-publish"),
     "/login": NotASetting("signs in"),
     "/logout": NotASetting("signs out"),
     "/account/password": NotASetting("the signed-in person's own password; haprion-user reset"),

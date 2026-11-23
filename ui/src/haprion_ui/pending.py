@@ -50,6 +50,7 @@ from haprion_ui.editor_flow import (
 )
 from haprion_ui.http01_page import settings_in_effect
 from haprion_ui.reading import (
+    HANDWRITTEN_SOURCE,
     NETWORK_SOURCE,
     OBJECTS_SOURCE,
     SETTINGS_SOURCE,
@@ -109,6 +110,11 @@ class Package:
     # Versions page asks for itself again until it has (review 26-10-24, 12-14).
     #
     lagging: tuple[str, ...] = ()
+    #
+    # The page that publishes the files changed by hand, while they wait and
+    # hold the package back (B529); empty otherwise.
+    #
+    handwritten: str = ""
 
     @property
     def identity(self) -> str:
@@ -170,6 +176,53 @@ def regenerate_payload(
         "requested_by": requested_by,
         **({"deploy": True} if deploy else {}),
     }
+
+
+def handwritten_payload(
+    *,
+    expected_head: str,
+    fingerprint: str,
+    comment: str,
+    requested_by: str,
+    deploy: bool = False,
+) -> dict[str, Any]:
+    """The `changes_publish` job that publishes the files changed by hand (B529).
+
+    Nothing saved is carried: only `core/` and `manual/` as the draft area
+    holds them, while their fingerprint is the one the page showed.
+    """
+
+    return {
+        "handwritten": fingerprint,
+        "expected_head": expected_head,
+        "comment": comment.strip(),
+        "requested_by": requested_by,
+        **({"deploy": True} if deploy else {}),
+    }
+
+
+def handwritten_waiting(request: Request, config: Config, cluster: str) -> Mapping[str, Any] | None:
+    """The cluster's handwritten reading while files wait or cannot be published; None otherwise."""
+
+    _, rows = read_source(request, config, HANDWRITTEN_SOURCE, cluster=cluster)
+    row = next((row for row in rows if row.cluster == cluster), None)
+    if row is None or row.outcome != "done" or not isinstance(row.result, Mapping):
+        return None
+    return row.result if row.result.get("state") in ("pending", "refused") else None
+
+
+def handwritten_problem(result: Mapping[str, Any]) -> str:
+    """Why a publish of saved changes waits while files changed by hand do (B529)."""
+
+    if result.get("state") == "refused":
+        return "core/ or manual/ holds something no publish can take. Fix it before publishing."
+    paths = [
+        str(item.get("path"))
+        for item in result.get("pending") or ()
+        if isinstance(item, Mapping) and item.get("path")
+    ]
+    shown = ", ".join(paths[:3]) + (f" and {len(paths) - 3} more" if len(paths) > 3 else "")
+    return f"Changed by hand and not published: {shown}. Publish {'it' if len(paths) == 1 else 'them'} first."
 
 
 def held_server_counts(
@@ -372,6 +425,14 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
         if spent > room
         else ""
     )
+    #
+    # The engine refuses a publish while files changed by hand wait (B529);
+    # said here, with the page that publishes them, rather than as a job that
+    # fails. Read only where there is something to publish.
+    #
+    waiting = handwritten_waiting(request, config, cluster) if rows and not problem else None
+    if waiting is not None:
+        problem = handwritten_problem(waiting)
     return Package(
         cluster=cluster,
         head=head,
@@ -379,6 +440,7 @@ def pending_package(request: Request, config: Config, cluster: str) -> Package:
         payload=payload,
         problem=problem,
         lagging=tuple(lagging),
+        handwritten=f"/history/{cluster}/handwritten" if waiting is not None else "",
     )
 
 

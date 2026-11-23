@@ -48,6 +48,8 @@
   <footer class="cluster-actions" aria-label="{{ view.cluster }} operations">
     {% if saved %}
     <p class="table-note">{{ saved }} saved change{{ '' if saved == 1 else 's' }} wait{{ 's' if saved == 1 }} to be published. <a href="/history">Publishing {{ 'it' if saved == 1 else 'them' }}</a> makes this configuration again too, in one version.</p>
+    {% elif handwritten %}
+    <p class="table-note">Files changed by hand wait to be published first. <a href="{{ handwritten }}">Handwritten changes</a></p>
     {% elif running %}
     <div class="action-buttons" data-busy="{{ view.cluster }}">{{ busy_badge(running) }}</div>
     {% else %}

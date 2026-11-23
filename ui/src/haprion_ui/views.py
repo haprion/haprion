@@ -60,6 +60,7 @@ from haprion_ui.db import AuthenticatedSession
 from haprion_ui.reading import (
     BACKUP_SOURCE,
     CERTIFICATE_SOURCE,
+    HANDWRITTEN_SOURCE,
     NETWORK_SOURCE,
     OBJECTS_SOURCE,
     REGENERATION_SOURCE,
@@ -799,6 +800,8 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
     waf_objects_read = waf_objects(request, config) if config.traffic_logs.enabled else []
     _, regeneration_rows = read_source(request, config, REGENERATION_SOURCE)
     regeneration_rows = list(regeneration_rows)
+    _, handwritten_rows = read_source(request, config, HANDWRITTEN_SOURCE)
+    handwritten_rows = list(handwritten_rows)
     with request.app.state.pool.connection() as connection:
         features.read_in(db.feature_switches(connection))
         recent, judged = attention_jobs(connection, clusters)
@@ -821,6 +824,7 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
         items += attention.from_blocklists(blocklist_states, (row.name for row in blocklist_rows))
         items += attention.from_blocklist_timer(blocklist_rows, blocklist_states, now=now)
         items += attention.from_regeneration(regeneration_rows)
+        items += attention.from_handwritten(handwritten_rows)
         if config.traffic_logs.enabled:
             items += attention.from_waf(
                 waf_not_working(waf_objects_read, config, connection, clusters),
@@ -874,6 +878,7 @@ def attention_items(request: Request, config: Config) -> attention.Attention:
             stale_after=stale_after,
             certificates_read=certificate_view.registry_state != "unreadable",
             regeneration_rows=regeneration_rows,
+            handwritten_rows=handwritten_rows,
         )
         if gone:
             db.forget_attention_acks(connection, gone)

@@ -2097,6 +2097,43 @@ class ARealDatabase(unittest.TestCase):
             connection.execute("delete from cluster_regeneration")
             connection.commit()
 
+    def test_the_poller_records_the_handwritten_reading_and_web_only_reads_it(self) -> None:
+        # 0124 (B529): whether core/ or manual/ holds files not published.
+        result = {"state": "pending", "head": "a" * 40, "fingerprint": "b" * 64}
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+            db.record_cluster_handwritten(connection, cluster="alpha", outcome="done", result={})
+            before = db.cluster_handwritten(connection, cluster="alpha")[0].observed_at
+            db.record_cluster_handwritten(
+                connection, cluster="alpha", outcome="done", result=result
+            )
+            connection.commit()
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            (row,) = db.cluster_handwritten(connection)
+            self.assertEqual((row.cluster, row.result), ("alpha", result))
+            self.assertGreater(row.observed_at, before)
+            for write in (
+                lambda: db.record_cluster_handwritten(
+                    connection, cluster="beta", outcome="done", result=result
+                ),
+                lambda: connection.execute("update cluster_handwritten set outcome = 'failed'"),
+                lambda: connection.execute("delete from cluster_handwritten"),
+            ):
+                with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                    write()
+                connection.rollback()
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                db.record_cluster_handwritten(connection, cluster="alpha", outcome="odd", result={})
+            connection.rollback()
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                db.record_cluster_handwritten(
+                    connection, cluster="alpha", outcome="done", result={"diff": "x" * 8_500_000}
+                )
+            connection.rollback()
+        with self.connect() as connection:
+            connection.execute("delete from cluster_handwritten")
+            connection.commit()
+
     def test_the_poller_replaces_the_cluster_list_and_web_only_reads_it(self) -> None:
         # Fas 16 (B206/B211): one row, replaced by update, so no delete grant.
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
@@ -12042,6 +12079,9 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
 
     def test_a_dump_at_0122_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
         self.restored_from("0122", grants_differ="0122 has no request_id, tls or http to grant on")
+
+    def test_a_dump_at_0123_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
+        self.restored_from("0123", grants_differ="0123 has no cluster_handwritten to grant on")
 
 
 class EveryRevisionADumpCanBeAtIsRestored(unittest.TestCase):

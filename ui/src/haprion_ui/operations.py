@@ -67,6 +67,10 @@ from haprion_ui import execution
 # The installation key's identifier as `dns_profile_keys.key_id_of` makes it.
 KEY_ID = re.compile(r"^[0-9a-f]{16}$")
 #
+# The handwritten reading's fingerprint (B529), as `changes_publish` takes it.
+#
+HANDWRITTEN_FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
+#
 # The longest backend name the objects helper may report (its schema's bound).
 #
 MAX_BACKEND_NAME = 128
@@ -1459,7 +1463,24 @@ def prepare(
             "backend_renames",
             "deploy",
             "regenerate",
+            "handwritten",
         )
+        #
+        # `handwritten` publishes the files changed by hand in core/ and
+        # manual/, while their fingerprint is the one the page showed, and
+        # nothing else (B529). The helper holds it to that; the shape is
+        # checked here.
+        #
+        handwritten = payload.get("handwritten")
+        if handwritten is not None and (
+            not isinstance(handwritten, str) or not HANDWRITTEN_FINGERPRINT.fullmatch(handwritten)
+        ):
+            raise BadPayload("handwritten must be the reading's fingerprint")
+        if handwritten is not None and any(
+            key in payload
+            for key in ("objects", "network", "settings", "regenerate", "drafts", "changes")
+        ):
+            raise BadPayload("a publish of handwritten files carries nothing else")
         #
         # `regenerate` publishes the generated layer made again with the
         # installed product, with no part changed: the one publish that carries
@@ -1498,7 +1519,13 @@ def prepare(
         for key, document in (("network", network), ("settings", settings)):
             if key in payload and (not isinstance(document, str) or not document):
                 raise BadPayload(f"{key} must be a non-empty document")
-        if carried is None and network is None and settings is None and not regenerate:
+        if (
+            carried is None
+            and network is None
+            and settings is None
+            and not regenerate
+            and handwritten is None
+        ):
             raise BadPayload("a publish carries objects, a network or settings")
         expected_head = payload.get("expected_head")
         comment = payload.get("comment")
@@ -1526,6 +1553,7 @@ def prepare(
                 allow_certificate_mismatch=override,
                 requested_by=_requested_by(payload),
                 regenerate=regenerate,
+                handwritten=handwritten,
             ),
         )
 

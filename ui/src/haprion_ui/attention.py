@@ -229,6 +229,7 @@ PAGES = {
     "traffic_stream": "Dashboard",
     "api_token": "Settings",
     "regeneration": "Versions",
+    "handwritten": "Versions",
     "blocklist": "Settings",
 }
 KINDS = tuple(PAGES)
@@ -1149,6 +1150,64 @@ def from_regeneration(rows: Iterable[Any]) -> list[Item]:
     return items
 
 
+def handwritten_page(cluster: str) -> str:
+    """Where the files changed by hand are read and published (B529)."""
+
+    return f"/history/{cluster}/handwritten"
+
+
+def handwritten_files(result: Mapping[str, Any], *, at_most: int = 3) -> str:
+    """The files waiting, for one line: the first few and how many more."""
+
+    paths = [
+        str(item.get("path"))
+        for item in result.get("pending") or ()
+        if isinstance(item, Mapping) and item.get("path")
+    ]
+    shown = ", ".join(paths[:at_most])
+    return shown + (f" and {len(paths) - at_most} more" if len(paths) > at_most else "")
+
+
+def from_handwritten(rows: Iterable[Any]) -> list[Item]:
+    """Clusters whose core/ or manual/ holds files changed by hand and not published (B529).
+
+    Only from a reading that was made. A draft that cannot be published - a
+    link, a file that is not text - is a row too: until it is fixed, no
+    publish of the cluster goes through, from the terminal or from here.
+    """
+
+    items: list[Item] = []
+    for row in sorted(rows, key=lambda reading: reading.cluster):
+        result = row.result
+        if row.outcome != "done" or not isinstance(result, Mapping):
+            continue
+        state = result.get("state")
+        if state == "pending":
+            message = f"Handwritten changes not published: {handwritten_files(result)}"
+            variant = str(result.get("fingerprint") or "")[:16]
+        elif state == "refused":
+            why = str(result.get("message") or "").strip()
+            if len(why) > REGENERATION_MESSAGE:
+                why = why[: REGENERATION_MESSAGE - 1] + "…"
+            message = "Handwritten changes cannot be published" + (f": {why}" if why else "")
+            variant = hashlib.sha256(why.encode("utf-8")).hexdigest()[:16]
+        else:
+            continue
+        items.append(
+            Item(
+                kind="handwritten",
+                severity="warning",
+                cluster=row.cluster,
+                subject=row.cluster,
+                message=message,
+                since=None,
+                link=handwritten_page(row.cluster),
+                variant=variant,
+            )
+        )
+    return items
+
+
 def from_api_tokens(rows: Sequence[ApiToken], *, now: datetime) -> list[Item]:
     """API tokens that end within the warning, or ended and are still listed (B416).
 
@@ -1556,6 +1615,7 @@ def held_through_gaps(
     stale_after: timedelta,
     certificates_read: bool,
     regeneration_rows: Iterable[Any],
+    handwritten_rows: Iterable[Any] = (),
 ) -> set[tuple[str, str, str, str, str]]:
     """Of the acknowledgements whose row is not listed, those it is right to forget.
 
@@ -1564,18 +1624,20 @@ def held_through_gaps(
     be told. Its acknowledgement stays until a whole, fresh reading leaves the
     row out. The same holds for the certificates, which come from the manager's
     reading (`certificates_read`: it answered), and for a cluster's
-    regeneration row, which comes from that cluster's own reading (D11-04).
+    regeneration row, which comes from that cluster's own reading (D11-04), and
+    for its handwritten row (B529).
     """
 
     rows = {row.cluster: row for row in status_rows}
     regenerated = {row.cluster: row for row in regeneration_rows}
+    handwritten = {row.cluster: row for row in handwritten_rows}
     forget: set[tuple[str, str, str, str, str]] = set()
     for key in gone:
         kind, cluster, named = key[:3]
         if kind == "certificate" and not certificates_read:
             continue
-        if kind == "regeneration":
-            reading = regenerated.get(cluster)
+        if kind in ("regeneration", "handwritten"):
+            reading = (regenerated if kind == "regeneration" else handwritten).get(cluster)
             if reading is None or reading.outcome != "done":
                 continue
             forget.add(key)

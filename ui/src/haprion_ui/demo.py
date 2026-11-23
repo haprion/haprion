@@ -22,6 +22,7 @@ from haprion_ui.db import (
     ApiToken,
     ClusterBackups,
     ClusterCertificates,
+    ClusterHandwritten,
     ClusterHistory,
     ClusterInventory,
     ClusterNetwork,
@@ -986,6 +987,61 @@ def _engine_fields(cluster: str, entries: list[dict[str, Any]]) -> list[dict[str
         "groups",
     )
     return [{**entry, **{key: computed[entry["name"]][key] for key in fields}} for entry in entries]
+
+
+def handwritten_rows(now: datetime | None = None) -> tuple[ClusterHandwritten, ...]:
+    """One cluster with a file changed by hand and not published, one with none (B529)."""
+
+    observed = (now or datetime.now(UTC)) - timedelta(seconds=21)
+    head = f"{26:040d}"
+    return (
+        ClusterHandwritten(
+            cluster="edge-demo",
+            observed_at=observed,
+            outcome="done",
+            result={"state": "clean", "head": f"{24:040d}"},
+            warnings=[],
+            error=None,
+            poll_error=None,
+        ),
+        ClusterHandwritten(
+            cluster="service-demo",
+            observed_at=observed,
+            outcome="done",
+            result={
+                "state": "pending",
+                "head": head,
+                "fingerprint": "a" * 64,
+                "pending": [{"path": "core/haproxy.cfg", "kind": "changed"}],
+                "diff": {
+                    "commit": head,
+                    "parent": None,
+                    "truncated": False,
+                    "files": [
+                        {
+                            "path": "core/haproxy.cfg",
+                            "status": "modified",
+                            "old_path": None,
+                            "added": 1,
+                            "removed": 1,
+                            "binary": False,
+                            "lines": [
+                                "@@ -3,7 +3,7 @@ global",
+                                "     default-path config",
+                                "     maxconn 20000",
+                                "-    tune.stick-counters 4",
+                                "+    tune.stick-counters 6",
+                                "     ssl-default-bind-options ssl-min-ver TLSv1.2",
+                            ],
+                        }
+                    ],
+                },
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        ),
+    )
 
 
 def regeneration_rows(now: datetime | None = None) -> tuple[ClusterRegeneration, ...]:

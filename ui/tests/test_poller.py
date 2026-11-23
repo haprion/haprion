@@ -473,16 +473,17 @@ class Passes(unittest.TestCase):
                 "cluster_settings",
                 "objects",
                 "regeneration",
+                "handwritten",
             ],
         )
         #
         # Partial is allowed only where the read has more than one place to
         # fail: status reaches two nodes, and a backup listing reads one
-        # directory per node. The other seven are each one read of one place.
+        # directory per node. The other eight are each one read of one place.
         #
         self.assertEqual(
             [source.partial_ok for source in poller.SOURCES],
-            [True, False, False, True, False, False, False, False, False],
+            [True, False, False, True, False, False, False, False, False, False],
         )
 
     def test_the_backup_source_asks_for_every_retained_archive(self) -> None:
@@ -497,8 +498,8 @@ class Passes(unittest.TestCase):
 
         self.assertEqual(source.reading({}), {"limit": None, "node": None})
 
-    def test_the_seven_manager_local_readings_are_one_call(self) -> None:
-        """N2 (2026-10-08): one sudo call for what touches only the manager."""
+    def test_the_eight_manager_local_readings_are_one_call(self) -> None:
+        """N2 (2026-10-08): one sudo call for what touches only the manager; B529's is the eighth."""
 
         local = [source.operation for source in poller.SOURCES if source.run is None]
 
@@ -512,6 +513,7 @@ class Passes(unittest.TestCase):
                 "cluster_settings",
                 "objects",
                 "regeneration",
+                "handwritten",
             ],
         )
         self.assertTrue(all(source.reading is not None for source in poller.SOURCES[2:]))

@@ -342,6 +342,25 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         self.assertNotIn("Publish again", text)
         self.assertIn('<meta name="haproxy-live" content="5">', text)
 
+    def test_files_changed_by_hand_hold_the_package_and_lead_to_their_page(self) -> None:
+        """B529: the engine refuses the publish while they wait; said here, not by a failed job."""
+
+        from tests.test_handwritten_page import handwritten_row
+
+        self.rows = [row()]
+        client = self.editor()
+        with mock.patch("haprion_ui.db.cluster_handwritten", return_value=[handwritten_row()]):
+            text = self.page(client)
+            answer = self.publish(client)
+
+        self.assertIn(
+            "Changed by hand and not published: core/haproxy.cfg. Publish it first.", text
+        )
+        self.assertIn('<a class="secondary-button" href="/history/alpha/handwritten">', text)
+        self.assertNotIn('action="/history/alpha/publish"', text)
+        self.assertEqual(answer.status_code, 400)
+        self.assertEqual(self.queued, [])
+
     def test_a_package_that_waits_for_nothing_leaves_the_page_still(self) -> None:
         self.rows = [row()]
 

@@ -128,6 +128,15 @@ REGENERATION_SOURCE = Source(
     lambda connection, cluster: db.cluster_regeneration(connection, cluster=cluster),
 )
 
+#
+# Whether core/ or manual/ holds files written by hand that are not published (B529).
+#
+HANDWRITTEN_SOURCE = Source(
+    demo.handwritten_rows,
+    lambda connection: db.cluster_handwritten(connection),
+    lambda connection, cluster: db.cluster_handwritten(connection, cluster=cluster),
+)
+
 OBJECTS_SOURCE = Source(
     demo.object_rows,
     lambda connection: db.cluster_objects(connection),

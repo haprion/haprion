@@ -27,8 +27,10 @@ def in_step(
     The reading is up to a poll old. An apply of this revision that finished
     after the reading was made is taken to have done its work, so a card does
     not say *Not applied* in the seconds before the next reading. Where
-    nothing has been read at all (`read_at` None), nothing is known and the row
-    is let be. A row whose digest cannot be made (`None`) is never in step.
+    nothing has been read at all (`read_at` None, the time of the poller's last
+    reading), nothing is known and the row is let be. A reading that found no
+    files still has a time: a row without its file is then not in step (review
+    26-11-24, PW02). A row whose digest cannot be made (`None`) is never in step.
     """
 
     if (
@@ -49,9 +51,3 @@ def in_step(
         if seen is None or (job.finished_at is not None and seen < job.finished_at):
             return True
     return False
-
-
-def last_read(files: dict[str, db.ListFile]) -> datetime | None:
-    """When the poller last wrote the files, or None before it has."""
-
-    return max((entry.seen_at for entry in files.values()), default=None)

@@ -27,6 +27,7 @@ from tests.test_queue_route import queued
 
 KEY = str(uuid4())
 NOW = datetime(2026, 11, 24, 8, 0, tzinfo=UTC)
+READ = NOW + timedelta(minutes=5)
 
 
 def list_row(**overrides: Any) -> db.PathList:
@@ -233,6 +234,10 @@ def file_row(name: str = "scanners", **overrides: Any) -> db.ListFile:
 class TheFilesOnTheManager(PathListRouteTestCase):
     """Review 26-11-24, PW02: the card says what root's files say of the database's rows."""
 
+    def setUp(self) -> None:
+        super().setUp()
+        self.files_read_at = NOW + timedelta(minutes=5)
+
     def card(self, rows: list[db.PathList], files: list[db.ListFile]) -> str:
         self.lists = rows
         with mock.patch("haprion_ui.db.list_files", side_effect=lambda _c, _kind: files):
@@ -246,6 +251,19 @@ class TheFilesOnTheManager(PathListRouteTestCase):
     def test_a_file_with_other_paths_is_not_applied_even_at_the_same_revision(self) -> None:
         page = self.card([list_row()], [file_row(digest="0" * 64)])
         self.assertIn("Not applied", page)
+
+    def test_a_reading_of_empty_directories_leaves_every_row_not_applied(self) -> None:
+        """PW02: a database restored on a new manager has rows and no files at all."""
+
+        page = self.card([list_row()], [])
+        self.assertIn("Not applied", page)
+        self.assertIn('action="/settings/path-lists/scanners/apply-again"', page)
+
+    def test_before_the_first_reading_nothing_is_said(self) -> None:
+        self.files_read_at = None
+        page = self.card([list_row()], [])
+        self.assertNotIn("Not applied", page)
+        self.assertNotIn("apply-again", page)
 
     def test_a_file_that_matches_says_nothing(self) -> None:
         page = self.card([list_row()], [file_row()])
@@ -553,7 +571,7 @@ class TheCommand(unittest.TestCase):
             "same": file_row("same", revision=5, digest=path_lists.content_digest("", ["/b"])),
             "other": file_row("other"),
         }
-        plan = path_list_apply.plan(found, stored, latest, files, prune=False)
+        plan = path_list_apply.plan(found, stored, latest, files, READ, prune=False)
         self.assertEqual(
             [(change.name, change.action) for change in plan.changes],
             [("same", "apply"), ("lost", "apply")],
@@ -561,8 +579,13 @@ class TheCommand(unittest.TestCase):
         self.assertEqual(plan.unchanged, ())
         files["same"] = file_row("same", revision=3, digest=path_lists.content_digest("", ["/b"]))
         files["lost"] = file_row("lost", revision=1, digest=path_lists.content_digest("", ["/c"]))
-        again = path_list_apply.plan(found, stored, latest, files, prune=False)
+        again = path_list_apply.plan(found, stored, latest, files, READ, prune=False)
         self.assertEqual((again.changes, again.unchanged), ((), ("same", "lost")))
+        # A reading of empty directories is a reading; before any, the job history decides.
+        emptied = path_list_apply.plan(found, stored, latest, {}, READ, prune=False)
+        self.assertEqual([change.action for change in emptied.changes], ["apply", "apply"])
+        unread = path_list_apply.plan(found, stored, latest, {}, None, prune=False)
+        self.assertEqual((unread.changes, unread.unchanged), ((), ("same", "lost")))
 
 
 if __name__ == "__main__":

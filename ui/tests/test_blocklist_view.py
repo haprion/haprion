@@ -379,10 +379,19 @@ class TheFilesOnTheManager(unittest.TestCase):
     """Review 26-11-24, PW02: the card says what root's definitions say of the database's rows."""
 
     def rows(
-        self, lists: list[db.Blocklist], files: list[db.ListFile], **jobs: db.Job
+        self,
+        lists: list[db.Blocklist],
+        files: list[db.ListFile],
+        read_at: datetime | None = NOW + timedelta(minutes=5),
+        **jobs: db.Job,
     ) -> list[blocklist_form.Row]:
         return blocklist_form.rows(
-            lists, [state_row()], jobs, {entry.name: entry for entry in files}, writes=True
+            lists,
+            [state_row()],
+            jobs,
+            {entry.name: entry for entry in files},
+            writes=True,
+            read_at=read_at,
         )
 
     def test_a_row_the_file_does_not_match_is_not_applied_with_its_button(self) -> None:
@@ -392,6 +401,16 @@ class TheFilesOnTheManager(unittest.TestCase):
     def test_other_content_at_the_same_revision_is_not_applied(self) -> None:
         (row,) = self.rows([blocklist_row(every_hours=6)], [file_row()])
         self.assertEqual(row.status, "Not applied")
+
+    def test_a_reading_of_empty_directories_leaves_the_row_not_applied(self) -> None:
+        """PW02: a database restored on a new manager has rows and no files at all."""
+
+        (row,) = self.rows([blocklist_row()], [])
+        self.assertEqual((row.status, row.button), ("Not applied", "apply_again"))
+
+    def test_before_the_first_reading_nothing_is_said(self) -> None:
+        (row,) = self.rows([blocklist_row()], [], read_at=None)
+        self.assertEqual((row.status, row.button), ("", ""))
 
     def test_a_matching_file_says_nothing(self) -> None:
         (row,) = self.rows([blocklist_row()], [file_row()])
@@ -542,6 +561,7 @@ class ApplyingABlocklistAgain(BlocklistRouteTestCase):
         self.blocklists = [blocklist_row(revision=3)]
         self.blocklist_states = [state_row()]
         client = self.admin()
+        self.files_read_at = NOW + timedelta(minutes=5)
         with mock.patch(
             "haprion_ui.db.list_files",
             side_effect=lambda _c, _k: [file_row(revision=5)],
@@ -945,6 +965,7 @@ class TheCommand(unittest.TestCase):
             {row.name: row for row in stored[:2]},
             {"community": done},
             {**files, "community": file_row(revision=7)},
+            NOW + timedelta(minutes=5),
             replace_secret=[],
             prune=False,
         )
@@ -957,11 +978,26 @@ class TheCommand(unittest.TestCase):
             {row.name: row for row in stored[:2]},
             {"community": done},
             files,
+            NOW + timedelta(minutes=5),
             replace_secret=[],
             prune=False,
         )
         self.assertEqual(
             [(change.name, change.action) for change in agreed.changes], [("fresh", "create")]
+        )
+        # Review 26-11-24, PW02: a reading of empty directories is a reading.
+        emptied = blocklist_apply.plan(
+            blocklist_apply.read_file(self.file(body)),
+            {row.name: row for row in stored[:2]},
+            {"community": done},
+            {},
+            NOW + timedelta(minutes=5),
+            replace_secret=[],
+            prune=False,
+        )
+        self.assertEqual(
+            [(change.name, change.action) for change in emptied.changes],
+            [("community", "apply"), ("drop", "apply"), ("fresh", "create")],
         )
         self.assertEqual(agreed.unchanged, ("community", "drop"))
 

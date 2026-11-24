@@ -18,6 +18,11 @@ what the file says, which the web compares with its own rows. A path list file
 the database has no row for also carries its description and paths, which is
 what *Take in* stores. Written whole by the poller each pass; the web reads.
 
+`list_file_read` is the one row that says when the poller last made that
+reading. The rows cannot say it: with both directories empty (a database
+restored on a new manager) there are none, and a list's missing file would go
+unnoticed (review 26-11-24, PW02).
+
 Haprion 1.3.1's web, poller and worker never name the table, and its worker
 refuses a `path_list_apply` job as an operation it does not know.
 
@@ -99,6 +104,20 @@ def upgrade() -> None:
         "grant select (kind, name, revision, digest, description, paths, seen_at) "
         "on public.list_file to app_web"
     )
+    op.execute(
+        """
+        create table public.list_file_read (
+            only_row boolean primary key default true
+                constraint list_file_read_only_row_check check (only_row),
+            read_at timestamp with time zone not null
+        )
+        """
+    )
+    op.execute(
+        "grant select (only_row, read_at), insert (only_row, read_at), update (read_at) "
+        "on public.list_file_read to app_poller"
+    )
+    op.execute("grant select (only_row, read_at) on public.list_file_read to app_web")
     op.execute("alter table public.job drop constraint job_operation_allowed")
     op.execute(
         "alter table public.job add constraint job_operation_allowed "

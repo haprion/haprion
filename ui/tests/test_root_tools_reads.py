@@ -248,6 +248,7 @@ class TheListsList(AsRoot):
         with (
             mock.patch.object(db, "path_lists", return_value=[stored]),
             mock.patch.object(db, "list_files", return_value=files),
+            mock.patch.object(db, "list_files_read_at", return_value=NOW),
             mock.patch("haprion_ui.path_list_form.usage", return_value={}),
         ):
             code, out, _ = run(path_list_apply.main, ["list", "--json"])
@@ -273,6 +274,7 @@ class TheListsList(AsRoot):
         with (
             mock.patch.object(db, "blocklists", return_value=[stored]),
             mock.patch.object(db, "list_files", return_value=files),
+            mock.patch.object(db, "list_files_read_at", return_value=NOW),
         ):
             code, out, _ = run(blocklist_apply.main, ["list", "--json"])
 
@@ -283,6 +285,40 @@ class TheListsList(AsRoot):
             [("community", "Not applied", True), ("kept", "Only on the manager", False)],
         )
         self.assertNotIn("secret", out)
+
+    def test_a_reading_of_empty_directories_says_not_applied_before_any_it_says_nothing(
+        self,
+    ) -> None:
+        """Review 26-11-24, PW02: rows restored into a new manager have no file at all."""
+
+        stored = db.PathList("scanners", "", ["/.env"], 3, NOW, NOW, "admin")
+        blocklist = db.Blocklist(
+            "community", "", "https://lists.example.com/a.txt", "none", "", 24, [], None, 3,
+            NOW, NOW, "admin",
+        )  # fmt: skip
+        for read_at, status in ((NOW, "Not applied"), (None, "")):
+            with (
+                self.subTest(read_at=read_at),
+                mock.patch.object(db, "path_lists", return_value=[stored]),
+                mock.patch.object(db, "blocklists", return_value=[blocklist]),
+                mock.patch.object(db, "list_files", return_value=[]),
+                mock.patch.object(db, "list_files_read_at", return_value=read_at),
+                mock.patch("haprion_ui.path_list_form.usage", return_value={}),
+            ):
+                _, paths, _ = run(path_list_apply.main, ["list", "--json"])
+                _, blocks, _ = run(blocklist_apply.main, ["list", "--json"])
+            self.assertEqual(
+                assert_contract("haprion-path-lists-list", paths)["result"]["path_lists"][0][
+                    "status"
+                ],
+                status,
+            )
+            self.assertEqual(
+                assert_contract("haprion-blocklists-list", blocks)["result"]["blocklists"][0][
+                    "status"
+                ],
+                status,
+            )
 
     def test_a_refusal_is_a_document_too(self) -> None:
         with mock.patch("os.geteuid", return_value=1000):

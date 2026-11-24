@@ -1204,7 +1204,7 @@ def record_list_files(pool: Any, completed: Any, *, asked: str, at: datetime) ->
             for entry in reading["result"][key]
         ]
         with pool.connection() as connection:
-            db.record_list_files(connection, files)
+            db.record_list_files(connection, files, read_at=at)
             connection.commit()
     except Exception as exc:  # noqa: BLE001 - read again on the next cycle
         logger.warning("list files were not recorded: %s", exc)

@@ -35,6 +35,7 @@ import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -186,6 +187,7 @@ def _applied(
     stored: db.Blocklist,
     latest: db.Job | None,
     files: Mapping[str, db.ListFile] | None,
+    read_at: datetime | None,
 ) -> bool:
     """Whether root's definition is the stored row: what the poller read of it, not the job history.
 
@@ -198,7 +200,7 @@ def _applied(
         digest=blocklist_form.row_digest(stored),
         file=(files or {}).get(stored.name),
         job=latest,
-        read_at=list_sync.last_read(dict(files or {})),
+        read_at=read_at,
     )
 
 
@@ -207,6 +209,7 @@ def plan(
     stored: Mapping[str, db.Blocklist],
     latest: Mapping[str, db.Job],
     files: Mapping[str, db.ListFile] | None = None,
+    read_at: datetime | None = None,
     *,
     replace_secret: Sequence[str],
     prune: bool,
@@ -232,7 +235,7 @@ def plan(
         if replacing and not item.secret and item.definition.authorization != "none":
             raise ApplyError(f"{name}: --replace-secret needs the secret in the file")
         if _same(current, item.definition) and not replacing:
-            if _applied(current, latest.get(name), files):
+            if _applied(current, latest.get(name), files, read_at):
                 unchanged.append(name)
             else:
                 changes.append(Change(name, "apply"))
@@ -404,11 +407,13 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
     def make_plan(connection: Any) -> Plan:
         stored = {row.name: row for row in db.blocklists(connection)}
         files = {entry.name: entry for entry in db.list_files(connection, blocklist_form.KIND)}
+        read_at = db.list_files_read_at(connection)
         return plan(
             found,
             stored,
             db.latest_blocklist_jobs(connection),
             files,
+            read_at,
             replace_secret=args.replace_secret,
             prune=args.prune,
         )
@@ -448,12 +453,14 @@ def command_list(args: argparse.Namespace) -> int:
         )
     with connect(load_environment()) as connection:
         files = {entry.name: entry for entry in db.list_files(connection, blocklist_form.KIND)}
+        read_at = db.list_files_read_at(connection)
         shown = blocklist_form.rows(
             db.blocklists(connection),
             db.blocklist_states(connection),
             db.latest_blocklist_jobs(connection),
-            files or None,
+            files,
             writes=settings.management_writes,
+            read_at=read_at,
         )
     entries: list[dict[str, Any]] = [
         {

@@ -255,6 +255,7 @@ from haprion_ui.db.jobs import (
 from haprion_ui.db.list_files import (
     ListFile,
     list_files,
+    list_files_read_at,
     record_list_files,
 )
 from haprion_ui.db.oidc import (
@@ -604,6 +605,7 @@ __all__ = [
     "latest_blocklist_jobs",
     "latest_path_list_jobs",
     "list_files",
+    "list_files_read_at",
     "listed_jobs",
     "listener",
     "live_drafts",

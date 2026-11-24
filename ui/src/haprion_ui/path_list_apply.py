@@ -25,6 +25,7 @@ import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -109,6 +110,7 @@ def _applied(
     stored: db.PathList,
     latest: db.Job | None,
     files: Mapping[str, db.ListFile] | None,
+    read_at: datetime | None,
 ) -> bool:
     """Whether root's file is the stored row: what the poller read of it, not the job history.
 
@@ -121,7 +123,7 @@ def _applied(
         digest=path_lists.content_digest(stored.description, stored.paths),
         file=(files or {}).get(stored.name),
         job=latest,
-        read_at=list_sync.last_read(dict(files or {})),
+        read_at=read_at,
     )
 
 
@@ -130,6 +132,7 @@ def plan(
     stored: Mapping[str, db.PathList],
     latest: Mapping[str, db.Job],
     files: Mapping[str, db.ListFile] | None = None,
+    read_at: datetime | None = None,
     *,
     prune: bool,
 ) -> Plan:
@@ -141,7 +144,7 @@ def plan(
             changes.append(Change(item.name, "create", item))
         elif tuple(current.paths) != item.paths or current.description != item.description:
             changes.append(Change(item.name, "replace", item))
-        elif _applied(current, latest.get(item.name), files):
+        elif _applied(current, latest.get(item.name), files, read_at):
             unchanged.append(item.name)
         else:
             changes.append(Change(item.name, "apply", item))
@@ -273,7 +276,10 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
     def make_plan(connection: Any) -> Plan:
         stored = {row.name: row for row in db.path_lists(connection)}
         files = {entry.name: entry for entry in db.list_files(connection, path_list_form.KIND)}
-        return plan(found, stored, db.latest_path_list_jobs(connection), files, prune=args.prune)
+        read_at = db.list_files_read_at(connection)
+        return plan(
+            found, stored, db.latest_path_list_jobs(connection), files, read_at, prune=args.prune
+        )
 
     return _run(args, make_plan, sleep=sleep)
 
@@ -318,12 +324,14 @@ def command_list(args: argparse.Namespace) -> int:
         )
     with connect(load_environment()) as connection:
         files = {entry.name: entry for entry in db.list_files(connection, path_list_form.KIND)}
+        read_at = db.list_files_read_at(connection)
         shown = path_list_form.rows(
             db.path_lists(connection),
             path_list_form.usage(connection),
             db.latest_path_list_jobs(connection),
-            files or None,
+            files,
             writes=settings.management_writes,
+            read_at=read_at,
         )
     entries: list[dict[str, Any]] = [
         {

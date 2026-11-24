@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -413,25 +414,27 @@ def rows(
     files: Mapping[str, db.ListFile] | None = None,
     *,
     writes: bool,
+    read_at: datetime | None = None,
 ) -> list[Row]:
     """The card's rows, by name; `used` is `users` per list, `latest` each list's newest job.
 
     `files` is what the poller last read of root's files. A row they do not
     match is *Not applied*; a file without a row is *Only on the manager*
-    (review 26-11-24, PW02). The two actions are the row's own buttons.
+    (review 26-11-24, PW02). The two actions are the row's own buttons. `read_at`
+    is when the poller last made the reading; before it has, nothing is said.
     """
 
     found: list[tuple[str, Row]] = []
     lists = list(lists)
     known = {item.name for item in lists}
-    read_at = list_sync.last_read(dict(files or {}))
+    files = files or {}
     for item in lists:
         proxies = sum(len(names) for names in used.get(item.name, {}).values())
         job = latest.get(item.name)
         status, tone, job_href = _status(item, job, writes=writes)
         button = ""
         if (
-            files is not None
+            read_at is not None
             and not status
             and not list_sync.in_step(
                 revision=item.revision,

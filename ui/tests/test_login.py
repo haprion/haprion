@@ -189,6 +189,8 @@ class LoginTestCase(unittest.TestCase):
         self.switches: dict[str, Any] = {}
         self.acks: set[tuple[str, str, str, str, str]] = set()
         self.blocklists: list[Any] = []
+        # When the poller last read root's list files (B534); None before it has.
+        self.files_read_at: datetime | None = None
         self.blocklist_states: list[Any] = []
         # The getting started list (B316) is shown until a test hides it.
         self.getting_started_hidden_at: datetime | None = None
@@ -384,6 +386,9 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haprion_ui.db.latest_path_list_jobs", return_value={}),
             # No file has been read on the manager (B534) unless a test says so.
             mock.patch("haprion_ui.db.list_files", side_effect=lambda _c, kind: []),
+            mock.patch(
+                "haprion_ui.db.list_files_read_at", side_effect=lambda _c: self.files_read_at
+            ),
         ]
         for patch in self.patches:
             patch.start()

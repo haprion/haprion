@@ -21,6 +21,7 @@ from __future__ import annotations
 import urllib.parse
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -578,6 +579,7 @@ def rows(
     files: Mapping[str, db.ListFile] | None = None,
     *,
     writes: bool,
+    read_at: datetime | None = None,
 ) -> list[Row]:
     """The card's rows, by name; `latest` is each list's newest apply job.
 
@@ -585,14 +587,15 @@ def rows(
     not match is *Not applied*, with *Apply again* in its buttons; a file
     without a row is *Only on the manager*, which the secret it holds keeps
     from being taken in: the list is made again under its name, and its
-    apply takes the file over (review 26-11-24, PW02).
+    apply takes the file over (review 26-11-24, PW02). `read_at` is when the
+    poller last made the reading; before it has, nothing is said.
     """
 
     by_name = {state.name: state for state in states}
     found: list[tuple[str, Row]] = []
     lists = list(lists)
     known = {item.name for item in lists}
-    read_at = list_sync.last_read(dict(files or {}))
+    files = files or {}
     for item in lists:
         state = by_name.get(item.name)
         if state is None or state.fetched_at is None:
@@ -607,7 +610,7 @@ def rows(
         job = latest.get(item.name)
         status, status_tone, job_href = _status(item, job, writes=writes)
         if (
-            files is not None
+            read_at is not None
             and not status
             and not list_sync.in_step(
                 revision=item.revision,

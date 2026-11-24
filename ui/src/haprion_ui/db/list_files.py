@@ -38,11 +38,31 @@ def list_files(connection: Connection[Any], kind: str) -> list[ListFile]:
         return cursor.fetchall()
 
 
-def record_list_files(connection: Connection[Any], files: Iterable[ListFile]) -> None:
-    """The poller's write: the reading's files, whole; a file no longer there is removed."""
+def list_files_read_at(connection: Connection[Any]) -> datetime | None:
+    """When the poller last read the files, or None before it has (review 26-11-24, PW02)."""
+
+    with connection.cursor() as cursor:
+        cursor.execute("select read_at from list_file_read")
+        row = cursor.fetchone()
+    return None if row is None else row[0]
+
+
+def record_list_files(
+    connection: Connection[Any], files: Iterable[ListFile], *, read_at: datetime
+) -> None:
+    """The poller's write: the reading's files, whole; a file no longer there is removed.
+
+    The time of the reading is written with them, so an empty reading is known
+    to have been made (review 26-11-24, PW02).
+    """
 
     rows = list(files)
     with connection.cursor() as cursor:
+        cursor.execute(
+            "insert into list_file_read (only_row, read_at) values (true, %(at)s) "
+            "on conflict (only_row) do update set read_at = excluded.read_at",
+            {"at": read_at},
+        )
         cursor.execute(
             "delete from list_file where not (kind || '/' || name = any(%(keys)s))",
             {"keys": [f"{row.kind}/{row.name}" for row in rows]},

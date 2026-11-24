@@ -45,7 +45,7 @@ failures=0
 fail() { echo "  FAIL     $*" >&2; failures=$((failures + 1)); }
 
 step "Tables"
-expected_tables=$'alembic_version\napi_token\napp_session\napp_user\nattention_ack\naudit_event\nblocklist\nblocklist_state\ncluster_backups\ncluster_certificates\ncluster_change\ncluster_handwritten\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_pass\ncluster_regeneration\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\ngetting_started\njob\njob_claim_gate\nlist_file\nlogin_attempt\nlogin_unlock\nmanager_certificates\nmetric_backend_alias\nmetric_backend_hour_delta\nmetric_backend_member\nmetric_frontend\nmetric_frontend_hour_delta\nndes_provider_profile\nnode_event\nnode_event_state\noidc_login\noidc_provider\npackage_waiting\npath_list\nprotection_review_ack\nprotection_review_view\nproxy_draft\nreceiver_fetch\nreceiver_witness\nretention_run\nsearch_entry\nstatus_access\nthrottle_key\ntraffic_log\nupdate_check\nversion_diff\nwaf_finding_client\nwaf_finding_path\nwaf_match'
+expected_tables=$'alembic_version\napi_token\napp_session\napp_user\nattention_ack\naudit_event\nblocklist\nblocklist_state\ncluster_backups\ncluster_certificates\ncluster_change\ncluster_handwritten\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_pass\ncluster_regeneration\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\ngetting_started\njob\njob_claim_gate\nlist_file\nlist_file_read\nlogin_attempt\nlogin_unlock\nmanager_certificates\nmetric_backend_alias\nmetric_backend_hour_delta\nmetric_backend_member\nmetric_frontend\nmetric_frontend_hour_delta\nndes_provider_profile\nnode_event\nnode_event_state\noidc_login\noidc_provider\npackage_waiting\npath_list\nprotection_review_ack\nprotection_review_view\nproxy_draft\nreceiver_fetch\nreceiver_witness\nretention_run\nsearch_entry\nstatus_access\nthrottle_key\ntraffic_log\nupdate_check\nversion_diff\nwaf_finding_client\nwaf_finding_path\nwaf_match'
 #
 # Partitions are excluded, and only partitions. They are tables in `pg_tables`
 # and there are dozens of them - one per day per metric table, made and dropped
@@ -121,6 +121,9 @@ app_poller	feature_switch	SELECT	enabled, name
 app_poller	list_file	INSERT	description, digest, kind, name, paths, revision, seen_at
 app_poller	list_file	SELECT	description, digest, kind, name, paths, revision, seen_at
 app_poller	list_file	UPDATE	description, digest, paths, revision, seen_at
+app_poller	list_file_read	INSERT	only_row, read_at
+app_poller	list_file_read	SELECT	only_row, read_at
+app_poller	list_file_read	UPDATE	read_at
 app_poller	manager_certificates	INSERT	error, outcome, poll_error, result, warnings
 app_poller	manager_certificates	SELECT	error, id, observed_at, outcome, poll_error, result, warnings
 app_poller	manager_certificates	UPDATE	error, outcome, poll_error, result, warnings
@@ -195,6 +198,7 @@ app_web	job	SELECT	attempts, cluster, created_at, exit_code, finished_at, held_d
 app_web	job	UPDATE	held_decided_by, held_decision
 app_web	job_claim_gate	SELECT	paused_by, paused_until
 app_web	list_file	SELECT	description, digest, kind, name, paths, revision, seen_at
+app_web	list_file_read	SELECT	only_row, read_at
 app_web	login_attempt	INSERT	client_ip, succeeded, username_normalised
 app_web	login_attempt	SELECT	at, client_ip, id, succeeded, username_normalised
 app_web	login_unlock	INSERT	actor, username_normalised

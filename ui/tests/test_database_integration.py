@@ -4986,10 +4986,12 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
         def clear() -> None:
             with self.connection.cursor() as cursor:
                 cursor.execute("delete from list_file")
+                cursor.execute("delete from list_file_read")
             self.connection.commit()
 
         self.addCleanup(clear)
         at = datetime(2026, 11, 24, 6, 0, tzinfo=UTC)
+        later = at + timedelta(minutes=1)
 
         def entry(kind: str, name: str, **fields: Any) -> db.ListFile:
             base: dict[str, Any] = {
@@ -5001,6 +5003,7 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
             return db.ListFile(kind, name, seen_at=at, **{**base, **fields})
 
         with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as poller_connection:
+            self.assertIsNone(db.list_files_read_at(poller_connection))
             db.record_list_files(
                 poller_connection,
                 [
@@ -5009,6 +5012,7 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
                     entry("blocklist", "scanners"),
                     entry("blocklist", "gone", revision=0, digest=""),
                 ],
+                read_at=at,
             )
             db.record_list_files(
                 poller_connection,
@@ -5017,6 +5021,7 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
                     entry("path_list", "taken", description="", paths=["/.env"]),
                     entry("blocklist", "scanners"),
                 ],
+                read_at=later,
             )
             poller_connection.commit()
             with self.assertRaises(psycopg.Error):
@@ -5024,12 +5029,29 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
                     "insert into list_file values ('other', 'x', 1, '', null, null, now())"
                 )
             poller_connection.rollback()
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                poller_connection.execute(
+                    "insert into list_file_read (only_row, read_at) values (false, now())"
+                )
+            poller_connection.rollback()
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as web:
             paths = db.list_files(web, "path_list")
             blocks = db.list_files(web, "blocklist")
+            self.assertEqual(db.list_files_read_at(web), later)
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 web.execute("delete from list_file")
             web.rollback()
+            for write in (
+                "insert into list_file_read (only_row, read_at) values (true, now())",
+                "update list_file_read set read_at = now()",
+                "delete from list_file_read",
+            ):
+                with (
+                    self.subTest(write=write),
+                    self.assertRaises(psycopg.errors.InsufficientPrivilege),
+                ):
+                    web.execute(write)
+                web.rollback()
 
         self.assertEqual(
             [(f.name, f.revision, f.paths) for f in paths],

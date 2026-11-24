@@ -210,17 +210,20 @@ def build_router(config: Config) -> APIRouter:
             #
             # What root's files say, as the poller last read them: a row they
             # do not match is *Not applied*, a file without a row *Only on the
-            # manager* (review 26-11-24, PW02). No file read at all is the same
-            # as no reading yet - the first poll after an upgrade - and says nothing.
+            # manager* (review 26-11-24, PW02). Before the first reading (the first
+            # poll after an upgrade) nothing is known and nothing is said; a reading
+            # of empty directories is known, and a row without its file is *Not applied*.
             #
             block_files = {f.name: f for f in db.list_files(connection, blocklist_form.KIND)}
             path_files = {f.name: f for f in db.list_files(connection, path_list_form.KIND)}
+            files_read_at = db.list_files_read_at(connection)
             blocklist_rows = blocklist_form.rows(
                 db.blocklists(connection),
                 db.blocklist_states(connection),
                 db.latest_blocklist_jobs(connection),
-                block_files or None,
+                block_files,
                 writes=config.management_writes,
+                read_at=files_read_at,
             )
             saved_lists = db.path_lists(connection)
             path_list_rows = (
@@ -228,8 +231,9 @@ def build_router(config: Config) -> APIRouter:
                     saved_lists,
                     path_list_form.usage(connection),
                     db.latest_path_list_jobs(connection),
-                    path_files or None,
+                    path_files,
                     writes=config.management_writes,
+                    read_at=files_read_at,
                 )
                 if saved_lists or path_files
                 else []

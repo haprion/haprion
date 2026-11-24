@@ -1735,12 +1735,12 @@ BLOCKED_ENTRY = re.compile(r"^0x[0-9a-f]+: key=(\S+) .*\bexp=(\d+)\b")
 #
 # The reason the entry was placed for (B424), the table's `gpt0`: 1 too many
 # requests, 2 too many errors, 3 too many new connections, 4 by hand or through
-# the API, 5 a deny rule in block mode (`generate.BLOCK_REASONS`). An entry the old configuration placed has
+# the API, 5 a deny rule in block mode, 6 the denied paths in block mode (`generate.BLOCK_REASONS`). An entry the old configuration placed has
 # no `gpt0` at all, and one with 0 or a number not listed says nothing: both
 # are reported with no reason.
 #
 BLOCKED_REASON = re.compile(r"\bgpt0=(\d+)\b")
-BLOCK_REASONS = {1: "requests", 2: "errors", 3: "connections", 4: "manual", 5: "rule"}
+BLOCK_REASONS = {1: "requests", 2: "errors", 3: "connections", 4: "manual", 5: "rule", 6: "paths"}
 MAX_BLOCKED_LISTED = 100
 MAX_BLOCKED_OBJECTS = 500
 

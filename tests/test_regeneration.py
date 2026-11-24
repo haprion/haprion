@@ -526,6 +526,7 @@ class TheHelper(unittest.TestCase):
             target_reader=lambda _publish, _node: target,
             addresses=addresses,
             rule_set=installed or (lambda: rules or rule_set(crs_version)),
+            path_list_directory=self.root / "path-lists",
         )
         return code, out.getvalue(), err.getvalue()
 

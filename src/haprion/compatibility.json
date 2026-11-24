@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "engine_api": 48,
-  "schemas_sha256": "85e1a3635870037d9d25ca107bcffd5e7696f11f813b253ee0ca215f0f85a5d2",
+  "schemas_sha256": "4970877e2c3bf2c8b2f931e6e8ff45309e4b0f80ef285a2f7bad694461d38d88",
   "requests_sha256": "b1def5127c3aecfdd37200fc7dd4c17c1f1e6fc187c1dca5161608f64b4fb1c6",
   "installed": {
     "engine_api": 47,

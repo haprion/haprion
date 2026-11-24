@@ -19,7 +19,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import cluster_settings, crs, exit_codes, regeneration
+from haprion import cluster_settings, crs, exit_codes, path_lists, regeneration
 from haprion.cert_inventory import certificate_state, coverage_for
 from haprion.certificates import blocklist_names
 from haprion.config import (
@@ -68,6 +68,7 @@ def main(
     target_reader: ReadTarget = read_target,
     addresses: regeneration.Lookup | None = None,
     rule_set: Callable[[], crs.RuleSet | None] = crs.installed,
+    path_list_directory: Path = path_lists.DIRECTORY,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = output_stream or sys.stdout
@@ -166,6 +167,7 @@ def main(
             rules="unreadable" if unreadable is not None else regeneration.rules_digest(rules),
             certificates=certificates(policy, cluster),
             blocklists=lists,
+            path_lists_digest=path_lists.digest(directory=path_list_directory),
         )
         if known is not None and known == key:
             result = regeneration.unchanged_result(commit, key)
@@ -189,6 +191,7 @@ def main(
                 rule_set=installed_rules,
                 certificate_sans=coverage(policy, cluster),
                 blocklists=lists,
+                path_list_reader=path_lists.store_reader(path_list_directory),
             )
     except (PublishError, GitError) as exc:
         return fail("regeneration_unavailable", str(exc), exc.exit_code)

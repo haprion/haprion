@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import PurePosixPath
 
-from haprion import cluster_settings, crs, geo, ipvs_config, keepalived_conf
+from haprion import cluster_settings, crs, geo, ipvs_config, keepalived_conf, path_lists
 from haprion.config import Cluster, ConfigError
 from haprion.generate import GENERATOR_LEVEL, countries_named, generate
 from haprion.keepalived_fragment import NAME as KEEPALIVED_NAME
@@ -124,6 +124,7 @@ def managed_files(
     node_addresses: Callable[[], Sequence[tuple[str, str]]] | None = None,
     held_ports: Mapping[tuple[str, int], Sequence[tuple[str, str | None]]] | None = None,
     blocklists: Collection[str] = (),
+    path_list_reader: path_lists.Reader | None = None,
 ) -> dict[str, bytes]:
     """Return the complete managed snapshot created by one network document.
 
@@ -134,6 +135,11 @@ def managed_files(
     `settings_document` replaces `managed/cluster.yaml` when given; otherwise
     the base's is carried over. Every publish generates from it, so a network
     or object change keeps the cluster's log targets and exporter.
+
+    `path_list_reader` gives the paths of the lists the objects name under
+    *Denied paths* (B532): today's for a publish, the version's own for a
+    revert. Without one the base's copy is read, so the layer is the version's.
+    What it gives is the copy the version carries, `managed/path-lists.yaml`.
     """
 
     network = load_document(
@@ -180,6 +186,13 @@ def managed_files(
     # when they name any: the reader opens the location database, and a
     # cluster without a country never needs it to exist (B228).
     #
+    lists_named = path_lists.named(proxies)
+    reader = path_list_reader or path_lists.tree_reader(base_files)
+    lists = dict(reader(lists_named)) if lists_named else {}
+    if lists:
+        result[path_lists.SNAPSHOT] = path_lists.dump_snapshot(lists)
+    else:
+        result.pop(path_lists.SNAPSHOT, None)
     named = countries_named(proxies)
     countries = country_reader(named) if named and country_reader is not None else None
     #
@@ -245,6 +258,7 @@ def managed_files(
         # may name, written as files the nodes pull.
         #
         blocklists=blocklists,
+        path_lists=lists,
         rule_definitions=crs.definitions(rules) if rules is not None else None,
     )
     result.update(

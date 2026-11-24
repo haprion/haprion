@@ -9,9 +9,12 @@ may open them. The job is the engine's `dynamic_unblock`.
 from __future__ import annotations
 
 import html
+import json
 import unittest
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
@@ -56,11 +59,44 @@ def held(count: int, *addresses: tuple[str, int]) -> dict[str, Any]:
     }
 
 
+def _walk(node: Any) -> Iterator[dict[str, Any]]:
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from _walk(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _walk(value)
+
+
 class EveryReasonIsSaid(unittest.TestCase):
     def test_each_reason_the_generator_stores_has_its_words(self) -> None:
         """A reason added to the generator alone would be shown as no reason at all (B517, 10)."""
 
         self.assertEqual(set(blocked.REASON_TEXT), set(BLOCK_REASONS.values()))
+
+    def test_each_schema_that_carries_a_reason_names_every_one(self) -> None:
+        """The node's status and the API's blocks both say the reason (26-11-24).
+
+        The API's list lacked `rule` from 1.3.0 until this test, so an answer
+        about a rule's block broke its own contract.
+        """
+
+        root = Path(__file__).resolve().parents[2]
+        documents = {
+            "status": root / "schemas/v1/haprion-status.schema.json",
+            "api": root / "ui/src/haprion_ui/api/schemas/object_blocks.schema.json",
+        }
+        wanted = {*BLOCK_REASONS.values(), None}
+        for name, path in documents.items():
+            found = [
+                node["enum"]
+                for node in _walk(json.loads(path.read_text(encoding="utf-8")))
+                if isinstance(node.get("enum"), list) and "manual" in node["enum"]
+            ]
+            with self.subTest(schema=name):
+                self.assertEqual(len(found), 1)
+                self.assertEqual(set(found[0]), wanted)
 
     def test_each_reason_fits_its_column_on_one_line(self) -> None:
         """The Reason column is 220 px at 13 px type (26-11-22): a longer text ran into Nodes.

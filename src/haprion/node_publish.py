@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from haprion import crs, exit_codes, geo, peers
+from haprion import crs, exit_codes, geo, path_lists, peers
 from haprion.candidate_validation import DEFAULT_RUN_ROOT, SandboxValidator, validate_in_sandbox
 from haprion.cli.managed_helper import Change, Refusal, Refuse, Words, _publish, network_of
 from haprion.config import Cluster, ConfigError
@@ -59,13 +59,15 @@ def generated(
     certificate_sans: Mapping[str, Sequence[str]] | None = None,
     held_ports: Mapping[tuple[str, int], Sequence[tuple[str, str | None]]] | None = None,
     blocklists: Collection[str] = (),
+    path_list_reader: path_lists.Reader | None = None,
 ) -> dict[str, bytes]:
     """The managed layer for `base_files` and the cluster's node list as it is now.
 
     The rule set and the countries' networks are today's unless the caller
     says otherwise; a revert passes the version's own (B366). A revert also
     passes what a publish is held to: the certificates' coverage and the
-    ports the nodes already hold (review 26-10-30, D6).
+    ports the nodes already hold (review 26-10-30, D6). Without a path list
+    reader the version's own lists are taken, as a revert takes them (B532).
     """
 
     return managed_files(
@@ -78,6 +80,7 @@ def generated(
         certificate_sans=certificate_sans,
         held_ports=held_ports,
         blocklists=blocklists,
+        path_list_reader=path_list_reader,
     )
 
 
@@ -143,7 +146,13 @@ def publish(
 
     def apply(base_files: Mapping[str, bytes]) -> Mapping[str, bytes]:
         try:
-            return generated(base_files, cluster, addresses=addresses, blocklists=blocklists)
+            return generated(
+                base_files,
+                cluster,
+                addresses=addresses,
+                blocklists=blocklists,
+                path_list_reader=path_lists.store_reader(),
+            )
         except ConfigError as exc:
             raise Refusal("changes_invalid", str(exc), exit_codes.REFUSED) from exc
 

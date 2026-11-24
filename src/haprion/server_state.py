@@ -513,9 +513,7 @@ def unblock(
     """
 
     request = " ".join((UNBLOCK_VERB, proxy.name, *wanted))
-    blocks = proxy.dynamic_block is not None or any(
-        rule.mode == "block" for rule in proxy.deny_rules
-    )
+    blocks = proxy.dynamic_block is not None or proxy.blocks_on_match
 
     def one(node: Node) -> Unblocked:
         try:

@@ -1062,6 +1062,12 @@ def regeneration_cause(cause: Mapping[str, Any]) -> str | None:
         )
     if kind == "addresses":
         return "the nodes' addresses are not the published ones"
+    if kind == "path_lists":
+        lists = [str(name) for name in cause.get("lists") or () if isinstance(name, str)]
+        if not lists:
+            return None
+        plural = "s" if len(lists) > 1 else ""
+        return f"the path list{plural} {', '.join(lists)} changed under Settings"
     return None
 
 

@@ -36,6 +36,7 @@ REASON_TEXT = {
     "connections": "Too many new connections",
     "manual": "Blocked through the API",
     "rule": "Deny rule",
+    "paths": "Denied path",
 }
 
 

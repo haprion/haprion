@@ -150,7 +150,7 @@ BLOCK_RULE = "dynamic-block:deny"
 # the part before the colon keep reading as they did. 0 is an entry the old
 # configuration placed, which says nothing and is logged as `BLOCK_RULE`.
 #
-BLOCK_REASONS = {1: "requests", 2: "errors", 3: "connections", 4: "manual", 5: "rule"}
+BLOCK_REASONS = {1: "requests", 2: "errors", 3: "connections", 4: "manual", 5: "rule", 6: "paths"}
 BLOCK_REASON_BY_NAME = {name: code for code, name in BLOCK_REASONS.items()}
 
 FRONTEND_FILE = "1000-frontends.cfg"
@@ -527,6 +527,7 @@ def generate(
     held_ports: Mapping[tuple[str, int], Sequence[tuple[str, str | None]]] | None = None,
     rule_definitions: Mapping[int, crs.Definition] | None = None,
     blocklists: Collection[str] = (),
+    path_lists: Mapping[str, Sequence[str]] | None = None,
 ) -> GeneratedLayer:
     """Every file the generated layer consists of.
 
@@ -605,6 +606,7 @@ def generate(
             )
         known_networks[name] = BlocklistGroup()
     _refuse_unknown_networks(ordered, known_networks)
+    ordered = _with_path_lists(ordered, path_lists or {})
 
     known_sources = dict(sources or {})
     everything = [(vip_of(proxy, vips, default_vip), proxy) for proxy in ordered]
@@ -1522,6 +1524,38 @@ class BlocklistGroup(tuple[str, ...]):
 
 
 BLOCKLISTS_DIRECTORY = "/etc/haproxy/blocklists"
+
+
+def _with_path_lists(
+    proxies: Sequence[Proxy], path_lists: Mapping[str, Sequence[str]]
+) -> list[Proxy]:
+    """Each object's *Denied paths* as the paths they are: its own, then each list's (B527).
+
+    A list the object names and the caller does not know is refused, as a
+    group is: denied paths that silently named nothing would refuse nothing.
+    What follows reads paths alone.
+    """
+
+    resolved: list[Proxy] = []
+    for proxy in proxies:
+        denied = proxy.deny_paths
+        if denied is None or not denied.lists:
+            resolved.append(proxy)
+            continue
+        missing = [name for name in denied.lists if name not in path_lists]
+        if missing:
+            raise GeneratorError(
+                f"{proxy.name} names the path list {missing[0]}, which does not exist; "
+                "add it under Settings → Path lists"
+            )
+        paths = [*denied.paths, *(path for name in denied.lists for path in path_lists[name])]
+        resolved.append(
+            dataclasses.replace(
+                proxy,
+                deny_paths=dataclasses.replace(denied, lists=(), paths=tuple(dict.fromkeys(paths))),
+            )
+        )
+    return resolved
 
 
 def _refuse_unknown_networks(
@@ -2937,6 +2971,8 @@ def _rule_block(
     trusted: bool,
     exempt_source: str,
     exempt_forwarded: str,
+    *,
+    reason: str = "rule",
 ) -> list[str]:
     """A `block` rule's match, placed in the object's table for the rule's time (B517, 10; B525).
 
@@ -2963,7 +2999,7 @@ def _rule_block(
         tracked = [f"{mark} src table {blocked} if {condition}{exempt_source}"]
     return [
         *tracked,
-        f"    http-request sc-set-gpt(0,{BLOCK_MARK_COUNTER}) {BLOCK_REASON_BY_NAME['rule']} "
+        f"    http-request sc-set-gpt(0,{BLOCK_MARK_COUNTER}) {BLOCK_REASON_BY_NAME[reason]} "
         f"if {condition}",
     ]
 
@@ -3049,7 +3085,8 @@ def _access_path_rules(proxy: Proxy, host: str) -> list[str]:
     limited = any(
         not (limit.path == "/" and limit.path_match == "prefix") for limit in proxy.path_limits
     )
-    if not rules and not limited:
+    denied = proxy.deny_paths
+    if not rules and not limited and denied is None:
         return []
     dots = _acl_name(proxy.name, "path-dots")
     controls = _acl_name(proxy.name, "path-chars")
@@ -3060,7 +3097,11 @@ def _access_path_rules(proxy: Proxy, host: str) -> list[str]:
     ]
     for acl, name in ((dots, "path-dots"), (controls, "path-chars")):
         condition = f"{host} {acl}"
-        if limited or any(rule.mode in ("deny", "block") for rule in rules):
+        if (
+            limited
+            or any(rule.mode in ("deny", "block") for rule in rules)
+            or (denied is not None and denied.mode in ("deny", "block"))
+        ):
             lines += [
                 f"    http-request set-var(txn.rule) str({name}:deny) if {condition}",
                 f"    http-request deny deny_status 400 if {condition}",
@@ -3086,11 +3127,32 @@ def _access_rules(
         lines.extend(_address_acl(acl, fetch, proxy.deny_from.sources, networks))
         lines.extend(_verdict(f"{host} {acl}", "deny-from", proxy.deny_from.mode))
     lines.extend(_access_path_rules(proxy, host))
-    blocking = any(rule.mode == "block" for rule in proxy.deny_rules)
     exempt_source = exempt_forwarded = ""
-    if blocking:
+    if proxy.blocks_on_match:
         exempt, exempt_source, exempt_forwarded = _block_exempt(proxy, networks, forwarded=trusted)
         lines.extend(exempt)
+    denied = proxy.deny_paths
+    if denied is not None:
+        acl = _acl_name(proxy.name, "deny-paths")
+        for path in denied.paths:
+            lines += [
+                f"    acl {acl} {ACCESS_PATH} -m str {path.lower()}",
+                f"    acl {acl} {ACCESS_PATH} -m beg {path.lower()}/",
+            ]
+        matched = f"{host} {acl}"
+        if denied.mode == "block" and denied.block_for is not None:
+            lines.extend(
+                _rule_block(
+                    proxy,
+                    denied.block_for,
+                    matched,
+                    trusted,
+                    exempt_source,
+                    exempt_forwarded,
+                    reason="paths",
+                )
+            )
+        lines.extend(_verdict(matched, "deny-paths", denied.mode))
     for index, rule in enumerate(proxy.deny_rules):
         prefix = f"rule{index}"
         condition = [host]
@@ -3885,6 +3947,8 @@ def rule_block_times(proxy: Proxy) -> tuple[str, ...]:
     minutes = {
         block_minutes(rule.block_for) for rule in proxy.deny_rules if rule.block_for is not None
     }
+    if proxy.deny_paths is not None and proxy.deny_paths.block_for is not None:
+        minutes.add(block_minutes(proxy.deny_paths.block_for))
     return tuple(f"{value}m" for value in sorted(minutes))
 
 
@@ -4034,6 +4098,11 @@ def _block_rule_lines() -> list[str]:
             f"    http-request set-var(txn.rule) str(dynamic-block/{reason}:deny) "
             f"if {{ var(txn.dynblock) -m int {code} }}"
             for code, reason in BLOCK_REASONS.items()
+            #
+            # The denied paths place theirs in a rule's table only, never in
+            # the dynamic block's (B527), so no object's text changed for them.
+            #
+            if reason != "paths"
         ),
     ]
 
@@ -4180,9 +4249,22 @@ def _rule_block_lookups(
                 f"if{exempt_source} {{ src,in_table({table}) }}"
             )
     rule = f"dynamic-block/{BLOCK_REASONS[BLOCK_REASON_BY_NAME['rule']]}:deny"
+    #
+    # A block the denied paths placed says so on the records after it (B527);
+    # only where they block, so no other object's text changes.
+    #
+    paths = (
+        [
+            f"    http-request set-var(txn.rule) str(dynamic-block/paths:deny) "
+            f"if {{ var(txn.ruleblock) -m int {BLOCK_REASON_BY_NAME['paths']} }}"
+        ]
+        if proxy.deny_paths is not None and proxy.deny_paths.mode == "block"
+        else []
+    )
     return [
         *lines,
         f"    http-request set-var(txn.rule) str({rule}) if {{ var(txn.ruleblock) -m found }}",
+        *paths,
         f"    http-request deny deny_status {RULE_BLOCK_STATUS} "
         f"if {{ var(txn.ruleblock) -m found }}",
     ]

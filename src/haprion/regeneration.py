@@ -54,6 +54,7 @@ from haprion import (
     crs,
     geo,
     objects,
+    path_lists,
     peers,
     release_checks,
 )
@@ -149,6 +150,7 @@ def fingerprint(
     rules: str | None = None,
     certificates: str | None = None,
     blocklists: Sequence[str] = (),
+    path_lists_digest: str | None = None,
 ) -> str:
     """What the result depends on, as one digest: the cache key.
 
@@ -168,6 +170,7 @@ def fingerprint(
         "rules": rules,
         "certificates": certificates,
         "blocklists": sorted(blocklists),
+        "path_lists": path_lists_digest,
     }
     return hashlib.sha256(json.dumps(document, sort_keys=True, default=str).encode()).hexdigest()
 
@@ -390,6 +393,7 @@ def regenerate(
     location_database: geo.CountryReader | None = None,
     certificate_sans: Mapping[str, Sequence[str]] | None = None,
     blocklists: Sequence[str] = (),
+    path_list_reader: path_lists.Reader | None = None,
 ) -> dict[str, Any]:
     """The result for one published tree: would a publish of it change the nodes' files?
 
@@ -449,6 +453,7 @@ def regenerate(
             node_addresses=nodes,
             certificate_sans=sans,
             blocklists=blocklists,
+            path_list_reader=path_list_reader,
         )
         tree = {
             path: content for path, content in files.items() if not path.startswith(MANAGED_PREFIX)
@@ -496,6 +501,14 @@ def regenerate(
         installed_crs,
         _steered_by_addresses(candidate_tree, published, candidate, addresses),
     )
+    #
+    # A path list changed under Settings since the version was published: a
+    # reason to publish, as the paths are configuration the operator wrote
+    # and the version carries a copy of (B532).
+    #
+    lists = path_lists.changed(files, tree)
+    if lists:
+        causes.append({"kind": "path_lists", "lists": lists[:MAX_CAUSE_FILES]})
     result.update(
         outcome=CHANGED_OUTCOME,
         causes=causes,

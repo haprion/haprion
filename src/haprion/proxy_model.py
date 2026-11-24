@@ -652,6 +652,7 @@ HTTP_ONLY_KEYS: Mapping[str, str] = MappingProxyType(
         "unavailable": "there is no way to answer a raw connection with a message",
         "headers": "a raw connection carries no headers",
         "deny_rules": "a raw connection carries no path, method or headers to refuse on",
+        "deny_paths": "a raw connection carries no path to refuse on",
         "path_limits": "a raw connection carries no path to count",
         "max_request_body": "a raw connection has no request body",
         "waf": "the WAF engine inspects HTTP requests, and a raw connection is not one",
@@ -1156,6 +1157,24 @@ class HeaderCondition:
 
 
 @dataclass(frozen=True, slots=True)
+class DenyPaths:
+    """Paths the whole object refuses, from Settings' path lists and its own (B527).
+
+    Matched as a rule's prefix path is (`ACCESS_PATH`): the path itself and
+    everything under it. `log`, `deny` and `block` as a rule's; a block lasts
+    `block_for` and goes through the rule's tables (B525), so `never_blocked`
+    spares an address from it. The lists are names; their paths are the ones
+    the version carries (`managed/path-lists.yaml`, B532).
+    """
+
+    mode: str
+    lists: tuple[str, ...] = ()
+    paths: tuple[str, ...] = ()
+    block_for: str | None = None
+    """How long a match blocks its source in `block` mode; None in the others."""
+
+
+@dataclass(frozen=True, slots=True)
 class AccessRule:
     """A refusal on what a request asks for (Fas 21, B216 point 3, B227).
 
@@ -1378,11 +1397,21 @@ class Proxy:
     deny_rules: tuple[AccessRule, ...] = ()
     """Refusals on path, method, header and source, in order (Fas 21)."""
 
+    deny_paths: DenyPaths | None = None
+    """Paths refused on the whole object, from path lists and its own (B527). None means none."""
+
     waf: Waf | None = None
     """The WAF engine's settings. None, or `mode: off`, means the engine does not see this object."""
 
     description: str = ""
     """What the object is for, for whoever opens it next. Nothing generated reads it."""
+
+    @property
+    def blocks_on_match(self) -> bool:
+        """Whether a match of a deny rule or the denied paths blocks the address (B525, B527)."""
+        return any(rule.mode == "block" for rule in self.deny_rules) or (
+            self.deny_paths is not None and self.deny_paths.mode == "block"
+        )
 
     @property
     def inspected(self) -> Waf | None:
@@ -2215,6 +2244,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
     never_blocked = _never_blocked(data, name)
     deny_rules = _deny_rules(data.get("deny_rules"), f"{name}.deny_rules")
     deny_rules = _rules_with_block_time(deny_rules, dynamic_block)
+    deny_paths = _deny_paths(data.get("deny_paths"), f"{name}.deny_paths")
     path_limits = _path_limits(data.get("path_limits"), f"{name}.path_limits")
     max_request_body = _body_size(data.get("max_request_body"), f"{name}.max_request_body")
     waf = _waf(data.get("waf"), f"{name}.waf")
@@ -2251,6 +2281,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         advanced=advanced,
         deny_from=deny_from,
         deny_rules=deny_rules,
+        deny_paths=deny_paths,
         max_request_body=max_request_body,
         waf=waf,
         description=description,
@@ -2869,9 +2900,11 @@ def _names_block_rule(data: Mapping[str, Any]) -> bool:
     """Whether a document's deny rules name one in `block` mode, read without the model."""
 
     rules = data.get("deny_rules")
-    return isinstance(rules, list) and any(
-        isinstance(rule, Mapping) and rule.get("mode") == "block" for rule in rules
-    )
+    paths = data.get("deny_paths")
+    return (
+        isinstance(rules, list)
+        and any(isinstance(rule, Mapping) and rule.get("mode") == "block" for rule in rules)
+    ) or (isinstance(paths, Mapping) and paths.get("mode") == "block")
 
 
 def _dynamic_block(value: Any, location: str, protocol: str) -> DynamicBlock | None:
@@ -3012,6 +3045,7 @@ HTTP_METHODS = ("CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", 
 #
 RESERVED_RULE_NAMES = (
     "deny-from",
+    "deny-paths",
     "body-limit",
     "body-unbounded",
     "crs",
@@ -3146,6 +3180,83 @@ def _path_limit(value: Any, location: str) -> PathLimit:
     if not isinstance(window, str) or not ABUSE_WINDOW.fullmatch(window):
         raise ModelError(f"{location}.window must be a duration such as 10s or 1m")
     return PathLimit(path=path, path_match=str(match), max_requests=limit, window=window)
+
+
+#
+# A path list's name, as Settings and the object both write it (B527): the
+# blocklists' rule, so the two kinds of list read alike.
+#
+PATH_LIST_NAME = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
+#
+# The object's own paths and its lists, each at most this many: enough for the
+# lists scanners are known by, few enough that the frontend stays readable.
+#
+MAX_DENIED_PATHS = 500
+MAX_PATH_LISTS = 20
+MAX_DENIED_PATH = 256
+
+
+def access_path(path: Any, location: str) -> str:
+    """A path as the access rules read it (`_access_path`), for the path lists' own reader."""
+
+    return _access_path(path, location)
+
+
+def denied_path(path: Any, location: str) -> str:
+    """One path a list or `deny_paths` refuses: an access path other than every path."""
+
+    if isinstance(path, str) and len(path) > MAX_DENIED_PATH:
+        raise ModelError(f"{location} is longer than {MAX_DENIED_PATH} characters")
+    checked = _access_path(path, location)
+    if checked == "/":
+        raise ModelError(f"{location} is /, which would refuse every path the object serves")
+    return checked
+
+
+def denied_paths(value: Any, location: str) -> tuple[str, ...]:
+    """A list of paths as `deny_paths` and a path list hold them: checked, each once, in order."""
+
+    if not isinstance(value, list):
+        raise ModelError(f"{location} must be a list of paths")
+    if len(value) > MAX_DENIED_PATHS:
+        raise ModelError(f"{location} may hold at most {MAX_DENIED_PATHS} paths")
+    checked = [denied_path(item, f"{location}[{index}]") for index, item in enumerate(value)]
+    return tuple(dict.fromkeys(checked))
+
+
+def _deny_paths(value: Any, location: str) -> DenyPaths | None:
+    if value is None:
+        return None
+    data = _mapping(value, location)
+    _only_keys(data, {"mode", "lists", "paths", "block_for"}, location)
+    mode = _mode(data, location, ACCESS_MODES)
+    lists_raw = data.get("lists", [])
+    if not isinstance(lists_raw, list) or not all(isinstance(item, str) for item in lists_raw):
+        raise ModelError(f"{location}.lists must be a list of path list names")
+    if len(lists_raw) > MAX_PATH_LISTS:
+        raise ModelError(f"{location}.lists may name at most {MAX_PATH_LISTS} lists")
+    for item in lists_raw:
+        if not PATH_LIST_NAME.fullmatch(item):
+            raise ModelError(
+                f"{location}.lists contains {item!r}; a path list's name starts with a letter "
+                f"and holds lowercase letters, digits and -, at most 40"
+            )
+    if len(set(lists_raw)) != len(lists_raw):
+        raise ModelError(f"{location}.lists names the same list twice")
+    paths = denied_paths(data.get("paths", []), f"{location}.paths")
+    if not lists_raw and not paths:
+        raise ModelError(f"{location} must name at least one path list or path")
+    block_for = None
+    if "block_for" in data:
+        if mode != "block":
+            raise ModelError(
+                f"{location}.block_for says how long a match blocks its source, and the paths "
+                f"are in {mode} mode"
+            )
+        block_for = _block_for(data["block_for"], f"{location}.block_for")
+    elif mode == "block":
+        block_for = DEFAULT_RULE_BLOCK_FOR
+    return DenyPaths(mode=mode, lists=tuple(lists_raw), paths=paths, block_for=block_for)
 
 
 def _deny_rules(value: Any, location: str) -> tuple[AccessRule, ...]:

@@ -29,6 +29,7 @@ from haprion import (
     exit_codes,
     geo,
     held_ports,
+    path_lists,
     peers,
     server_names,
 )
@@ -525,6 +526,7 @@ def _read(
                     node_addresses=lambda: peers.addresses(cluster),
                     held_ports=held.held,
                     blocklists=blocklist_names(policy.certificate_directory(cluster.cluster_id)),
+                    path_list_reader=path_lists.store_reader(),
                 )
             except ConfigError as exc:
                 said = str(exc)

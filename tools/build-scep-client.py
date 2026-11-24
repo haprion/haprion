@@ -49,6 +49,58 @@ ECOSYSTEMS = {"debian": "Debian", "ubuntu": "Ubuntu"}
 # before an empty answer for Certmonger is believed.
 #
 CONTROL_PACKAGE = "openssl"
+#
+# An advisory judged not to reach the client as Haprion runs it, with the
+# reason and the date (26-11-24, CVE-2026-133622: no distribution had a fixed
+# version). An entry holds for one advisory, ecosystem and version only, and
+# stops holding - the build is refused - once the advisory names a fixed
+# version, so the pin moves, or once the lookup no longer returns it.
+#
+ACCEPTED_PATH = Path(__file__).resolve().parent / "scep-advisories-accepted.json"
+ACCEPTED_FIELDS = frozenset({"advisory", "ecosystem", "version", "decided", "reason"})
+DECIDED = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+
+def accepted_advisories(path: Path = ACCEPTED_PATH) -> list[dict[str, str]]:
+    """The recorded acceptances; an unreadable or malformed file refuses the build."""
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise ValueError(f"{path.name} is unreadable: {exc}") from None
+    entries = document.get("accepted") if isinstance(document, dict) else None
+    if not isinstance(entries, list) or set(document) != {"accepted"}:
+        raise ValueError(f"{path.name} must hold one list, accepted")
+    seen = set()
+    for entry in entries:
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != ACCEPTED_FIELDS
+            or not all(isinstance(value, str) and value.strip() for value in entry.values())
+            or DECIDED.fullmatch(entry["decided"]) is None
+        ):
+            raise ValueError(
+                f"{path.name}: each entry is advisory, ecosystem, version, decided "
+                "(YYYY-MM-DD) and reason, all non-empty"
+            )
+        key = (entry["advisory"], entry["ecosystem"], entry["version"])
+        if key in seen:
+            raise ValueError(f"{path.name}: {key[0]} for {key[1]} {key[2]} is recorded twice")
+        seen.add(key)
+    return entries
+
+
+def fixed_versions(record: dict[str, Any], ecosystem: str) -> list[str]:
+    """The versions an advisory says are fixed in the ecosystem asked."""
+    fixed: list[str] = []
+    for affected in record.get("affected") or []:
+        name = str((affected.get("package") or {}).get("ecosystem"))
+        if name != ecosystem and not name.startswith(ecosystem + ":"):
+            continue
+        for span in affected.get("ranges") or []:
+            fixed.extend(
+                str(event["fixed"]) for event in span.get("events") or [] if "fixed" in event
+            )
+    return sorted(set(fixed))
 
 
 def osv_query(body: dict[str, Any]) -> dict[str, Any]:
@@ -70,8 +122,13 @@ def advisories(
     distribution: str,
     distribution_release: str,
     query: Callable[[dict[str, Any]], dict[str, Any]],
+    accepted: list[dict[str, str]] | None = None,
 ) -> str:
-    """Refuse a Certmonger version with a known advisory; name the ecosystem asked."""
+    """Refuse a Certmonger version with a known advisory; name the ecosystem asked.
+
+    An advisory recorded in `scep-advisories-accepted.json` for this ecosystem
+    and version passes and is named in the answer, every time.
+    """
     if distribution not in ECOSYSTEMS:
         raise ValueError(f"no vulnerability database is known for {distribution}")
     ecosystem = f"{ECOSYSTEMS[distribution]}:{distribution_release}"
@@ -84,10 +141,40 @@ def advisories(
     if not any(name == ecosystem or name.startswith(ecosystem + ":") for name in known):
         raise ValueError(f"the vulnerability database holds nothing for {ecosystem}")
     found = query({"package": {"name": "certmonger", "ecosystem": ecosystem}, "version": version})
-    records = sorted(str(record.get("id")) for record in found.get("vulns", []))
-    if records or found.get("next_page_token"):
-        raise ValueError(
-            f"certmonger {version} has known advisories in {ecosystem}: {', '.join(records)}"
+    if found.get("next_page_token"):
+        raise ValueError(f"certmonger {version} has more advisories in {ecosystem} than one page")
+    if accepted is None:
+        accepted = accepted_advisories()
+    held = {
+        entry["advisory"]: entry
+        for entry in accepted
+        if entry["ecosystem"] == ecosystem and entry["version"] == version
+    }
+    records = {str(record.get("id")): record for record in found.get("vulns", [])}
+    problems = []
+    unaccepted = sorted(name for name in records if name not in held)
+    if unaccepted:
+        problems.append(
+            f"certmonger {version} has known advisories in {ecosystem}: {', '.join(unaccepted)}"
+        )
+    for name in sorted(held):
+        if name not in records:
+            problems.append(
+                f"{name} is recorded as accepted for certmonger {version} in {ecosystem}, but the "
+                f"lookup no longer returns it; remove the entry from {ACCEPTED_PATH.name}"
+            )
+        elif fixed := fixed_versions(records[name], ecosystem):
+            problems.append(
+                f"{name} is fixed in {', '.join(fixed)} in {ecosystem}; move the certmonger pin "
+                f"and remove the entry from {ACCEPTED_PATH.name}"
+            )
+    if problems:
+        raise ValueError("; ".join(problems))
+    if held:
+        named = ", ".join(f"{name} (decided {held[name]['decided']})" for name in sorted(held))
+        return (
+            f"{ecosystem}: no advisories for certmonger {version} beyond "
+            f"{len(held)} recorded acceptance(s): {named}"
         )
     return f"{ecosystem}: no known advisories for certmonger {version}"
 

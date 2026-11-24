@@ -1,0 +1,11 @@
+{
+  "accepted": [
+    {
+      "advisory": "DEBIAN-CVE-2026-133622",
+      "ecosystem": "Debian:13",
+      "version": "0.79.20-2",
+      "decided": "2026-11-24",
+      "reason": "CVE-2026-133622 (CVSS 3.1 3.7, availability only): certmonger sets no size limit or transfer timeout on SCEP replies, so a malicious CA or an attacker on an unencrypted path can exhaust memory or hang a request. No distribution has a fixed version. Haprion takes only https endpoints (check_endpoint in src/haprion/ndes_profiles.py) on servers confirmed in the runtime policy, so the path is encrypted to a CA the operator chose. Each enrollment starts its own certmonger, which is killed when the enrollment returns, at the latest after its 90-second deadline (ENROLL_TIMEOUT in src/haprion/ndes.py). The helper runs under sudo from the worker without pam_systemd, so it stays in the worker's cgroup and its MemoryMax=768M. The worst case is one failed enrollment and a restarted worker."
+    }
+  ]
+}

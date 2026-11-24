@@ -29,8 +29,14 @@ def tool(name: str) -> Any:
 class FakeOsv:
     """OSV as the build asks it: the control package, then Certmonger."""
 
-    def __init__(self, *, known: str = "Ubuntu:26.04:LTS", found: list[str] | None = None) -> None:
-        self.known, self.found = known, found or []
+    def __init__(
+        self,
+        *,
+        known: str = "Ubuntu:26.04:LTS",
+        found: list[str] | None = None,
+        fixed: str | None = None,
+    ) -> None:
+        self.known, self.found, self.fixed = known, found or [], fixed
         self.asked: list[dict[str, Any]] = []
 
     def __call__(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -42,15 +48,95 @@ class FakeOsv:
             return {
                 "vulns": [{"id": "EXAMPLE-1", "affected": [{"package": {"ecosystem": self.known}}]}]
             }
-        return {"vulns": [{"id": record} for record in self.found]}
+        events: list[dict[str, str]] = [{"introduced": "0"}]
+        if self.fixed:
+            events.append({"fixed": self.fixed})
+        affected = [{"package": {"ecosystem": self.known}, "ranges": [{"events": events}]}]
+        return {"vulns": [{"id": record, "affected": affected} for record in self.found]}
+
+
+def acceptance(
+    advisory: str = "UBUNTU-CVE-2099-0001",
+    ecosystem: str = "Ubuntu:26.04",
+    version: str = "0.79.21-1",
+) -> dict[str, str]:
+    return {
+        "advisory": advisory,
+        "ecosystem": ecosystem,
+        "version": version,
+        "decided": "2099-01-01",
+        "reason": "example",
+    }
 
 
 class Advisories(unittest.TestCase):
     def setUp(self) -> None:
         self.builder = tool("build-scep-client")
 
-    def check(self, osv: FakeOsv, distribution: str = "ubuntu", release: str = "26.04") -> str:
-        return str(self.builder.advisories("0.79.21-1", distribution, release, osv))
+    def check(
+        self,
+        osv: FakeOsv,
+        distribution: str = "ubuntu",
+        release: str = "26.04",
+        accepted: list[dict[str, str]] | None = None,
+    ) -> str:
+        return str(self.builder.advisories("0.79.21-1", distribution, release, osv, accepted or []))
+
+    def test_a_recorded_acceptance_passes_and_is_named_every_time(self) -> None:
+        answer = self.check(FakeOsv(found=["UBUNTU-CVE-2099-0001"]), accepted=[acceptance()])
+        self.assertIn("beyond 1 recorded acceptance(s)", answer)
+        self.assertIn("UBUNTU-CVE-2099-0001 (decided 2099-01-01)", answer)
+
+    def test_an_acceptance_holds_for_its_own_ecosystem_and_version_only(self) -> None:
+        for other in (acceptance(ecosystem="Debian:13"), acceptance(version="0.79.20-2")):
+            with self.assertRaisesRegex(ValueError, "known advisories.*UBUNTU-CVE-2099-0001"):
+                self.check(FakeOsv(found=["UBUNTU-CVE-2099-0001"]), accepted=[other])
+
+    def test_an_advisory_beside_an_accepted_one_still_refuses(self) -> None:
+        osv = FakeOsv(found=["UBUNTU-CVE-2099-0001", "UBUNTU-CVE-2099-0002"])
+        with self.assertRaisesRegex(
+            ValueError, r"advisories in Ubuntu:26\.04: UBUNTU-CVE-2099-0002$"
+        ):
+            self.check(osv, accepted=[acceptance()])
+
+    def test_an_acceptance_the_lookup_no_longer_returns_refuses_until_removed(self) -> None:
+        with self.assertRaisesRegex(ValueError, "no longer returns it; remove the entry"):
+            self.check(FakeOsv(), accepted=[acceptance()])
+
+    def test_an_accepted_advisory_with_a_fixed_version_refuses_so_the_pin_moves(self) -> None:
+        osv = FakeOsv(found=["UBUNTU-CVE-2099-0001"], fixed="0.79.21-2")
+        with self.assertRaisesRegex(ValueError, "fixed in 0.79.21-2 .*move the certmonger pin"):
+            self.check(osv, accepted=[acceptance()])
+
+    def test_a_malformed_acceptance_file_refuses_the_build(self) -> None:
+        entry = acceptance()
+        cases: list[Any] = [
+            [],
+            {"accepted": [entry], "extra": []},
+            {"accepted": [{**entry, "decided": "26-11-24"}]},
+            {"accepted": [{**entry, "reason": " "}]},
+            {"accepted": [{**entry, "fixed": "x"}]},
+            {"accepted": [entry, entry]},
+        ]
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "accepted.json"
+            path.write_text("{", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unreadable"):
+                self.builder.accepted_advisories(path)
+            for document in cases:
+                path.write_text(json.dumps(document), encoding="utf-8")
+                with self.subTest(document=document), self.assertRaises(ValueError):
+                    self.builder.accepted_advisories(path)
+
+    def test_every_recorded_acceptance_is_for_a_pinned_certmonger(self) -> None:
+        # An entry no pin asks about would never be checked, so never go stale.
+        pins = {
+            (f"{self.builder.ECOSYSTEMS[pin.distribution]}:{pin.release}", pin.version)
+            for pin in tool("build-scep-package").PINS.values()
+        }
+        for entry in self.builder.accepted_advisories():
+            with self.subTest(advisory=entry["advisory"]):
+                self.assertIn((entry["ecosystem"], entry["version"]), pins)
 
     def test_a_version_without_advisories_passes_after_the_release_is_proven_known(self) -> None:
         osv = FakeOsv()

@@ -957,14 +957,24 @@ class TheScepClientsPins(unittest.TestCase):
     """B383: the pinned certmonger against OSV each night, as the package's build asks."""
 
     def osv(self, affected: str) -> Any:
+        # What the tree records as accepted is returned too, so the clean case
+        # stays clean whatever the file holds.
+        recorded = json.loads((BASE / "tools/scep-advisories-accepted.json").read_text())
+
         def query(body: dict[str, Any]) -> dict[str, Any]:
             package = body["package"]
             if package["name"] == "openssl":
                 ecosystem = package["ecosystem"]
                 return {"vulns": [{"affected": [{"package": {"ecosystem": ecosystem}}]}]}
+            records = [
+                {"id": entry["advisory"]}
+                for entry in recorded["accepted"]
+                if entry["ecosystem"] == package["ecosystem"]
+                and entry["version"] == body["version"]
+            ]
             if package["ecosystem"] == affected:
-                return {"vulns": [{"id": "EXAMPLE-2026-1"}]}
-            return {}
+                records.append({"id": "EXAMPLE-2026-1"})
+            return {"vulns": records}
 
         return query
 

@@ -99,19 +99,32 @@ def checked_paths(value: object, location: str = "paths") -> tuple[str, ...]:
     return paths
 
 
+def checked_description(value: object) -> str:
+    """A description as it is kept: one line, stripped, and then held to its length.
+
+    Stripped before the length is read, so the form and a file are held to one
+    rule (review 26-11-24, PW03).
+    """
+
+    if not isinstance(value, str):
+        raise PathListError(f"a description is text of at most {DESCRIPTION_MAX} characters")
+    if any(ord(c) < 32 or ord(c) == 127 for c in value):
+        raise PathListError("a description is one line without control characters")
+    text = value.strip()
+    if len(text) > DESCRIPTION_MAX:
+        raise PathListError(f"a description is text of at most {DESCRIPTION_MAX} characters")
+    return text
+
+
 def path_list(
     name: object, paths: object, description: object = "", revision: object = 1
 ) -> PathList:
     """One list from untrusted values, or why it cannot be one."""
 
-    if not isinstance(description, str) or len(description) > DESCRIPTION_MAX:
-        raise PathListError(f"a description is text of at most {DESCRIPTION_MAX} characters")
-    if any(ord(c) < 32 or ord(c) == 127 for c in description):
-        raise PathListError("a description is one line without control characters")
     return PathList(
         name=checked_name(name),
         paths=checked_paths(paths),
-        description=description.strip(),
+        description=checked_description(description),
         revision=check_revision(revision),
     )
 
@@ -416,6 +429,7 @@ __all__ = [
     "build_request",
     "changed",
     "check_revision",
+    "checked_description",
     "checked_name",
     "checked_paths",
     "digest",

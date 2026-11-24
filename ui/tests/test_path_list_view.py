@@ -19,6 +19,7 @@ from unittest import mock
 from uuid import UUID, uuid4
 
 import yaml
+from haprion import path_lists
 
 from haprion_ui import auth, db, path_list_apply, path_list_form
 from tests.test_login import LoginTestCase, configuration
@@ -241,6 +242,42 @@ class SavingAPathList(PathListRouteTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("line 2 is /", response.text)
         self.assertIn("/.env", response.text)
+        self.assertEqual((self.saved, self.queued), ([], []))
+
+    def test_a_description_with_a_control_character_is_refused_in_the_form(self) -> None:
+        """Review 26-11-24, PW03: the job would have refused it after the revision was saved."""
+
+        response = self.post(self.admin(), description="a\tb")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Description —", response.text)
+        self.assertEqual((self.saved, self.queued), ([], []))
+
+    def test_the_form_and_the_file_hold_a_description_to_one_rule(self) -> None:
+        for description in ("a\tb", "x" * 201, 5):
+            with self.subTest(description=description):
+                with self.assertRaises(path_list_form.FormProblem):
+                    path_list_form.checked(
+                        path_list_form.Form(name="scanners", description=description, paths="/x")  # type: ignore[arg-type]
+                    )
+                with self.assertRaises(path_lists.PathListError):
+                    path_lists.path_list("scanners", ["/x"], description)
+        padded = "x" * 200 + "   "
+        self.assertEqual(path_lists.path_list("scanners", ["/x"], padded).description, "x" * 200)
+        self.assertEqual(
+            path_list_form.checked(
+                path_list_form.Form(name="scanners", description=padded, paths="/x")
+            ).description,
+            "x" * 200,
+        )
+
+    def test_text_over_the_paths_limit_is_refused_not_cut(self) -> None:
+        """Review 26-11-24, PW09: 500 paths of 256 characters, indented, are more than fits."""
+
+        long_paths = "".join(f"    /{'a' * 254}\n" for _ in range(500))
+        self.assertGreater(len(long_paths), path_list_form.PATHS_MAX)
+        response = self.post(self.admin(), paths=long_paths)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Paths — at most 500 paths of 256 characters", response.text)
         self.assertEqual((self.saved, self.queued), ([], []))
 
 

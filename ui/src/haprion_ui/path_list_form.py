@@ -74,19 +74,33 @@ def from_posted(text: Mapping[str, str], existing: db.PathList | None) -> Form:
     return Form(
         name=existing.name if existing else text.get("name", "").strip()[:64],
         description=text.get("description", "").strip()[:400],
-        paths=text.get("paths", "")[:PATHS_MAX],
+        paths=text.get("paths", ""),
     )
 
 
 def checked(form: Form) -> path_lists.PathList:
-    """The list the engine would read, or the field and what is wrong with it."""
+    """The list the engine would read, or the field and what is wrong with it.
+
+    Built by `path_lists.path_list`, as the apply job builds it, so a list the
+    form accepts is one the job does not refuse (review 26-11-24, PW03).
+    """
 
     try:
         path_lists.checked_name(form.name)
     except path_lists.PathListError as exc:
         raise FormProblem(f"Name — {exc}.") from None
-    if len(form.description) > path_lists.DESCRIPTION_MAX:
-        raise FormProblem(f"Description — at most {path_lists.DESCRIPTION_MAX} characters.")
+    try:
+        path_lists.checked_description(form.description)
+    except path_lists.PathListError as exc:
+        raise FormProblem(f"Description — {exc}.") from None
+    #
+    # Text over the limit is refused, not cut: a cut last path is a shorter one,
+    # a wider prefix than was written (review 26-11-24, PW09).
+    #
+    if len(form.paths) > PATHS_MAX:
+        raise FormProblem(
+            f"Paths — at most {MAX_DENIED_PATHS} paths of {MAX_DENIED_PATH} characters."
+        )
     written = path_lists.lines(form.paths)
     if not written:
         raise FormProblem("Paths — write at least one path, one to a line.")
@@ -94,7 +108,10 @@ def checked(form: Form) -> path_lists.PathList:
         paths = path_lists.checked_paths(written, "a path")
     except path_lists.PathListError as exc:
         raise FormProblem(f"Paths — {_readable(str(exc))}.") from None
-    return path_lists.PathList(name=form.name, paths=paths, description=form.description)
+    try:
+        return path_lists.path_list(form.name, list(paths), form.description)
+    except path_lists.PathListError as exc:  # pragma: no cover - each part was checked above
+        raise FormProblem(str(exc)) from None
 
 
 def _readable(said: str) -> str:

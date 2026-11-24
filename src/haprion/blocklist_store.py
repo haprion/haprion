@@ -241,24 +241,94 @@ def _document(stored: Stored) -> dict[str, Any]:
     }
 
 
-def write(stored: Stored, *, directory: Path = DEFINITIONS, require_secure: bool = True) -> Path:
-    """Write one definition atomically, root-only; an older revision does not replace a newer one."""
+def write(
+    stored: Stored,
+    *,
+    directory: Path = DEFINITIONS,
+    require_secure: bool = True,
+    warnings: list[str] | None = None,
+) -> Path:
+    """Write one definition atomically, root-only, as the database has it.
+
+    A file at a higher revision is replaced, and `warnings` says so: the
+    database is what a person saw and saved, and a restored dump or a
+    hand-edited file would otherwise leave the list impossible to save until
+    its revision had been counted past the file's (review 26-11-24, PW02).
+    The job asks with the row's current revision, and the queue runs one such
+    job at a time, so a stale job cannot arrive after a newer one.
+    """
 
     _secure_directory(directory, require_secure=require_secure)
     check_revision(stored.revision)
     path = directory / f"{stored.definition.name}{SUFFIX}"
-    present = _read_one(path) if path.exists() else None
-    if present is not None and present.revision > stored.revision:
-        raise StoreError(
-            f"{stored.definition.name} is at revision {present.revision} already; "
-            f"revision {stored.revision} is older"
-        )
+    if warnings is not None and path.exists():
+        try:
+            present = _read_one(path)
+        except StoreError:
+            present = None
+        if present is not None and present.revision > stored.revision:
+            warnings.append(
+                f"{stored.definition.name} was at revision {present.revision}, ahead of "
+                f"revision {stored.revision}; it is written as the database has it"
+            )
     content = json.dumps(_document(stored), separators=(",", ":"), sort_keys=True) + "\n"
     try:
         atomic_file.write(path, content.encode("utf-8"), mode=0o600)
     except OSError as exc:
         raise StoreError(f"{path} could not be written: {exc.strerror}") from exc
     return path
+
+
+def content_digest(definition: blocklists.Definition) -> str:
+    """What a definition says, as one digest: everything of it but the secret.
+
+    The manager compares the database's row with the file root keeps by this
+    and the revision. The secret is root's alone and is not in it (review
+    26-11-24, PW02).
+    """
+
+    text = json.dumps(
+        [
+            definition.description,
+            definition.url,
+            definition.authorization,
+            definition.username,
+            definition.every_hours,
+            list(definition.excepts),
+        ],
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def listing(*, directory: Path = DEFINITIONS) -> list[dict[str, Any]]:
+    """Each definition file as the poller reads it: name, revision and `content_digest`.
+
+    A file that cannot be read is revision 0 and no digest, which no row equals.
+    """
+
+    if not directory.exists():
+        return []
+    entries: list[dict[str, Any]] = []
+    for path in sorted(
+        p for p in directory.iterdir() if p.suffix == SUFFIX and not p.name.startswith(".")
+    ):
+        name = path.name[: -len(SUFFIX)]
+        if not blocklists.NAME.fullmatch(name):
+            continue
+        try:
+            stored = _read_one(path)
+        except StoreError:
+            entries.append({"name": name, "revision": 0, "digest": ""})
+            continue
+        entries.append(
+            {
+                "name": name,
+                "revision": stored.revision,
+                "digest": content_digest(stored.definition),
+            }
+        )
+    return entries
 
 
 def remove(name: str, *, directory: Path = DEFINITIONS, require_secure: bool = True) -> bool:

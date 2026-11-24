@@ -1249,6 +1249,35 @@ def check_http01_check_semantics(document: dict[str, object], path: Path) -> Non
         raise AssertionError(f"{path}: a {answer} answer with the wrong problem")
 
 
+def check_list_files_semantics(document: dict[str, object], path: Path) -> None:
+    # A result only on success; each file once, by name. A revision of 0 is a
+    # file that cannot be read and has no digest, and only an unread path list
+    # carries its content: a list the poller already knows does not.
+    result = document["result"]
+    if document["outcome"] == "done" and result is None:
+        raise AssertionError(f"{path}: a done list_files carries no result")
+    if document["outcome"] != "done" and result is not None:
+        raise AssertionError(f"{path}: a {document['outcome']} list_files carries a result")
+    if isinstance(result, dict):
+        for kind in ("path_lists", "blocklists"):
+            files = result[kind]
+            assert isinstance(files, list)
+            names = [entry["name"] for entry in files]
+            if names != sorted(set(names)):
+                raise AssertionError(f"{path}: {kind} are listed once each, by name")
+            for entry in files:
+                if (entry["revision"] == 0) != (entry["digest"] == ""):
+                    raise AssertionError(
+                        f"{path}: {entry['name']} has a revision 0 only with no digest"
+                    )
+                if ("paths" in entry) != ("description" in entry):
+                    raise AssertionError(
+                        f"{path}: {entry['name']} carries its description and paths together"
+                    )
+                if entry["revision"] == 0 and "paths" in entry:
+                    raise AssertionError(f"{path}: {entry['name']} cannot be read yet has content")
+
+
 def check_blocklist_states_semantics(document: dict[str, object], path: Path) -> None:
     # A result only on success; each list once, by name. A failure or a fetch is
     # one of the attempts, so neither is later than the last attempt, and a list
@@ -1621,6 +1650,7 @@ SEMANTIC_CHECKS = {
     "resolve": check_resolve_semantics,
     "receiver_fetches": check_receiver_fetches_semantics,
     "blocklist_states": check_blocklist_states_semantics,
+    "list_files": check_list_files_semantics,
     "ndes_server": check_ndes_server_semantics,
     "http01_check": check_http01_check_semantics,
     "probe": check_probe_semantics,
@@ -1790,6 +1820,9 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["receivers"].append(dict(result["receivers"][0]))
     elif operation == "blocklist_states":
         result["lists"].append(dict(result["lists"][0]))
+    elif operation == "list_files":
+        once = {"name": "community", "revision": 1, "digest": "a1" * 32}
+        result["blocklists"] = [once, dict(once)]
     elif operation == "ndes_server":
         if "authorities" in result:
             result["authorities"][0]["issues_ra"] = False

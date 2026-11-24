@@ -272,10 +272,48 @@ class TheFileRootKeeps(unittest.TestCase):
         )
         self.assertEqual(path_lists.read_all(directory=self.directory), {})
 
-    def test_an_older_revision_does_not_replace_a_newer_one(self) -> None:
+    def test_a_file_at_a_higher_revision_is_written_over_as_the_database_has_it(self) -> None:
+        """Review 26-11-24, PW02: after a restored dump the row is what a person saw."""
+
         self.write(path_lists.path_list("scanners", ["/.env"], revision=3))
-        with self.assertRaisesRegex(path_lists.PathListError, "revision 2 is older"):
-            self.write(path_lists.path_list("scanners", ["/.git"], revision=2))
+        notes: list[str] = []
+        path_lists.write(
+            path_lists.path_list("scanners", ["/.git"], revision=2),
+            directory=self.directory,
+            require_secure=False,
+            warnings=notes,
+        )
+        written = path_lists.read_all(directory=self.directory)["scanners"]
+        self.assertEqual((written.revision, written.paths), (2, ("/.git",)))
+        (note,) = notes
+        self.assertIn("revision_behind", note)
+        self.assertIn("revision 3", note)
+
+    def test_the_listing_gives_revision_and_digest_and_the_content_of_an_unknown_list(self) -> None:
+        self.write(path_lists.path_list("scanners", ["/.env", "/.git"], "Scanners", 5))
+        self.write(path_lists.path_list("other", ["/x"], revision=1))
+        (self.directory / "broken.json").write_text("{")
+        (self.directory / "Not-a-name.json").write_text("{}")
+        listed = {
+            entry["name"]: entry
+            for entry in path_lists.listing(directory=self.directory, known={"other"})
+        }
+        self.assertEqual(sorted(listed), ["broken", "other", "scanners"])
+        self.assertEqual(
+            listed["scanners"],
+            {
+                "name": "scanners",
+                "revision": 5,
+                "digest": path_lists.content_digest("Scanners", ["/.env", "/.git"]),
+                "description": "Scanners",
+                "paths": ["/.env", "/.git"],
+            },
+        )
+        self.assertEqual(set(listed["other"]), {"name", "revision", "digest"})
+        self.assertEqual(listed["broken"], {"name": "broken", "revision": 0, "digest": ""})
+        self.assertNotEqual(
+            path_lists.content_digest("", ["/a", "/b"]), path_lists.content_digest("", ["/b", "/a"])
+        )
 
     def test_the_directory_must_be_roots_alone(self) -> None:
         with self.assertRaisesRegex(path_lists.PathListError, "owned by root, mode 0700"):

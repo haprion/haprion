@@ -212,11 +212,17 @@ def write(
     require_secure: bool = True,
     warnings: list[str] | None = None,
 ) -> Path:
-    """Write one list atomically, root-only; an older revision does not replace a newer one.
+    """Write one list atomically, root-only, as the database has it.
 
     A file that cannot be read is replaced, and `warnings` says so: it holds
     nothing to compare a revision with, and refusing would leave the list
-    impossible to save over (review 26-11-24, PW04).
+    impossible to save over (review 26-11-24, PW04). A file at a higher
+    revision is replaced too, with a warning: the database is what a person
+    saw and saved, and a restored dump or a hand-edited file would otherwise
+    leave the list impossible to save until its revision had been counted past
+    the file's (review 26-11-24, PW02). The job asks with the row's current
+    revision, and the queue runs one such job at a time, so a stale job cannot
+    arrive after a newer one.
     """
 
     _secure_directory(directory, require_secure=require_secure)
@@ -228,10 +234,10 @@ def write(
         except PathListError as exc:
             if warnings is not None:
                 warnings.append(f"{exc}; it is replaced")
-    if present is not None and present.revision > item.revision:
-        raise PathListError(
-            f"{item.name} is at revision {present.revision} already; "
-            f"revision {item.revision} is older"
+    if present is not None and present.revision > item.revision and warnings is not None:
+        warnings.append(
+            f"revision_behind: {item.name} was at revision {present.revision}, ahead of "
+            f"revision {item.revision}; it is written as the database has it"
         )
     content = json.dumps(_document(item), separators=(",", ":"), sort_keys=True) + "\n"
     try:
@@ -239,6 +245,48 @@ def write(
     except OSError as exc:
         raise PathListError(f"{path} could not be written: {exc.strerror}") from exc
     return path
+
+
+def content_digest(description: str, paths: Sequence[str]) -> str:
+    """What a list says, as one digest: the description and the paths, in order.
+
+    The manager compares the database's row with the file root keeps by this
+    and the revision; neither side sends the other the paths to compare
+    (review 26-11-24, PW02).
+    """
+
+    text = json.dumps([description, list(paths)], separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def listing(*, directory: Path = DIRECTORY, known: Collection[str] = ()) -> list[dict[str, Any]]:
+    """Each file of the directory as the poller reads it: name, revision and `content_digest`.
+
+    A file that cannot be read is revision 0 and no digest, which no row
+    equals. A list whose name is not in `known` (no row in the database) also
+    carries its description and paths, which is what taking it in needs.
+    """
+
+    entries: list[dict[str, Any]] = []
+    for path in _files(directory):
+        name = path.name[: -len(SUFFIX)]
+        if not PATH_LIST_NAME.fullmatch(name):
+            continue
+        try:
+            item = _read_one(path)
+        except PathListError:
+            entries.append({"name": name, "revision": 0, "digest": ""})
+            continue
+        entry: dict[str, Any] = {
+            "name": item.name,
+            "revision": item.revision,
+            "digest": content_digest(item.description, item.paths),
+        }
+        if item.name not in known:
+            entry["description"] = item.description
+            entry["paths"] = list(item.paths)
+        entries.append(entry)
+    return entries
 
 
 def remove(name: str, *, directory: Path = DIRECTORY, require_secure: bool = True) -> bool:
@@ -432,9 +480,11 @@ __all__ = [
     "checked_description",
     "checked_name",
     "checked_paths",
+    "content_digest",
     "digest",
     "dump_snapshot",
     "lines",
+    "listing",
     "load_snapshot",
     "map_file_name",
     "named",

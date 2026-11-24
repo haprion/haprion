@@ -83,15 +83,16 @@ class Applying(unittest.TestCase):
                 self.assertIn(said, document["error"]["message"])
                 self.assertEqual(path_lists.read_all(directory=self.directory), {})
 
-    def test_an_older_revision_fails_and_the_newer_list_stays(self) -> None:
+    def test_a_list_over_a_file_at_a_higher_revision_is_done_with_a_warning(self) -> None:
+        """Review 26-11-24, PW02: the row is what was saved; the file is made to match."""
+
         self.invoke(revision=5)
-        code, document, _ = self.invoke(revision=4, paths=["/.git"])
-        self.assertEqual(code, exit_codes.CONFIG)
-        self.assertEqual(document["error"]["code"], "dependency_unavailable")
-        self.assertEqual(
-            path_lists.read_all(directory=self.directory)["scanners"].paths,
-            ("/.env", "/wp-login.php"),
-        )
+        code, document, errors = self.invoke(revision=4, paths=["/.git"])
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(document["outcome"], "done")
+        self.assertIn("WARNING: revision_behind", errors)
+        stored = path_lists.read_all(directory=self.directory)["scanners"]
+        self.assertEqual((stored.revision, stored.paths), (4, ("/.git",)))
 
     def test_an_unknown_parameter_is_refused(self) -> None:
         code, document, errors = self.invoke(extra=1)

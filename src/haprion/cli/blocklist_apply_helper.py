@@ -171,6 +171,7 @@ def main(
         except StoreError as exc:
             return refuse("binding_mismatch", str(exc), exit_codes.BLOCKED)
 
+    behind: list[str] = []
     try:
         if item is None:
             removed = blocklist_store.remove(
@@ -187,9 +188,12 @@ def main(
                 ),
                 directory=directory,
                 require_secure=require_secure,
+                warnings=behind,
             )
     except StoreError as exc:
         return refuse("dependency_unavailable", str(exc), exit_codes.CONFIG)
+    for note in behind:
+        errors.write(f"WARNING: {note}\n")
 
     started = starter()
     result: dict[str, object] = {"name": name, "revision": revision, "refresh_started": started}
@@ -203,12 +207,17 @@ def main(
             cluster=None,
             request_id=request.request_id,
             result=result,
-            warnings=()
-            if started
-            else (
-                Message(
-                    "refresh_not_started",
-                    "The refresh did not start now; the timer's next pass applies the change",
+            warnings=(
+                *(Message("revision_behind", note) for note in behind),
+                *(
+                    ()
+                    if started
+                    else (
+                        Message(
+                            "refresh_not_started",
+                            "The refresh did not start now; the timer's next pass applies the change",
+                        ),
+                    )
                 ),
             ),
         ),

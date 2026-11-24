@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "operation": "list_files",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "error": null,
+  "result": {
+    "path_lists": [
+      {
+        "name": "broken",
+        "revision": 0,
+        "digest": ""
+      },
+      {
+        "name": "scanners",
+        "revision": 3,
+        "digest": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+      },
+      {
+        "name": "taken",
+        "revision": 1,
+        "digest": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+        "description": "Paths only scanners ask for",
+        "paths": [
+          "/.env",
+          "/wp-login.php"
+        ]
+      }
+    ],
+    "blocklists": [
+      {
+        "name": "community",
+        "revision": 2,
+        "digest": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+      }
+    ]
+  }
+}

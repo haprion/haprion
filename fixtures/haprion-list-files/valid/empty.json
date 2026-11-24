@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "operation": "list_files",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "error": null,
+  "result": {
+    "path_lists": [],
+    "blocklists": []
+  }
+}

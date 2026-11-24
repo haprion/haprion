@@ -139,13 +139,45 @@ class TheDefinitionIsRootOnly(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
         self.assertEqual(blocklist_store.read_all(directory=self.directory), (_stored(),))
 
-    def test_an_older_revision_does_not_replace_a_newer_one(self) -> None:
+    def test_a_file_at_a_higher_revision_is_written_over_as_the_database_has_it(self) -> None:
+        """Review 26-11-24, PW02: the same as a path list's."""
+
         self._write(_stored(revision=4))
-        with self.assertRaisesRegex(StoreError, "older"):
-            self._write(_stored(revision=3))
+        notes: list[str] = []
+        blocklist_store.write(
+            _stored(revision=3, every_hours=12),
+            directory=self.directory,
+            require_secure=False,
+            warnings=notes,
+        )
+        (kept,) = blocklist_store.read_all(directory=self.directory)
+        self.assertEqual((kept.revision, kept.definition.every_hours), (3, 12))
+        (note,) = notes
+        self.assertIn("revision 4", note)
         self._write(_stored(revision=4, every_hours=6))
         (stored,) = blocklist_store.read_all(directory=self.directory)
         self.assertEqual(stored.definition.every_hours, 6)
+
+    def test_the_listing_says_revision_and_digest_and_never_the_secret(self) -> None:
+        self._write(_stored(revision=4))
+        (self.directory / "broken.json").write_text("{")
+        listed = blocklist_store.listing(directory=self.directory)
+        self.assertEqual(
+            listed,
+            [
+                {"name": "broken", "revision": 0, "digest": ""},
+                {
+                    "name": "crowdsec",
+                    "revision": 4,
+                    "digest": blocklist_store.content_digest(_item()),
+                },
+            ],
+        )
+        self.assertNotIn(SECRET, repr(listed))
+        self.assertNotEqual(
+            blocklist_store.content_digest(_item()),
+            blocklist_store.content_digest(_item(excepts=["192.0.2.10"])),
+        )
 
     def test_the_directory_must_be_root_0700(self) -> None:
         with self.assertRaisesRegex(StoreError, "root, mode 0700"):

@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-list-files.schema.json",
+  "title": "haprion-readings-helper list_files reading",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "list_files" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/files" },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" },
+    "digest": { "type": "string", "pattern": "^([0-9a-f]{64})?$" },
+    "file": {
+      "type": "object",
+      "required": ["name", "revision", "digest"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "revision": { "type": "integer", "minimum": 0, "maximum": 1000000, "description": "0 with an empty digest: the file cannot be read." },
+        "digest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "files": {
+      "description": "The lists root keeps, by name: each path list file and each blocklist definition with its revision and a digest of what it says (a blocklist's without its secret). A path list the request did not name as known (`known_path_lists`) also carries its `description` and `paths`. A directory not made yet is an empty list; one that cannot be read is `failed` with `files_unreadable`.",
+      "type": "object",
+      "required": ["path_lists", "blocklists"],
+      "properties": {
+        "path_lists": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "allOf": [{ "$ref": "#/$defs/file" }],
+            "properties": {
+              "name": true,
+              "revision": true,
+              "digest": true,
+              "description": { "type": "string", "maxLength": 200 },
+              "paths": { "type": "array", "minItems": 1, "maxItems": 500, "items": { "type": "string", "maxLength": 256 } }
+            },
+            "additionalProperties": false
+          }
+        },
+        "blocklists": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "allOf": [{ "$ref": "#/$defs/file" }],
+            "properties": { "name": true, "revision": true, "digest": true },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

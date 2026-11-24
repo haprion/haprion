@@ -185,13 +185,19 @@ class Applying(ApplyFixture):
         self.assertEqual(code, exit_codes.REFUSED)
         self.assertEqual(document["error"]["code"], "bad_input")
 
-    def test_an_older_revision_than_the_written_one_is_refused(self) -> None:
+    def test_an_older_revision_than_the_written_one_is_written_with_a_warning(self) -> None:
+        """Review 26-11-24, PW02: the row is what was saved; the file is made to match."""
+
         self.invoke(self.request(revision=3, secret_revision=3, ciphertext=self.sealed(revision=3)))
 
-        code, document, _ = self.invoke(self.request())
+        code, document, errors = self.invoke(self.request())
 
-        self.assertEqual(code, exit_codes.CONFIG)
-        self.assertIn("older", document["error"]["message"])
+        self.assertEqual(code, 0)
+        self.assertEqual(document["outcome"], "done")
+        self.assertIn("revision_behind", [warning["code"] for warning in document["warnings"]])
+        self.assertIn("WARNING:", errors)
+        (written,) = blocklist_store.read_all(directory=self.lists)
+        self.assertEqual(written.revision, 2)
 
     def test_authorization_without_a_box_is_refused(self) -> None:
         code, document, _ = self.invoke(self.request(ciphertext=None))

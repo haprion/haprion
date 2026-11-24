@@ -23,7 +23,9 @@ object listing may be unchanged since. Which readings exist is fixed here. A
 null cluster asks for the manager's own readings: `cert_list` (B304), which
 every pass makes whether or not a cluster exists yet, `receiver_fetches`
 (B498), when each certificate receiver last fetched, and `blocklist_states`
-(B500), what the blocklist timer last did with each list.
+(B500), what the blocklist timer last did with each list, and `list_files`
+(B534), the path lists and blocklist definitions root keeps, by revision and
+digest.
 """
 
 from __future__ import annotations
@@ -44,6 +46,7 @@ from haprion.cli import (
     cluster_settings_helper,
     handwritten_helper,
     list_backups_helper,
+    list_files_helper,
     list_helper,
     network_helper,
     objects_helper,
@@ -91,6 +94,7 @@ READINGS: Mapping[str, Helper] = {
     handwritten_helper.OPERATION: handwritten_helper.main,
     receiver_fetches_helper.OPERATION: receiver_fetches_helper.main,
     blocklist_states_helper.OPERATION: blocklist_states_helper.main,
+    list_files_helper.OPERATION: list_files_helper.main,
 }
 #
 # The readings that answer for the manager when the cluster is null. Each of
@@ -102,6 +106,7 @@ MANAGER_READINGS: frozenset[str] = frozenset(
         cert_list_helper.OPERATION,
         receiver_fetches_helper.OPERATION,
         blocklist_states_helper.OPERATION,
+        list_files_helper.OPERATION,
     }
 )
 

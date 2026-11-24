@@ -71,7 +71,8 @@
               "regeneration",
               "handwritten",
               "receiver_fetches",
-              "blocklist_states"
+              "blocklist_states",
+              "list_files"
             ]
           },
           "additionalProperties": {

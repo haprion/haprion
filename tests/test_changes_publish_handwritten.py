@@ -328,7 +328,7 @@ class WhatOnlyGitSees(HandwrittenFixture):
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))
             self.seed()
-            os.chmod(self.repo / "core/haproxy.cfg", 0o744)
+            os.chmod(self.repo / "core/haproxy.cfg", 0o700)
 
             code, document, _err = self.publish_objects(policy, self.request())
 

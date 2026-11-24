@@ -826,6 +826,22 @@ def check_blocklist_apply_semantics(document: dict[str, object], path: Path) -> 
             raise AssertionError(f"{path}: a blocked blocklist_apply is a binding mismatch")
 
 
+def check_path_list_apply_semantics(document: dict[str, object], path: Path) -> None:
+    """A done apply names the list and says either how many paths it wrote or whether it removed one."""
+
+    result = document["result"]
+    if document["outcome"] != "done":
+        if result is not None:
+            raise AssertionError(f"{path}: a path_list_apply that was not done carries no result")
+        return
+    if not isinstance(result, dict):
+        raise AssertionError(f"{path}: a done path_list_apply carries a result")
+    if ("paths" in result) == ("removed" in result):
+        raise AssertionError(
+            f"{path}: a done path_list_apply wrote paths or removed a list, not both"
+        )
+
+
 def check_blocklist_check_semantics(document: dict[str, object], path: Path) -> None:
     """A result only when done; a test says why exactly when it failed, and an
     address is excepted only on clusters its list goes to."""
@@ -1585,6 +1601,7 @@ SEMANTIC_CHECKS = {
     "cert_request": check_cert_request_semantics,
     "dns_profile_apply": check_dns_profile_apply_semantics,
     "blocklist_apply": check_blocklist_apply_semantics,
+    "path_list_apply": check_path_list_apply_semantics,
     "blocklist_check": check_blocklist_check_semantics,
     "ndes_profile_apply": check_dns_profile_apply_semantics,
     "cert_publish": check_cert_publish_semantics,
@@ -1721,6 +1738,11 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["plugin"] = "dns_example_login = leaked-example"
     elif operation == "blocklist_apply":
         invalid["outcome"] = "failed"
+    elif operation == "path_list_apply":
+        if "removed" in result:
+            result["paths"] = 1
+        else:
+            result["removed"] = False
     elif operation == "blocklist_check":
         if result is None:
             invalid["outcome"] = "done"

@@ -193,14 +193,15 @@ def lookup(
         raise ValueError("; ".join(problems))
     affecting = {cve for names in held.values() for cve in names}
     if held:
-        named = ", ".join(
+        pairs = [
             f"{name} as {cve} (decided {recorded[cve]['decided']})"
             for name, names in sorted(held.items())
             for cve in names
-        )
+        ]
+        noun = "acceptance" if len(pairs) == 1 else "acceptances"
         return (
             f"{ecosystem}: no advisories for certmonger {version} beyond "
-            f"recorded acceptance(s): {named}"
+            f"{len(pairs)} recorded {noun}: {', '.join(pairs)}"
         ), affecting
     return f"{ecosystem}: no known advisories for certmonger {version}", affecting
 

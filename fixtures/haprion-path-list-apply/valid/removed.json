@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "path_list_apply",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "name": "old-paths",
+    "revision": 4,
+    "removed": true
+  },
+  "warnings": [],
+  "error": null
+}

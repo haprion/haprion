@@ -24,7 +24,8 @@
 # registry already lists, and target changes which registered targets a
 # registered certificate goes to, and DNS profile apply materialises or removes
 # one database-bound profile in its fixed policy directory, and blocklist apply
-# writes or removes one blocklist's definition in /etc/haprion/blocklists. None
+# writes or removes one blocklist's definition in /etc/haprion/blocklists, and
+# path list apply one path list in /etc/haprion/path-lists. None
 # can name an arbitrary path, account
 # or a directory. Registering a receiver - an account, a directory, a lock - is
 # not here either: that helper writes /etc, which this unit's sandbox keeps
@@ -76,6 +77,9 @@ _haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-delet
 
 # Blocklists (B500): the list's sealed secret arrives only on stdin.
 _haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-blocklist-apply-helper ""
+
+# Path lists (B532): the list arrives only on stdin.
+_haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-path-list-apply-helper ""
 
 # NDES profiles: ciphertext arrives only on stdin.
 _haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-ndes-profile-apply-helper ""

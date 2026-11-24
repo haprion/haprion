@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-path-list-apply.schema.json",
+  "title": "haprion-path-list-apply-helper JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "path_list_apply" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/apply_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/apply_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "apply_result": {
+      "type": "object",
+      "required": ["name", "revision"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" },
+        "revision": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "paths": { "type": "integer", "minimum": 1, "maximum": 500, "description": "Without remove: how many paths the list written holds." },
+        "removed": { "type": "boolean", "description": "With remove: whether there was a list to remove." }
+      },
+      "additionalProperties": false
+    }
+  }
+}

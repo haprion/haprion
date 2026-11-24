@@ -37,6 +37,7 @@ names used below, that is a bug in the software, not in this guide.
 - [Access rules](#access-rules)
   - [Path limits](#path-limits)
   - [Blocklists](#blocklists)
+  - [Path lists](#path-lists)
   - [A sign-in or bot check in front of an application](#a-sign-in-or-bot-check-in-front-of-an-application)
   - [Protection review](#protection-review)
 - [Dynamic blocking](#dynamic-blocking)
@@ -1663,13 +1664,18 @@ publish.
 ## Access rules
 
 An object can refuse visitors by their address, by what a request asks for, and by the size of what it
-sends. *Denied*, *Deny rules* and *Never blocked* are in the *Access* group of the object's form (*Edit* on
+sends. *Denied*, *Denied paths*, *Deny rules* and *Never blocked* are in the *Access* group of the object's form (*Edit* on
 the proxy's page, or *New proxy*), below *Reachable from*; *Max request body* is in the *Limits* group
 ([An http or https object, field by field](#an-http-or-https-object-field-by-field)):
 
 - **Denied** (http, https and tcp). *Denied — groups* and *Denied — addresses* name who is refused: groups
   from the *Network* page and [blocklists](#blocklists), and addresses, ranges or countries, one per line. *Denied — mode* is *log only* or
   *deny*; it starts as *log only*, so nobody is refused until it is *deny*.
+- **Denied paths** (http and https) are paths the whole object refuses, such as `/.env` or
+  `/wp-login.php`, which only scanners ask for. *Denied paths — lists* chooses [path lists](#path-lists)
+  from *Settings*, and *Denied paths — paths* takes the object's own, one per line. Each path refuses itself
+  and everything under it, read as a rule's path is read (below). *Denied paths — mode* is *log only*,
+  *deny* or *deny and block the address*; *Block for* says how long, and is greyed outside that mode.
 - **Max request body** (http and https) is the largest body a request may declare, such as `10m`.
 - **Deny rules** (http and https) are tried in order, and any one of them is enough. *Add rule* adds one
   and *Remove rule* drops it. A rule has a *Name*, a *Mode* (*log only*, *deny* or *deny and block the
@@ -1689,6 +1695,11 @@ shared frontend after `allow_from`, before anything is routed.
 deny_from:                       # http and tcp
   mode: log                      # log (the default) or deny; tcp takes deny only
   sources: [scanners, 203.0.113.0/24]
+deny_paths:                      # http only; the whole object
+  mode: block                    # log (the default), deny or block
+  lists: [scanners]              # path lists from Settings
+  paths: [/server-info]          # its own; each one and everything under it
+  block_for: 30m                 # block only; 1m to 24h, 30m when left out
 deny_rules:                      # http only; tried in order, any one is enough
   - name: admin-post             # lowercase, shown on the traffic record
     mode: deny
@@ -1953,6 +1964,45 @@ form does, and `haprion-blocklists remove <name>` removes one. A file that chang
 authorization or username carries the list's `secret` again. `haprion-blocklist-check <address>` is
 *Check address*, and `haprion-blocklist-check --list <name>` is *Test* for a stored list.
 
+### Path lists
+
+A path list is a set of paths that only scanners ask for - `/.env`, `/.git`, `/wp-login.php` - written
+once and used by any object under *Denied paths — lists*. Haprion ships no list of its own: what is
+worth refusing depends on what the sites run.
+
+**Adding one.** *Settings → Path lists → Add path list*:
+
+- *Name* is the list's name under *Denied paths — lists*: lowercase letters, digits and `-`, at most 40.
+- *Description* is for whoever opens the list next.
+- *Paths* takes one path per line, at most 500, each matched as a prefix: `/wp-admin` refuses
+  `/wp-admin` and everything under it. Write a path decoded, as a rule's: without `%`, `//`, `;`, `.` or
+  `..`. `/` alone is refused, since it would refuse everything.
+
+**A list goes out with a publish.** A path list is configuration you write, so it follows the published
+version, a revert and the change history like the objects do. *Save* stores the list on the manager, and
+each cluster with an object that uses it then shows *Publish & deploy to apply the update (the path list
+… changed under Settings)* under *Needs attention*. The version a cluster runs carries a copy of the lists
+its objects use, so a revert goes back to the paths that version had.
+
+**Using one.** *Add to proxies…* on the list's row asks which clusters, and adds the list to every http and
+https object in those, as saved changes. An object that had no denied paths gets them in *log only*, so
+what the list would refuse shows on the traffic page before anything is refused. An object with a draft is
+left as it is, and the page says which. Each cluster's changes go out with its next publish.
+
+**Removing one** is refused while an object, a saved change or a draft names it under *Denied paths*:
+take it out there first. If a cluster could not be read, the removal waits until it has been.
+
+**From the terminal.** `haprion-path-lists apply <file>` stores and applies the lists in a file, as the
+form does; `--prune` removes the lists the file does not name, and `haprion-path-lists remove <name>`
+removes one.
+
+```yaml
+path_lists:
+  - name: scanners
+    description: Paths only scanners ask for
+    paths: [/.env, /.git, /wp-login.php]
+```
+
 ### A sign-in or bot check in front of an application
 
 Haprion does not sign visitors in to the applications behind it. It also does not ask another product
@@ -2104,8 +2154,8 @@ reaches the other nodes with the block. It is the limit that last renewed the bl
 limit writes it again, so an address blocked through the API that then goes over a limit shows that limit instead
 of *Blocked through the API*. It is *Too many requests* or *Too many errors* when the address went
 over that limit, *Too many new connections* for a tcp object's limit, *Blocked through the API* for an
-address placed through the API, and *Deny rule* for a
-[rule that blocks](#access-rules). An address over both limits shows the requests. A block
+address placed through the API, *Deny rule* for a
+[rule that blocks](#access-rules), and *Denied path* for [denied paths](#access-rules) that block. An address over both limits shows the requests. A block
 placed before the object had a reason, and one that a node cannot tell, shows none.
 
 **Which address is blocked.** The one the rate limit counts: behind a trusted proxy, the last element of
@@ -5564,6 +5614,7 @@ are audited and versioned the same way.
 | *Settings → Users* | `haprion-user` |
 | *External monitoring*, *Features*, OIDC | `haprion-settings` |
 | *Settings → Blocklists* | `haprion-blocklists`, `haprion-blocklist-check` |
+| *Settings → Path lists* | `haprion-path-lists` |
 | The interface's own certificate | `haprion-tls` |
 
 What they have in common:

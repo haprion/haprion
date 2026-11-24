@@ -182,9 +182,8 @@ def managed_files(
     #
     proxies = managed_proxies(result)
     #
-    # Asked only for the countries the objects being published name, and only
-    # when they name any: the reader opens the location database, and a
-    # cluster without a country never needs it to exist (B228).
+    # The path lists the objects name, as the version carries them (B532), and
+    # the file each is written to (review 26-11-24, PW13).
     #
     lists_named = path_lists.named(proxies)
     reader = path_list_reader or path_lists.tree_reader(base_files)
@@ -193,6 +192,11 @@ def managed_files(
         result[path_lists.SNAPSHOT] = path_lists.dump_snapshot(lists)
     else:
         result.pop(path_lists.SNAPSHOT, None)
+    #
+    # Asked only for the countries the objects being published name, and only
+    # when they name any: the reader opens the location database, and a
+    # cluster without a country never needs it to exist (B228).
+    #
     named = countries_named(proxies)
     countries = country_reader(named) if named and country_reader is not None else None
     #

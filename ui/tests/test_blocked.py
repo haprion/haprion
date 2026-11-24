@@ -98,6 +98,20 @@ class EveryReasonIsSaid(unittest.TestCase):
                 self.assertEqual(len(found), 1)
                 self.assertEqual(set(found[0]), wanted)
 
+    def test_the_manual_names_every_reason_the_api_can_answer(self) -> None:
+        """The API reference lacked `rule` and `paths` (review 26-11-24, PW12)."""
+
+        manual = Path(__file__).resolve().parents[2] / "docs" / "user-manual.md"
+        rows = [
+            line
+            for line in manual.read_text(encoding="utf-8").splitlines()
+            if line.startswith("| `/clusters/{cluster}/objects/{name}/blocks`")
+        ]
+        self.assertEqual(len(rows), 1)
+        for reason in BLOCK_REASONS.values():
+            with self.subTest(reason=reason):
+                self.assertIn(f"`{reason}`", rows[0])
+
     def test_each_reason_fits_its_column_on_one_line(self) -> None:
         """The Reason column is 220 px at 13 px type (26-11-22): a longer text ran into Nodes.
 

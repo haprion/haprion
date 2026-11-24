@@ -33,6 +33,19 @@ def defined(module: Path) -> list[str]:
 
 
 class TheDatabaseLayerIsOneNamespace(unittest.TestCase):
+    def test_the_export_list_is_in_order(self) -> None:
+        """Constants, then classes, then functions, each alphabetical (review 26-11-24)."""
+
+        def key(name: str) -> tuple[int, str]:
+            bare = name.lstrip("_")
+            if bare.isupper():
+                return (1 if name.startswith("_") else 0, name)
+            if bare[0].isupper():
+                return (2, name)
+            return (3 if name.startswith("_") else 4, name)
+
+        self.assertEqual(list(db.__all__), sorted(db.__all__, key=key))
+
     def test_every_definition_is_reached_through_the_package(self) -> None:
         modules = sorted(path for path in PACKAGE.glob("*.py") if path.name != "__init__.py")
         self.assertGreater(len(modules), 5)

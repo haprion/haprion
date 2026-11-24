@@ -227,6 +227,28 @@ class TheGenerator(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
 
+class TheModuleSaysWhatItOffers(unittest.TestCase):
+    def test_every_name_another_module_reads_is_exported(self) -> None:
+        # Review 26-11-24: `__all__` lacked what the helper, the form and the generator use.
+        for name in (
+            "build_request",
+            "check_revision",
+            "checked_paths",
+            "digest",
+            "lines",
+            "map_file_name",
+            "DESCRIPTION_MAX",
+            "HELPER",
+            "MAX_REVISION",
+            "OPERATION",
+        ):
+            with self.subTest(name):
+                self.assertIn(name, path_lists.__all__)
+        self.assertEqual(
+            sorted(path_lists.__all__), sorted(set(path_lists.__all__)), "a name twice"
+        )
+
+
 class TheFileRootKeeps(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()

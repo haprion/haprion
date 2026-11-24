@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Annotated
 
 from haprion.cluster_settings import NOTHING as NO_SETTINGS
@@ -114,6 +114,12 @@ class EditorCluster:
     #
     blocklists: tuple[str, ...] = ()
     #
+    # The path lists under Settings (B527, B532), by name with their paths, as
+    # the web saved them: what *Denied paths — lists* offers, and what the
+    # check below generates with. A publish copies the lists the manager holds.
+    #
+    path_lists: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    #
     # The cluster's settings as they stand (the saved draft, else the published
     # reading): the HTTP-01 challenge takes port 80 on its addresses, which an
     # object is refused for at the publish. None when they cannot be read.
@@ -163,6 +169,7 @@ def editor_cluster(
     reservations: Reservations = NOTHING_RESERVED,
     blocklists: Iterable[str] = (),
     settings: ClusterSettings = NO_SETTINGS,
+    path_lists: Mapping[str, Sequence[str]] | None = None,
 ) -> EditorCluster:
     """Assemble one cluster's real choices out of the cached readings."""
 
@@ -193,6 +200,7 @@ def editor_cluster(
         reservations=reservations,
         blocklists=tuple(sorted(blocklists)),
         settings=settings,
+        path_lists={name: tuple(paths) for name, paths in sorted((path_lists or {}).items())},
     )
 
 
@@ -211,6 +219,7 @@ def choices(cluster: EditorCluster) -> dict[str, object]:
         "sources": named_addresses(cluster.sources),
         "networks": sorted(cluster.networks),
         "blocklists": list(cluster.blocklists),
+        "path_lists": sorted(cluster.path_lists),
         "balances": BALANCE_CHOICES,
         "health_types": CHECK_TYPES,
         "query_types": QUERY_TYPES,
@@ -273,6 +282,26 @@ def check_document(
         except ModelError:
             continue
 
+    #
+    # The path lists are Settings', not the cluster's: known whether or not the
+    # cluster's network is, so a list that is not there is said either way
+    # (B527), in the generator's words.
+    #
+    missing = [
+        listed
+        for listed in (edited.deny_paths.lists if edited.deny_paths is not None else ())
+        if listed not in cluster.path_lists
+    ]
+    if missing:
+        return Preview(
+            document=document,
+            problem=(
+                f"{name}.deny_paths.lists names the path list {missing[0]}, which does not "
+                "exist; add it under Settings → Path lists"
+            ),
+            about_the_object=True,
+        )
+
     if not cluster.complete:
         return Preview(document=document)
 
@@ -293,6 +322,7 @@ def check_document(
             countries=unchecked_countries([edited, *neighbours]),
             reservations=cluster.reservations,
             blocklists=cluster.blocklists,
+            path_lists=cluster.path_lists,
             #
             # The settings that bear on an object, the HTTP-01 challenge's port
             # among them. Not the exporter and the shared counters: they listen
@@ -402,6 +432,10 @@ FIELD_LABELS: dict[str, str] = {
     "deny_from": "Denied — groups",
     "deny_ranges": "Denied — addresses",
     "deny_mode": "Denied — mode",
+    "deny_path_lists": "Denied paths — lists",
+    "deny_paths": "Denied paths — paths",
+    "deny_paths_mode": "Denied paths — mode",
+    "deny_paths_block_for": "Denied paths — block for",
     "max_request_body": "Max request body",
     "rule_index": "Rules",
     "rule_name": "Rules",
@@ -631,6 +665,12 @@ class ObjectForm(BaseModel):
     deny_from: list[Annotated[str, StringConstraints(max_length=64)]] = Field(default_factory=list)
     deny_ranges: Annotated[str, StringConstraints(max_length=FORM_TEXT)] = ""
     deny_mode: Annotated[str, StringConstraints(max_length=8)] = "log"
+    deny_path_lists: list[Annotated[str, StringConstraints(max_length=64)]] = Field(
+        default_factory=list
+    )
+    deny_paths: Annotated[str, StringConstraints(max_length=FORM_TEXT)] = ""
+    deny_paths_mode: Annotated[str, StringConstraints(max_length=8)] = "log"
+    deny_paths_block_for: Annotated[str, StringConstraints(max_length=8)] = ""
     max_request_body: Annotated[str, StringConstraints(max_length=16)] = ""
     rule_index: RuleList = Field(default_factory=list)
     rule_name: RuleList = Field(default_factory=list)
@@ -731,6 +771,7 @@ class ObjectForm(BaseModel):
             values.pop(key)
         values["allow_from"] = tuple(entry for entry in self.allow_from if entry)
         values["deny_from"] = tuple(entry for entry in self.deny_from if entry)
+        values["deny_path_lists"] = tuple(entry for entry in self.deny_path_lists if entry)
         values["block_exempt_from"] = tuple(entry for entry in self.block_exempt_from if entry)
         values["deny_rules"] = access_rules(values)
         values["path_limits"] = path_limits(values)

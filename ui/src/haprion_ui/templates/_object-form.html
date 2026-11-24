@@ -179,6 +179,23 @@
       <label><span class="field-title">Denied — addresses <span class="optional">(optional)</span></span><textarea name="deny_ranges" rows="5" placeholder="203.0.113.0/24">{{ form.deny_ranges }}</textarea><small>One address, range or <code>country:SE</code> per line.</small></label>
       <label><span class="field-title">Denied — mode</span><select name="deny_mode" class="single-select">{% set chosen_mode = 'deny' if form.protocol == 'tcp' else form.deny_mode %}<option value="log"{{ when('protocol', 'http https') }}{% if chosen_mode == 'log' %} selected{% endif %}>log only</option><option value="deny"{% if chosen_mode == 'deny' %} selected{% endif %}>deny</option></select></label>
     </div>
+    {#
+      B527: paths the whole object refuses, from Settings' path lists and its
+      own, beside the address groups. Block for is greyed in place outside
+      block, as on a rule card.
+    #}
+    <div class="form-grid form-grid-pair"{{ when('protocol', 'http https') }} data-denied-paths>
+      <label><span class="field-title">Denied paths — lists <span class="optional">(optional)</span></span>
+        <select name="deny_path_lists" multiple size="5">
+          <option value=""{% if not form.deny_path_lists %} selected{% endif %}>None</option>
+          {% for listed in (choices.path_lists or [])|sort %}<option value="{{ listed }}"{% if listed in form.deny_path_lists %} selected{% endif %}>{{ listed }}</option>{% endfor %}
+          {% for listed in form.deny_path_lists if listed not in (choices.path_lists or []) %}<option value="{{ listed }}" selected>{{ listed }}</option>{% endfor %}
+        </select>
+      </label>
+      <label><span class="field-title">Denied paths — paths <span class="optional">(optional)</span></span><textarea name="deny_paths" rows="5" spellcheck="false" placeholder="/.env&#10;/wp-login.php">{{ form.deny_paths }}</textarea><small>One path per line, matched as a prefix.</small></label>
+      <label><span class="field-title">Denied paths — mode</span><select name="deny_paths_mode" class="single-select" data-denied-paths-mode><option value="log"{% if form.deny_paths_mode == 'log' %} selected{% endif %}>log only</option><option value="deny"{% if form.deny_paths_mode == 'deny' %} selected{% endif %}>deny</option><option value="block"{% if form.deny_paths_mode == 'block' %} selected{% endif %}>deny and block the address</option></select></label>
+      <label><span class="field-title">Block for</span><input name="deny_paths_block_for" value="{{ form.deny_paths_block_for }}" size="10" placeholder="30m"{% if form.deny_paths_mode != 'block' %} class="field-idle" readonly tabindex="-1"{% endif %}></label>
+    </div>
     <div class="rule-list"{{ when('protocol', 'http https') }} data-rule-list>
       <div class="rule-list-head"><span class="field-title">Deny rules <span class="optional">(optional)</span></span></div>
       {% for rule in form.deny_rules %}{{ rule_card(rule) }}{% endfor %}

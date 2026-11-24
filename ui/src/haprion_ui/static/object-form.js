@@ -530,6 +530,13 @@
       const denied =
         (listed && [...listed.selectedOptions].some((o) => o.value)) || (ranges && ranges.value.trim());
       if (denied && list_mode) counts[list_mode.value === "deny" ? "deny" : "log"] += 1;
+      const paths_mode = group.querySelector("select[name='deny_paths_mode']");
+      const path_lists = group.querySelector("select[name='deny_path_lists']");
+      const own_paths = group.querySelector("textarea[name='deny_paths']");
+      const paths =
+        (path_lists && [...path_lists.selectedOptions].some((o) => o.value)) ||
+        (own_paths && own_paths.value.trim());
+      if (paths && paths_mode) counts[paths_mode.value] = (counts[paths_mode.value] || 0) + 1;
       const wanted = [
         [`${counts.log} logging`, "warning", counts.log],
         [`${counts.deny} denying`, "unknown", counts.deny],
@@ -582,13 +589,31 @@
     };
     list.addEventListener("input", follow);
     list.addEventListener("change", follow);
+    //
+    // Denied paths' Block for, greyed in place outside block as a rule's is
+    // (B527, 26-11-21): read-only rather than hidden, so nothing beside it moves.
+    //
+    const idlePaths = () => {
+      const row = document.querySelector("[data-denied-paths]");
+      if (!row) return;
+      const mode = row.querySelector("select[name='deny_paths_mode']");
+      const blockFor = row.querySelector("input[name='deny_paths_block_for']");
+      if (!mode || !blockFor) return;
+      const idle = mode.value !== "block";
+      blockFor.readOnly = idle;
+      blockFor.classList.toggle("field-idle", idle);
+      blockFor.tabIndex = idle ? -1 : 0;
+    };
     const owner = list.closest("details.form-group");
     if (owner) {
       owner.addEventListener("change", (event) => {
-        if (["deny_from", "deny_ranges", "deny_mode"].includes(event.target.name)) countRules();
+        const named = event.target.name;
+        if (named === "deny_paths_mode") idlePaths();
+        const counted = ["deny_from", "deny_ranges", "deny_mode", "deny_path_lists", "deny_paths"];
+        if ([...counted, "deny_paths_mode"].includes(named)) countRules();
       });
       owner.addEventListener("input", (event) => {
-        if (event.target.name === "deny_ranges") countRules();
+        if (["deny_ranges", "deny_paths"].includes(event.target.name)) countRules();
       });
     }
     if (!template || !add) return;

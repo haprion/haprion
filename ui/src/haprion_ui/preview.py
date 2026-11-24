@@ -211,6 +211,10 @@ DEFAULTS = {
     "deny_from": (),
     "deny_ranges": "",
     "deny_mode": "log",
+    "deny_path_lists": (),
+    "deny_paths": "",
+    "deny_paths_mode": "log",
+    "deny_paths_block_for": DEFAULT_RULE_BLOCK_FOR,
     "max_request_body": "",
     "rule_index": [],
     "rule_name": [],
@@ -549,6 +553,13 @@ HIDDEN_FOR: Mapping[str, tuple[str, ...]] = {
         "redirect_http",
         "hsts",
         "max_request_body",
+        #
+        # A raw connection carries no path to refuse on (B527).
+        #
+        "deny_path_lists",
+        "deny_paths",
+        "deny_paths_mode",
+        "deny_paths_block_for",
         "cookie",
         "maintenance",
         "maintenance_message",
@@ -952,6 +963,23 @@ def build_document(form: dict[str, object]) -> str:
     # hostnames.
     #
     if protocol not in OWN_PORT:
+        #
+        # The whole object's denied paths (B527): the lists chosen and its
+        # own, one to a line. `block_for` only where the mode blocks, as a
+        # rule writes it.
+        #
+        path_lists = _listed(form.get("deny_path_lists", ()))
+        own_paths = [line.strip() for line in text("deny_paths").splitlines() if line.strip()]
+        if path_lists or own_paths:
+            mode = text("deny_paths_mode") or "log"
+            denied_paths: dict[str, Any] = {"mode": mode}
+            if path_lists:
+                denied_paths["lists"] = path_lists
+            if own_paths:
+                denied_paths["paths"] = own_paths
+            if mode == "block":
+                denied_paths["block_for"] = text("deny_paths_block_for") or DEFAULT_RULE_BLOCK_FOR
+            document["deny_paths"] = denied_paths
         rules = [_rule_document(rule) for rule in access_rules(form)]
         if rules:
             document["deny_rules"] = rules
@@ -1652,6 +1680,17 @@ def _with_normalised_blocking(data: Any, networks: Collection[str]) -> Any:
             else rule
             for rule in rules
         ]
+    #
+    # Denied paths in block mode with no time of their own last the rule
+    # default (`proxy_model`), and the form writes that time (B527). A mode
+    # left unsaid is `log`, which the form writes too.
+    #
+    paths = result.get("deny_paths")
+    if isinstance(paths, Mapping):
+        paths = {"mode": "log", **paths}
+        if paths.get("mode") == "block" and not paths.get("block_for"):
+            paths["block_for"] = DEFAULT_RULE_BLOCK_FOR
+        result["deny_paths"] = paths
     return result
 
 
@@ -1668,6 +1707,19 @@ def _access_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[s
         "deny_mode": str(denied.get("mode", "log") or "log"),
         "max_request_body": str(data.get("max_request_body", "") or ""),
     }
+    paths = _sub(data, "deny_paths")
+    lists = paths.get("lists")
+    own = paths.get("paths")
+    fields.update(
+        {
+            "deny_path_lists": tuple(str(name) for name in lists)
+            if isinstance(lists, list)
+            else (),
+            "deny_paths": "\n".join(str(path) for path in own) if isinstance(own, list) else "",
+            "deny_paths_mode": str(paths.get("mode", "log") or "log"),
+            "deny_paths_block_for": str(paths.get("block_for", "") or "") or DEFAULT_RULE_BLOCK_FOR,
+        }
+    )
     columns: dict[str, list[str]] = {f"rule_{name}": [] for name in ("index", *RULE_FIELDS)}
     inherited_block_for = (
         str(_sub(data, "dynamic_block").get("block_for", "") or "") or DEFAULT_RULE_BLOCK_FOR

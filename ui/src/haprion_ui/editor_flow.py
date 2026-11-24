@@ -193,6 +193,7 @@ def editor_state(request: Request, config: Config, cluster: str) -> EditorState:
     with request.app.state.pool.connection() as connection:
         network_rows, _saved = saved_network_rows(connection, list(network_rows))
         blocklist_names = blocklist_form.fetched_names(connection)
+        saved_path_lists = {row.name: tuple(row.paths) for row in db.path_lists(connection)}
         saved_settings = settled_changes(
             connection, cluster, {"settings": reading_head(settings_row)}
         ).get("settings")
@@ -275,6 +276,7 @@ def editor_state(request: Request, config: Config, cluster: str) -> EditorState:
             ),
             blocklist_names,
             settings,
+            saved_path_lists,
         ),
         available=reading is not None and reading.outcome == "done" and not reading.poll_error,
     )

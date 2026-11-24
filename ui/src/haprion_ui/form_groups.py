@@ -125,6 +125,9 @@ def _access_badges(form: Mapping[str, Any]) -> tuple[Badge, ...]:
     denied = any(str(name).strip() for name in form.get("deny_from", ()) or ())
     if denied or _lines(form, "deny_ranges"):
         modes.append(_text(form, "deny_mode") or "log")
+    paths = any(str(name).strip() for name in form.get("deny_path_lists", ()) or ())
+    if paths or _lines(form, "deny_paths"):
+        modes.append(_text(form, "deny_paths_mode") or "log")
     logging = sum(mode == "log" for mode in modes)
     #
     # A blocking rule refuses its match and then the address; counted apart.
@@ -312,6 +315,10 @@ GROUPS: Mapping[str, FormGroup] = {
             "deny_from",
             "deny_ranges",
             "deny_mode",
+            "deny_path_lists",
+            "deny_paths",
+            "deny_paths_mode",
+            "deny_paths_block_for",
             "block_exempt_from",
             "block_exempt_ranges",
             "rule_index",

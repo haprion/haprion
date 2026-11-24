@@ -145,6 +145,19 @@ def _access_badges(form: Mapping[str, Any]) -> tuple[Badge, ...]:
     )
 
 
+def blocks_on_match(form: Mapping[str, Any]) -> bool:
+    """Whether a match of a rule or of the denied paths blocks the address (review 26-11-24, PW05).
+
+    The form's side of `Proxy.blocks_on_match`: *Denied paths* count only where
+    a list or a path is written, as `_access_badges` counts them.
+    """
+
+    if any(str(mode) == "block" for mode in form.get("rule_mode", ()) or ()):
+        return True
+    paths = any(str(name).strip() for name in form.get("deny_path_lists", ()) or ())
+    return (paths or bool(_lines(form, "deny_paths"))) and _text(form, "deny_paths_mode") == "block"
+
+
 def _blocking(form: Mapping[str, Any]) -> str:
     """What starts a block and for how long (B271); *Off* while no trigger is written."""
 
@@ -485,8 +498,7 @@ def form_groups(
         # 3 blocked"). Blocks left from something since removed stay with
         # Dynamic blocking, as before.
         #
-        by_rule = any(str(mode) == "block" for mode in form.get("rule_mode", ()) or ())
-        key = "access" if by_rule and _blocking(form) == "Off" else "blocking"
+        key = "access" if blocks_on_match(form) and _blocking(form) == "Off" else "blocking"
         state = states[key]
         states[key] = replace(state, summary=f"{state.summary} · {blocked} blocked")
     return states

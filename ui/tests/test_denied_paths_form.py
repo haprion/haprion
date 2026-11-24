@@ -167,6 +167,21 @@ class TheAccessBadges(EditorTestCase):
             with self.subTest(mode=mode):
                 self.assertIn(badge, [b.text for b in access.badges])
 
+    def test_a_block_by_denied_paths_alone_is_counted_on_access(self) -> None:
+        """Review 26-11-24, PW05: not "Off · 3 blocked" on Dynamic blocking."""
+
+        form = {**preview.DEFAULTS, "deny_paths": "/.env", "deny_paths_mode": "block"}
+        groups = form_groups.form_groups(form, blocked=3)
+
+        self.assertTrue(form_groups.blocks_on_match(form))
+        self.assertEqual(groups["blocking"].summary, "Off")
+        self.assertTrue(groups["access"].summary.endswith("· 3 blocked"))
+
+    def test_a_block_mode_without_a_path_blocks_nothing(self) -> None:
+        form = {**preview.DEFAULTS, "deny_paths_mode": "block"}
+
+        self.assertFalse(form_groups.blocks_on_match(form))
+
 
 class TheRowInTheBrowser(EditorTestCase):
     """Block for greys in place outside block, and the group's badges count the row."""

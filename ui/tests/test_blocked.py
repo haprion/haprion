@@ -627,6 +627,44 @@ class TheObjectPageAndTheDashboard(DraftReading, BadgeReading):
         self.assertNotIn('<meta name="haproxy-live"', plain)
         self.assertIn('<meta name="haproxy-live"', ruled)
 
+    def test_a_page_whose_object_blocks_by_denied_paths_keeps_itself_current_too(self) -> None:
+        """Review 26-11-24, PW05: the object's own `blocks_on_match`, not the rules alone."""
+
+        from haprion.proxy_model import load_proxy as real_load
+
+        from haprion_ui import reading as page_reading
+
+        original = page_reading.read_source
+
+        def demo_rows(request: Any, config: Any, source: Any) -> Any:
+            return original(request, replace(config, demo_fixture=True), source)
+
+        def with_blocked_paths(name: str, document: bytes) -> Any:
+            proxy = real_load(name, document)
+            denied = real_load(
+                "shop",
+                b"schema: 1\nname: shop\nhostnames: [shop.example.com]\n"
+                b"listen: {protocol: http}\nroutes:\n  - {path: /, backend: web}\n"
+                b"backends:\n  web: {balance: roundrobin,"
+                b" servers: [{host: 198.51.100.10, port: 80}]}\n"
+                b"deny_paths: {mode: block, paths: [/.env]}\n",
+            ).deny_paths
+            return replace(proxy, dynamic_block=None, deny_rules=(), deny_paths=denied)
+
+        self.account = replace(self.account, role="admin")
+        config = replace(configuration(), management_writes=True, clusters=demo.CLUSTERS)
+        client = self.client(config)
+        self.sign_in(client)
+        with (
+            mock.patch("haprion_ui.pages.proxies.read_source", side_effect=demo_rows),
+            mock.patch("haprion_ui.object_reading.read_source", side_effect=demo_rows),
+            mock.patch.object(demo, "BLOCKED", {}),
+            mock.patch("haprion_ui.pages.proxies.load_proxy", side_effect=with_blocked_paths),
+        ):
+            denied = client.get("/proxies/edge-demo/public-web").text
+
+        self.assertIn('<meta name="haproxy-live"', denied)
+
     def test_the_dashboard_links_the_objects_for_an_admin(self) -> None:
         page = self.writing_client().get("/")
 

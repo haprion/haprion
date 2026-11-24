@@ -1335,11 +1335,7 @@ def build_router(config: Config) -> APIRouter:
         # since each drawing reads their traffic again.
         #
         blocking = blocked_card is not None or (
-            proxy is not None
-            and (
-                proxy.dynamic_block is not None
-                or any(rule.mode == "block" for rule in proxy.deny_rules)
-            )
+            proxy is not None and (proxy.dynamic_block is not None or proxy.blocks_on_match)
         )
         blocked_missed = ""
         if servers is not None or blocked_card is not None:

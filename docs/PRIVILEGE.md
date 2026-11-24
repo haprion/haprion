@@ -148,7 +148,7 @@ never hold a transaction open across a CLI command.
   the blocklist check helper read them.
 - A path list is root's alone: one file in `/etc/haprion/path-lists`, mode 0600 in a 0700 directory,
   written by its helper from the worker's job. Every publish reads it as root and copies the lists its
-  objects name into the version, where the nodes' configuration is made from that copy.
+  objects name into the version, where the nodes' configuration is made from that copy. Removing one reads each cluster's committed objects, as a publish does, and refuses while one names it.
 - The HTTP-01 check makes its directory under the webroot world-readable (0755, its test file 0644) because the web server reads it as its own user and serves it to anyone, the same way the certificate client's webroot plugin does.
 - The traffic log mirror is written by the collector and readable, never writable, by the web.
 - The answers the socket helpers keep for recovery are in `/var/lib/haprion/answers`, root's and

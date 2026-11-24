@@ -2856,7 +2856,8 @@ listen:
   protocol: http
 deny_paths:
   mode: {mode}
-  paths: [/.env, /admin]
+  lists: [scanners]
+  paths: [/admin]
 routes:
   - path: /
     backend: {name}-web
@@ -2876,7 +2877,17 @@ backends:
 # decode: the variable the rules read was left unset, and every rule that reads
 # it - and the dot-segment refusal - let the request through (200).
 #
-READ_AS_DENIED = ("/.env", "/.ENV", "/%2eenv", "/.env;x=1", "/.env.", "/.env/x", "/admin/users")
+READ_AS_DENIED = (
+    "/.env",
+    "/.ENV",
+    "/%2eenv",
+    "/.env;x=1",
+    "/.env.",
+    "/.env/x",
+    "/admin/users",
+    "/wp-login.php",
+    "/WP-LOGIN.PHP/x",
+)
 UNREADABLE = ("/.env/%zz", "/%u002eenv", "/%zz/../.env", "/.env%2", "/admin/%zz", "/x%")
 REFUSED_AS_PATHS = ("/x/../.env", "/.env%00")
 
@@ -2909,6 +2920,11 @@ class DeniedPathsAnswerInTheRealHaproxy(unittest.TestCase):
             default_vip="main",
             ports={"http": cls.port},
             trusted_proxies=("127.0.0.1",),
+            #
+            # `/.env` is on a list, a file the nodes load; `/admin` is the
+            # object's own, written in the configuration.
+            #
+            path_lists={"scanners": ("/.env", "/Wp-Login.php")},
         )
         #
         # The window onto `txn.rule`, as the class above hangs it.
@@ -2974,7 +2990,14 @@ class DeniedPathsAnswerInTheRealHaproxy(unittest.TestCase):
 
     def test_a_path_that_is_not_a_denied_path_is_served(self) -> None:
         for mode in ("deny", "block", "log"):
-            for target in ("/", "/.envx", "/administrator", "/a/.env2"):
+            for target in (
+                "/",
+                "/.envx",
+                "/administrator",
+                "/a/.env2",
+                "/wp-login.phpx",
+                "/x/wp-login.php",
+            ):
                 with self.subTest(mode=mode, target=target):
                     self.assertEqual(self.ask(target, mode), (200, ""))
 

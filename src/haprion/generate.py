@@ -48,6 +48,14 @@ from haprion.guid import (
     redirect_suffixes,
     server_guid,
 )
+
+#
+# Not defined here. The lists, and where they came from, live in `tls_policy` -
+# a cluster's own `core/haproxy.cfg` carries the same Mozilla recommendation,
+# and the two had already drifted apart by one cipher before there was one
+# place to point at.
+#
+from haprion.path_lists import map_file_name
 from haprion.proxy_model import (
     DEFAULT_DOWN_INTERVAL,
     DEFAULT_FAST_INTERVAL,
@@ -72,13 +80,6 @@ from haprion.proxy_model import (
     wildcard_expression,
     wildcard_matches,
 )
-
-#
-# Not defined here. The lists, and where they came from, live in `tls_policy` -
-# a cluster's own `core/haproxy.cfg` carries the same Mozilla recommendation,
-# and the two had already drifted apart by one cipher before there was one
-# place to point at.
-#
 from haprion.release_layout import CRT_LIST_TARGET
 from haprion.reservations import NOTHING_RESERVED, Reservations
 from haprion.route_match import order_routes
@@ -609,7 +610,7 @@ def generate(
             )
         known_networks[name] = BlocklistGroup()
     _refuse_unknown_networks(ordered, known_networks)
-    ordered = _with_path_lists(ordered, path_lists or {})
+    _refuse_unknown_path_lists(ordered, path_lists or {})
 
     known_sources = dict(sources or {})
     everything = [(vip_of(proxy, vips, default_vip), proxy) for proxy in ordered]
@@ -720,7 +721,10 @@ def generate(
         configuration=files,
         certificate_lists=listings,
         object_parts=parts,
-        map_files=_country_files(ordered, countries),
+        map_files={
+            **_country_files(ordered, countries),
+            **_path_list_files(ordered, path_lists or {}),
+        },
         waf_files=_waf_files(guarded, rule_definitions or {}),
         dns_files=dns.files,
         rsyslog_files=rsyslog_forward.render(settings.log_targets, traffic_logging=traffic_logging),
@@ -1529,21 +1533,17 @@ class BlocklistGroup(tuple[str, ...]):
 BLOCKLISTS_DIRECTORY = "/etc/haproxy/blocklists"
 
 
-def _with_path_lists(
+def _refuse_unknown_path_lists(
     proxies: Sequence[Proxy], path_lists: Mapping[str, Sequence[str]]
-) -> list[Proxy]:
-    """Each object's *Denied paths* as the paths they are: its own, then each list's (B527).
+) -> None:
+    """A list an object names and the caller does not know is refused, as a group is (B527).
 
-    A list the object names and the caller does not know is refused, as a
-    group is: denied paths that silently named nothing would refuse nothing.
-    What follows reads paths alone.
+    Denied paths that silently named nothing would refuse nothing.
     """
 
-    resolved: list[Proxy] = []
     for proxy in proxies:
         denied = proxy.deny_paths
-        if denied is None or not denied.lists:
-            resolved.append(proxy)
+        if denied is None:
             continue
         missing = [name for name in denied.lists if name not in path_lists]
         if missing:
@@ -1551,14 +1551,6 @@ def _with_path_lists(
                 f"{proxy.name} names the path list {missing[0]}, which does not exist; "
                 "add it under Settings → Path lists"
             )
-        paths = [*denied.paths, *(path for name in denied.lists for path in path_lists[name])]
-        resolved.append(
-            dataclasses.replace(
-                proxy,
-                deny_paths=dataclasses.replace(denied, lists=(), paths=tuple(dict.fromkeys(paths))),
-            )
-        )
-    return resolved
 
 
 def _refuse_unknown_networks(
@@ -2913,6 +2905,30 @@ def _country_files(proxies: Sequence[Proxy], countries: geo.Countries | None) ->
     }
 
 
+def _path_list_files(
+    proxies: Sequence[Proxy], path_lists: Mapping[str, Sequence[str]]
+) -> dict[str, str]:
+    """One file per path list an object names: each path, lower case, with the slash it is read with.
+
+    Written whole on every publish, as the country files are, from the
+    lists the version carries (B532).
+    """
+
+    named = sorted(
+        {
+            name
+            for proxy in proxies
+            if proxy.deny_paths is not None
+            for name in proxy.deny_paths.lists
+        }
+    )
+    return {
+        map_file_name(name): f"# Path list {name}\n"
+        + "".join(f"{path.lower()}/\n" for path in path_lists[name])
+        for name in named
+    }
+
+
 def _cidrs(entries: Sequence[str], networks: Mapping[str, Sequence[str]]) -> list[str]:
     """Group names resolved to the cluster's ranges, literal ranges kept."""
 
@@ -3154,6 +3170,16 @@ def _access_rules(
                 f"    acl {acl} {ACCESS_PATH} -m str {path.lower()}",
                 f"    acl {acl} {ACCESS_PATH} -m beg {path.lower()}/",
             ]
+        #
+        # A list is a file the nodes load once, whatever number of objects
+        # name it (review 26-11-24, PW13): its lines are `<path>/`, read
+        # against the path with a slash added, so a path matches itself and
+        # what is under it and `/.envx` matches neither.
+        #
+        for name in denied.lists:
+            lines.append(
+                f"    acl {acl} {ACCESS_PATH},concat(/) -m beg -f {MAPS_DIRECTORY}/{map_file_name(name)}"
+            )
         matched = f"{host} {acl}"
         if denied.mode == "block" and denied.block_for is not None:
             lines.extend(

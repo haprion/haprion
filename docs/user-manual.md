@@ -1985,7 +1985,8 @@ worth refusing depends on what the sites run.
 version, a revert and the change history like the objects do. *Save* stores the list on the manager, and
 each cluster with an object that uses it then shows *Publish & deploy to apply the update (the path list
 … changed under Settings)* under *Needs attention*. The version a cluster runs carries a copy of the lists
-its objects use, so a revert goes back to the paths that version had.
+its objects use, so a revert goes back to the paths that version had. On the nodes a list is one file,
+loaded once however many objects use it.
 
 **Using one.** *Add to proxies…* on the list's row asks which clusters, and adds the list to every http and
 https object in those, as saved changes. An object that had no denied paths gets them in *log only*, so

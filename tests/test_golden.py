@@ -302,7 +302,9 @@ class HaproxyAcceptsWhatWeGenerate(unittest.TestCase):
 
 
 def _haproxy_check(
-    configuration: Mapping[str, str], listings: Mapping[str, str]
+    configuration: Mapping[str, str],
+    listings: Mapping[str, str],
+    maps: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """`haproxy -c` on a generated layer, laid out as a release lays it out."""
 
@@ -327,8 +329,13 @@ def _haproxy_check(
             # HAProxy refuses to start on a certificate it cannot stat,
             # so without this an https case could not be validated at all.
             #
-            return content.replace(NODE_CERTIFICATE_DIR, str(certificates))
+            return content.replace(NODE_CERTIFICATE_DIR, str(certificates)).replace(
+                "/etc/haproxy/maps/", f"{root}/maps/"
+            )
 
+        (root / "maps").mkdir()
+        for name, content in (maps or {}).items():
+            (root / "maps" / name).write_text(content)
         for name, content in configuration.items():
             (root / "conf.d" / name).write_text(local(content))
         if listings:

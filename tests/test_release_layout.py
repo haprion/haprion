@@ -148,6 +148,20 @@ class MapLayerTests(unittest.TestCase):
             )
         self.assertIn("hosts.map", str(caught.exception))
 
+    def test_the_generated_map_layer_holds_country_and_path_list_files_only(self) -> None:
+        artifact = build_node_artifact(
+            tree(
+                **{
+                    "managed/maps/geo-se.lst": b"192.0.2.0/24\n",
+                    "managed/maps/paths-scanners.lst": b"/.env/\n",
+                }
+            )
+        )
+        self.assertEqual(artifact["maps/paths-scanners.lst"], b"/.env/\n")
+        for name in ("hosts.map", "paths-Bad.lst", "paths-.lst", "path-x.lst"):
+            with self.subTest(name), self.assertRaises(LayoutError):
+                build_node_artifact(tree(**{f"managed/maps/{name}": b"x\n"}))
+
     def test_maps_are_taken_whatever_the_extension(self) -> None:
         """Unlike conf.d, a map layer is not filtered by suffix."""
         self.assertIn("maps/hosts", build_node_artifact(tree(**{"core/maps/hosts": b"a\n"})))

@@ -46,12 +46,13 @@ MAP_LAYERS: tuple[tuple[str, str], ...] = (
     ("manual/maps", "manual"),
 )
 #
-# The generated map layer (B228): one network list per country, written whole
-# on every publish. Held to the managed rule - one shape, one level - since it
-# is application output a person never edits.
+# The generated map layer (B228): one network list per country and one path list
+# per list an object names (PW13), written whole on every publish. Held to the
+# managed rule - one shape, one level - since it is application output a
+# person never edits.
 #
 MANAGED_MAPS = "managed/maps"
-MANAGED_MAP_NAME = re.compile(r"^geo-[a-z]{2}\.lst$")
+MANAGED_MAP_NAME = re.compile(r"^(geo-[a-z]{2}|paths-[a-z][a-z0-9-]{0,39})\.lst$")
 
 REQUIRED_FILES: tuple[str, ...] = ("core/haproxy.cfg", "manual/reservations.yaml")
 

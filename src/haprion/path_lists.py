@@ -156,6 +156,12 @@ def _secure_directory(path: Path, *, require_secure: bool) -> None:
         raise PathListError(f"{path} must be owned by root, mode 0700")
 
 
+def map_file_name(name: str) -> str:
+    """The file the nodes load a list from, in the release's `maps/`, as the generator names it."""
+
+    return f"paths-{checked_name(name)}.lst"
+
+
 def _document(item: PathList) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,

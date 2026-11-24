@@ -10,8 +10,15 @@ from pathlib import Path
 from typing import Any
 
 from haprion import path_lists, regeneration
+from haprion.candidate_validation import DERIVED_LIMITS
 from haprion.config import ConfigError
-from haprion.generate import BLOCK_REASON_BY_NAME, GeneratorError, generate, rule_block_table
+from haprion.generate import (
+    BLOCK_REASON_BY_NAME,
+    GeneratedLayer,
+    GeneratorError,
+    generate,
+    rule_block_table,
+)
 from haprion.golden import CERTIFICATES, DEFAULT_VIPS
 from haprion.managed_publish import managed_files
 from haprion.proxy_model import ModelError, Proxy, load_proxy
@@ -26,15 +33,18 @@ def denied(body: str) -> Proxy:
     return _https("shop", f"deny_paths:\n{body}")
 
 
-def frontend(proxy: Proxy, lists: Mapping[str, tuple[str, ...]] = SCANNERS) -> list[str]:
-    layer = generate(
+def layer(proxy: Proxy, lists: Mapping[str, tuple[str, ...]] = SCANNERS) -> GeneratedLayer:
+    return generate(
         [proxy],
         vips=dict(DEFAULT_VIPS),
         default_vip="main",
         certificates=CERTIFICATES,
         path_lists=lists,
     )
-    return layer.configuration["1000-frontends.cfg"].split("\n")
+
+
+def frontend(proxy: Proxy, lists: Mapping[str, tuple[str, ...]] = SCANNERS) -> list[str]:
+    return layer(proxy, lists).configuration["1000-frontends.cfg"].split("\n")
 
 
 class TheModel(unittest.TestCase):
@@ -105,20 +115,26 @@ class TheModel(unittest.TestCase):
 
 
 class TheGenerator(unittest.TestCase):
-    def test_each_path_matches_itself_and_what_is_under_it_lists_after_its_own(self) -> None:
-        lines = frontend(denied("  mode: deny\n  lists: [scanners]\n  paths: [/Server-Info]\n"))
-        acl = [line.strip() for line in lines if "acl mgd-shop-deny-paths " in line]
+    def test_each_path_matches_itself_and_what_is_under_it_a_list_is_a_file(self) -> None:
+        made = layer(denied("  mode: deny\n  lists: [scanners]\n  paths: [/Server-Info]\n"))
+        acl = [
+            line.strip()
+            for line in made.configuration["1000-frontends.cfg"].split("\n")
+            if "acl mgd-shop-deny-paths " in line
+        ]
         self.assertEqual(
             acl,
             [
                 "acl mgd-shop-deny-paths var(txn.access_path) -m str /server-info",
                 "acl mgd-shop-deny-paths var(txn.access_path) -m beg /server-info/",
-                "acl mgd-shop-deny-paths var(txn.access_path) -m str /.env",
-                "acl mgd-shop-deny-paths var(txn.access_path) -m beg /.env/",
-                "acl mgd-shop-deny-paths var(txn.access_path) -m str /wp-login.php",
-                "acl mgd-shop-deny-paths var(txn.access_path) -m beg /wp-login.php/",
+                "acl mgd-shop-deny-paths var(txn.access_path),concat(/) -m beg "
+                "-f /etc/haproxy/maps/paths-scanners.lst",
             ],
         )
+        self.assertEqual(
+            made.map_files, {"paths-scanners.lst": "# Path list scanners\n/.env/\n/wp-login.php/\n"}
+        )
+        lines = made.configuration["1000-frontends.cfg"].split("\n")
         self.assertTrue(any("set-var(txn.access_path)" in line for line in lines))
         self.assertTrue(any("str(deny-paths:deny)" in line for line in lines))
         self.assertFalse(any("ruleblock" in line for line in lines))
@@ -139,6 +155,26 @@ class TheGenerator(unittest.TestCase):
                 self.assertEqual(
                     any("deny deny_status 400" in line for line in refused), mode != "log"
                 )
+
+    def test_a_list_named_by_a_thousand_objects_is_written_once(self) -> None:
+        # Review 26-11-24, PW13: the frontend file grew with objects times paths.
+        paths = tuple(f"/scanner-probe/path-number-{number:04d}.php" for number in range(500))
+        proxies = [
+            _https(f"shop{number}", "deny_paths:\n  mode: deny\n  lists: [scanners]\n")
+            for number in range(1000)
+        ]
+        made = generate(
+            proxies,
+            vips=dict(DEFAULT_VIPS),
+            default_vip="main",
+            certificates=CERTIFICATES,
+            path_lists={"scanners": paths},
+        )
+        frontend_bytes = len(made.configuration["1000-frontends.cfg"].encode())
+        self.assertLess(frontend_bytes, DERIVED_LIMITS.file_bytes // 10)
+        self.assertEqual(list(made.map_files), ["paths-scanners.lst"])
+        self.assertNotIn("path-number", made.configuration["1000-frontends.cfg"])
+        self.assertEqual(made.map_files["paths-scanners.lst"].count("\n"), 501)
 
     def test_log_only_records_and_refuses_nothing(self) -> None:
         lines = frontend(denied("  lists: [scanners]\n"))
@@ -185,7 +221,9 @@ class TheGenerator(unittest.TestCase):
                 path_lists=SCANNERS,
             )
             with self.subTest(mode=mode):
-                result = _haproxy_check(layer.configuration, layer.certificate_lists)
+                result = _haproxy_check(
+                    layer.configuration, layer.certificate_lists, layer.map_files
+                )
                 self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
 
@@ -345,20 +383,25 @@ class TheVersionCarriesACopy(unittest.TestCase):
         self.assertEqual(
             path_lists.load_snapshot(files[path_lists.SNAPSHOT]), {"scanners": SCANNERS["scanners"]}
         )
-        self.assertIn(b"/wp-login.php", files["managed/generated/1000-frontends.cfg"])
+        self.assertEqual(
+            files["managed/maps/paths-scanners.lst"],
+            b"# Path list scanners\n/.env/\n/wp-login.php/\n",
+        )
+        self.assertNotIn("managed/maps/paths-other.lst", files)
 
     def test_without_a_reader_the_versions_own_copy_is_taken(self) -> None:
         document = object_document("deny_paths:\n  mode: deny\n  lists: [scanners]\n")
         first = self.publish({"managed/proxies/shop.yaml": document}, {"scanners": ("/old",)})
         again = self.publish({**first, "managed/proxies/shop.yaml": document}, None)
         self.assertEqual(again[path_lists.SNAPSHOT], first[path_lists.SNAPSHOT])
-        self.assertIn(b"/old", again["managed/generated/1000-frontends.cfg"])
+        self.assertIn(b"/old/", again["managed/maps/paths-scanners.lst"])
 
     def test_no_list_named_leaves_no_copy(self) -> None:
         named = object_document("deny_paths:\n  mode: deny\n  lists: [scanners]\n")
         first = self.publish({"managed/proxies/shop.yaml": named}, SCANNERS)
         files = self.publish({**first, "managed/proxies/shop.yaml": object_document("")}, SCANNERS)
         self.assertNotIn(path_lists.SNAPSHOT, files)
+        self.assertNotIn("managed/maps/paths-scanners.lst", files)
 
     def test_a_list_that_is_gone_refuses_the_publish(self) -> None:
         document = object_document("deny_paths:\n  mode: deny\n  lists: [scanners]\n")

@@ -175,6 +175,10 @@ _OPERATION_OUTCOMES = {
     #
     "blocklist_apply": frozenset({"done", "failed", "blocked"}),
     #
+    # `path_list_apply` (B532) writes one list or refuses to; no node is touched.
+    #
+    "path_list_apply": frozenset({"done", "failed"}),
+    #
     # `cert_scep` has a real half: the CA holding the request. That is
     # `partial` - the key is kept and the same request is resumed later.
     #
@@ -417,6 +421,22 @@ def _finish(
                 " asked for and was kept",
             )
 
+    if state == "done" and job.operation == "path_list_apply" and job.payload.get("remove") is True:
+        name = job.payload.get("name")
+        revision = job.payload.get("revision")
+        if not (
+            isinstance(name, str)
+            and type(revision) is int
+            and db.delete_path_list(connection, name, revision)
+        ):
+            logger.error("job %s removed a path list but its row changed", job.id)
+            result = _with_warning(
+                result,
+                "path_list_row_changed",
+                "the path list was removed; its row changed after the removal was asked for and"
+                " was kept",
+            )
+
     if not db.finish_job(
         connection,
         job_id=job.id,
@@ -620,6 +640,17 @@ def _sealed_profile(
         key_id=row.key_id,
         revision=row.revision,
         ciphertext=bytes(row.ciphertext),
+    )
+
+
+def _path_list_row(connection: Any, name: str) -> operations.PathListRow | None:
+    """The one path list row a `path_list_apply` job needs, read as the worker."""
+
+    row = db.applied_path_list(connection, name)
+    if row is None:
+        return None
+    return operations.PathListRow(
+        name=row.name, revision=row.revision, description=row.description, paths=tuple(row.paths)
     )
 
 
@@ -922,6 +953,7 @@ def run_one_job(
                 connection, profile_id, ndes=job.operation == "ndes_profile_apply"
             ),
             blocklist_lookup=lambda name: _blocklist_row(connection, name),
+            path_list_lookup=lambda name: _path_list_row(connection, name),
         )
     except (operations.UnknownOperation, operations.BadPayload) as refusal:
         #

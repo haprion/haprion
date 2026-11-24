@@ -116,6 +116,26 @@ def path_list(
     )
 
 
+def build_request(request_id: str, *, item: PathList | None, name: str, revision: int) -> str:
+    """The request the worker sends the apply helper; `item` None removes the list."""
+
+    parameters: dict[str, Any] = {"name": name, "revision": revision}
+    if item is None:
+        parameters["remove"] = True
+    else:
+        parameters.update({"description": item.description, "paths": list(item.paths)})
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "operation": OPERATION,
+            "cluster": None,
+            "request_id": request_id,
+            "parameters": parameters,
+        },
+        separators=(",", ":"),
+    )
+
+
 def lines(text: str) -> list[str]:
     """Paths as a form or a file writes them: one to a line, blank lines and spaces dropped."""
 

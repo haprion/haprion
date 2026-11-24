@@ -4820,6 +4820,59 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
             (3, 3, b"c" * 64),
         )
 
+    def test_a_path_list_is_saved_by_the_web_and_removed_by_the_worker(self) -> None:
+        """B532, 0125: insert, the next revision fenced on the one seen, the job, the worker's read and delete."""
+
+        def clear() -> None:
+            with self.connection.cursor() as cursor:
+                cursor.execute("delete from path_list")
+                cursor.execute("delete from job")
+            self.connection.commit()
+
+        self.addCleanup(clear)
+        fields: dict[str, Any] = {
+            "name": "scanners",
+            "description": "What scanners ask for",
+            "paths": ["/.env", "/wp-login.php"],
+            "actor": "admin",
+        }
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as web:
+            first = db.save_path_list(web, previous=None, **fields)
+            web.commit()
+            with self.assertRaises(db.PathListChanged):
+                db.save_path_list(web, previous=None, **fields)
+            second = db.save_path_list(web, previous=1, **{**fields, "paths": ["/.git"]})
+            with self.assertRaises(db.PathListChanged):
+                db.save_path_list(web, previous=1, **fields)
+            db.queue_job(
+                web,
+                operation="path_list_apply",
+                cluster=None,
+                payload={"name": "scanners", "revision": second.revision},
+                idempotency_key=uuid4(),
+            )
+            web.commit()
+            self.assertEqual([row.name for row in db.path_lists(web)], ["scanners"])
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                web.execute("delete from path_list")
+            web.rollback()
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                db.save_path_list(web, previous=None, **{**fields, "name": "Bad"})
+            web.rollback()
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                db.save_path_list(web, previous=None, **{**fields, "name": "empty", "paths": []})
+            web.rollback()
+        self.assertEqual((first.revision, second.revision, second.paths), (1, 2, ["/.git"]))
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as worker:
+            applied = db.applied_path_list(worker, "scanners")
+            self.assertEqual(applied.paths if applied else None, ["/.git"])
+            self.assertFalse(db.delete_path_list(worker, "scanners", 1))
+            self.assertTrue(db.delete_path_list(worker, "scanners", 2))
+            worker.commit()
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                worker.execute("update path_list set description = ''")
+            worker.rollback()
+
     def test_a_list_without_authorization_keeps_its_secret_revision_through_every_save(
         self,
     ) -> None:
@@ -12082,6 +12135,9 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
 
     def test_a_dump_at_0123_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
         self.restored_from("0123", grants_differ="0123 has no cluster_handwritten to grant on")
+
+    def test_a_dump_at_0124_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
+        self.restored_from("0124", grants_differ="0124 has no path_list to grant on")
 
 
 class EveryRevisionADumpCanBeAtIsRestored(unittest.TestCase):

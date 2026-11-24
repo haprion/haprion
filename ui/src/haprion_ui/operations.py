@@ -34,6 +34,7 @@ from haprion import (
     dns_profiles,
     ndes_profiles,
     node_enrollment,
+    path_lists,
 )
 from haprion.cert_receiver import SECRET_HASH
 from haprion.cli import (
@@ -58,7 +59,7 @@ from haprion.cli import (
     server_state_helper,
 )
 from haprion.config import CERTIFICATE_ID, RECEIVER_FORMATS, RECEIVER_ID, RECEIVER_TRANSPORTS
-from haprion.proxy_model import NAME
+from haprion.proxy_model import NAME, PATH_LIST_NAME
 from haprion.server_state import MAX_ADDRESSES, MAX_SERVERS, STATES, UNBLOCK_OPERATION
 from haprion.version_history import UnfitName, trailer_name
 
@@ -282,6 +283,7 @@ OPERATIONS = frozenset(
         "node_restore_prepare",
         "node_restore_preview",
         "node_restore_status",
+        "path_list_apply",
         "revert",
         "server_state",
     }
@@ -290,6 +292,7 @@ OPERATIONS = frozenset(
 CERTIFICATE_OPERATIONS = frozenset(
     {
         "blocklist_apply",
+        "path_list_apply",
         "cert_issue",
         "cert_publish",
         "cert_target",
@@ -349,6 +352,19 @@ class BlocklistRow:
 
 BlocklistLookup = Callable[[str], BlocklistRow | None]
 
+
+@dataclass(frozen=True)
+class PathListRow:
+    """What `prepare` needs from a path list row (B532)."""
+
+    name: str
+    revision: int
+    description: str
+    paths: tuple[str, ...]
+
+
+PathListLookup = Callable[[str], PathListRow | None]
+
 #
 # Which of the named certificates a draft still names, as certificate ID to
 # `cluster/object` rows. The web asks its own database and hands the answer
@@ -372,6 +388,7 @@ def _certificate_operation(
     profile_lookup: ProfileLookup | None,
     draft_references: DraftReferences | None,
     blocklist_lookup: BlocklistLookup | None = None,
+    path_list_lookup: PathListLookup | None = None,
 ) -> Prepared:
     """The three operations scoped by certificate rather than by cluster.
 
@@ -721,6 +738,44 @@ def _certificate_operation(
         return Prepared(
             argv=(dns_profiles.SUDO, *SUDO_FLAGS, blocklist_store.HELPER),
             request=request,
+        )
+
+    if operation == "path_list_apply":
+        #
+        # As a blocklist: the payload names the list and the revision saved,
+        # and the row is read when the job runs. A newer row is applied (the
+        # helper takes no older revision); a removal applies only the revision
+        # it was asked for, and the worker deletes the row after.
+        #
+        _only(payload, "name", "revision", "remove")
+        name = payload.get("name")
+        revision = payload.get("revision")
+        if not isinstance(name, str) or not PATH_LIST_NAME.fullmatch(name):
+            raise BadPayload("path_list_apply needs a path list's name")
+        if type(revision) is not int or not 1 <= revision <= path_lists.MAX_REVISION:
+            raise BadPayload("path_list_apply needs a revision from 1 to 1 000 000")
+        remove = _flag(payload, "remove", default=False)
+        if path_list_lookup is None:
+            raise BadPayload("path_list_apply needs the path list listed and none was offered")
+        saved = path_list_lookup(name)
+        if saved is None:
+            raise BadPayload(f"path list {name} no longer exists")
+        if saved.revision < revision or (remove and saved.revision != revision):
+            raise BadPayload(f"path list {name} is at revision {saved.revision}, not {revision}")
+        if remove:
+            item = None
+        else:
+            try:
+                item = path_lists.path_list(
+                    saved.name, list(saved.paths), saved.description, saved.revision
+                )
+            except path_lists.PathListError as exc:
+                raise BadPayload(f"path list {name}: {exc}") from exc
+        return Prepared(
+            argv=(dns_profiles.SUDO, *SUDO_FLAGS, path_lists.HELPER),
+            request=path_lists.build_request(
+                str(request_id), item=item, name=name, revision=saved.revision
+            ),
         )
 
     if operation == "dns_profile_apply":
@@ -1113,6 +1168,7 @@ def prepare(
     profile_lookup: ProfileLookup | None = None,
     draft_references: DraftReferences | None = None,
     blocklist_lookup: BlocklistLookup | None = None,
+    path_list_lookup: PathListLookup | None = None,
 ) -> Prepared:
     """Build the command for one job, or refuse it.
 
@@ -1144,6 +1200,7 @@ def prepare(
             profile_lookup=profile_lookup,
             draft_references=draft_references,
             blocklist_lookup=blocklist_lookup,
+            path_list_lookup=path_list_lookup,
         )
 
     #

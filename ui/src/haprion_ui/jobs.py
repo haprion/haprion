@@ -197,6 +197,7 @@ OPERATION_LABELS = {
     "cert_receiver": "Change certificate receiver",
     "dns_profile_apply": "Apply DNS profile",
     "blocklist_apply": "Apply blocklist",
+    "path_list_apply": "Apply path list",
     "ndes_profile_apply": "Apply NDES profile",
     "cluster_node": "Change cluster nodes",
     "cluster_define": "Create or remove cluster",
@@ -336,6 +337,7 @@ SUBJECT_FIELDS = {
     "dns_profile_apply": "profile",
     "ndes_profile_apply": "profile",
     "blocklist_apply": "name",
+    "path_list_apply": "name",
 }
 
 #
@@ -828,11 +830,15 @@ def ran(job: Job) -> bool:
 #
 # The warnings the worker adds to a job's result, about the job rather than
 # about what its helper found: ended on an answer its helper gave before
-# (`answer_kept`), and a removed profile or blocklist whose row was kept
-# (`profile_row_changed`, `blocklist_row_changed`).
+# (`answer_kept`), and a removed profile, blocklist or path list whose row was
+# kept (`profile_row_changed`, `blocklist_row_changed`, `path_list_row_changed`).
 #
-WORKER_WARNINGS = frozenset({"answer_kept", "profile_row_changed", "blocklist_row_changed"})
-WARNED_WHEN_DONE = frozenset({"deploy", "cert_deploy", "backup_run", "revert", "blocklist_apply"})
+WORKER_WARNINGS = frozenset(
+    {"answer_kept", "profile_row_changed", "blocklist_row_changed", "path_list_row_changed"}
+)
+WARNED_WHEN_DONE = frozenset(
+    {"deploy", "cert_deploy", "backup_run", "revert", "blocklist_apply", "path_list_apply"}
+)
 
 
 def warnings_of(job: Job) -> tuple[tuple[str, str], ...]:
@@ -1131,6 +1137,7 @@ UNKNOWN_NEXT: dict[str, str] = {
     "cert_receiver": "It may have taken effect. Check the receiver under Certificates before trying again.",
     "dns_profile_apply": "Check the profile under Certificates → DNS profiles before applying it again.",
     "blocklist_apply": "Check the list under Settings → Blocklists before saving it again.",
+    "path_list_apply": "Check the list under Settings → Path lists before saving it again.",
     "ndes_profile_apply": "Check the profile under Certificates → NDES profiles before applying it again.",
     "node_restore_prepare": _RESTORE,
     "node_restore_preview": _RESTORE,
@@ -1585,6 +1592,7 @@ RUNNING_LABELS = {
     "cert_request": "Making signing request",
     "dns_profile_apply": "Applying DNS profile",
     "blocklist_apply": "Applying blocklist",
+    "path_list_apply": "Applying path list",
     "ndes_profile_apply": "Applying NDES profile",
     "cert_scep": "Enrolling certificate",
     "cert_delete": "Deleting certificates",
@@ -1661,6 +1669,7 @@ FAILURE_LABELS = {
     "cert_request": "Signing request failed",
     "dns_profile_apply": "DNS profile apply failed",
     "blocklist_apply": "Blocklist apply failed",
+    "path_list_apply": "Path list apply failed",
     "ndes_profile_apply": "NDES profile apply failed",
     "cert_scep": "Certificate enrollment failed",
     "cert_delete": "Certificate deletion failed",

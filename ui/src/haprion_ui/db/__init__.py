@@ -267,6 +267,16 @@ from haprion_ui.db.oidc import (
     start_oidc_login,
     use_oidc_login,
 )
+from haprion_ui.db.path_lists import (
+    AppliedPathList,
+    PathList,
+    PathListChanged,
+    applied_path_list,
+    delete_path_list,
+    path_list,
+    path_lists,
+    save_path_list,
+)
 from haprion_ui.db.preferences import (
     AttentionKey,
     FeatureSwitch,
@@ -697,4 +707,12 @@ __all__ = [
     "waf_request_count",
     "waf_verdicts",
     "wake_poller",
+    "AppliedPathList",
+    "PathList",
+    "PathListChanged",
+    "applied_path_list",
+    "delete_path_list",
+    "path_list",
+    "path_lists",
+    "save_path_list",
 ]

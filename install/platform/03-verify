@@ -45,7 +45,7 @@ failures=0
 fail() { echo "  FAIL     $*" >&2; failures=$((failures + 1)); }
 
 step "Tables"
-expected_tables=$'alembic_version\napi_token\napp_session\napp_user\nattention_ack\naudit_event\nblocklist\nblocklist_state\ncluster_backups\ncluster_certificates\ncluster_change\ncluster_handwritten\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_pass\ncluster_regeneration\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\ngetting_started\njob\njob_claim_gate\nlogin_attempt\nlogin_unlock\nmanager_certificates\nmetric_backend_alias\nmetric_backend_hour_delta\nmetric_backend_member\nmetric_frontend\nmetric_frontend_hour_delta\nndes_provider_profile\nnode_event\nnode_event_state\noidc_login\noidc_provider\npackage_waiting\nprotection_review_ack\nprotection_review_view\nproxy_draft\nreceiver_fetch\nreceiver_witness\nretention_run\nsearch_entry\nstatus_access\nthrottle_key\ntraffic_log\nupdate_check\nversion_diff\nwaf_finding_client\nwaf_finding_path\nwaf_match'
+expected_tables=$'alembic_version\napi_token\napp_session\napp_user\nattention_ack\naudit_event\nblocklist\nblocklist_state\ncluster_backups\ncluster_certificates\ncluster_change\ncluster_handwritten\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_pass\ncluster_regeneration\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\ngetting_started\njob\njob_claim_gate\nlogin_attempt\nlogin_unlock\nmanager_certificates\nmetric_backend_alias\nmetric_backend_hour_delta\nmetric_backend_member\nmetric_frontend\nmetric_frontend_hour_delta\nndes_provider_profile\nnode_event\nnode_event_state\noidc_login\noidc_provider\npackage_waiting\npath_list\nprotection_review_ack\nprotection_review_view\nproxy_draft\nreceiver_fetch\nreceiver_witness\nretention_run\nsearch_entry\nstatus_access\nthrottle_key\ntraffic_log\nupdate_check\nversion_diff\nwaf_finding_client\nwaf_finding_path\nwaf_match'
 #
 # Partitions are excluded, and only partitions. They are tables in `pg_tables`
 # and there are dozens of them - one per day per metric table, made and dropped
@@ -211,6 +211,9 @@ app_web	oidc_login	UPDATE	used_at
 app_web	oidc_provider	SELECT	admin_group, auth_method, button_text, ca_pem, client_id, client_secret_sealed, enabled, groups_claim, issuer, key_id, local_login, logout_mode, prompt_login, reader_group, revision, scopes, updated_at, updated_by, username_claim, verified_revision
 app_web	oidc_provider	UPDATE	admin_group, auth_method, button_text, ca_pem, client_id, client_secret_sealed, enabled, groups_claim, issuer, key_id, local_login, logout_mode, prompt_login, reader_group, scopes, updated_by, username_claim, verified_revision
 app_web	package_waiting	SELECT	available, installed, name, read_at
+app_web	path_list	INSERT	description, name, paths, revision, updated_by
+app_web	path_list	SELECT	created_at, description, name, paths, revision, updated_at, updated_by
+app_web	path_list	UPDATE	description, paths, revision, updated_at, updated_by
 app_web	protection_review_ack	INSERT	accepted_by, cluster, subject, weaknesses
 app_web	protection_review_ack	SELECT	accepted_at, accepted_by, cluster, subject, weaknesses
 app_web	protection_review_ack	UPDATE	accepted_at, accepted_by, weaknesses
@@ -242,6 +245,7 @@ app_worker	metric_backend_alias	INSERT	cluster, new_name, old_name
 app_worker	metric_backend_alias	SELECT	cluster, new_name, old_name, renamed_at, reused_at
 app_worker	metric_backend_alias	UPDATE	new_name, renamed_at, reused_at
 app_worker	ndes_provider_profile	SELECT	ciphertext, id, key_id, provider_id, revision, schema_version
+app_worker	path_list	SELECT	description, name, paths, revision
 EOF
 )
 actual_grants="$(run -c "
@@ -284,6 +288,7 @@ app_web	status_access	DELETE
 app_worker	blocklist	DELETE
 app_worker	dns_provider_profile	DELETE
 app_worker	ndes_provider_profile	DELETE
+app_worker	path_list	DELETE
 EOF
 )
 actual_table_grants="$(run -c "

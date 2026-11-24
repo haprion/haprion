@@ -484,6 +484,7 @@ HELPER_ENDS = frozenset(
         "haprion-node-restore-helper",
         "haprion-objects-helper",
         "haprion-oidc-helper",
+        "haprion-path-list-apply-helper",
         "haprion-probe-helper",
         "haprion-publish-helper",
         "haprion-published-release-helper",

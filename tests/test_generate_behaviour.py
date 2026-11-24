@@ -2798,6 +2798,12 @@ class AccessRulesAnswerAndNameThemselvesInTheRealHaproxy(unittest.TestCase):
             with self.subTest(target):
                 self.assertEqual(self.ask(target, method="POST", body=b"x"), (200, ""))
 
+    def test_a_path_that_cannot_be_decoded_gets_past_no_rule(self) -> None:
+        # Review 26-11-24, PW01: the variable the rules read was left unset.
+        for target in ("/admin/%zz", "/%u0061dmin", "/%zz/../admin", "/admin%2", "/x%"):
+            with self.subTest(target):
+                self.assertEqual(self.ask(target), (400, "path-chars:deny"))
+
     def test_a_logged_rule_lets_the_request_through_and_names_itself(self) -> None:
         self.assertEqual(
             self.ask(headers={"User-Agent": "sqlmap/1.8, like curl"}), (200, "scanner:log")
@@ -2840,6 +2846,155 @@ class AccessRulesAnswerAndNameThemselvesInTheRealHaproxy(unittest.TestCase):
     def test_allow_from_reads_the_forwarded_address_behind_a_trusted_proxy(self) -> None:
         self.assertEqual(self.ask(host="office.example.com", visitor="198.51.100.7")[0], 200)
         self.assertEqual(self.ask(host="office.example.com", visitor="192.0.2.5")[0], 403)
+
+
+DENIED_PATHS = """
+schema: 1
+name: {name}
+hostnames: [{name}.example.com]
+listen:
+  protocol: http
+deny_paths:
+  mode: {mode}
+  paths: [/.env, /admin]
+routes:
+  - path: /
+    backend: {name}-web
+backends:
+  {name}-web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 127.0.0.1
+        port: {web}
+"""
+
+#
+# What a path must be answered, read from the real HAProxy (review 26-11-24,
+# the reviewer's own point and PW01). `UNREADABLE` are paths `url_dec` cannot
+# decode: the variable the rules read was left unset, and every rule that reads
+# it - and the dot-segment refusal - let the request through (200).
+#
+READ_AS_DENIED = ("/.env", "/.ENV", "/%2eenv", "/.env;x=1", "/.env.", "/.env/x", "/admin/users")
+UNREADABLE = ("/.env/%zz", "/%u002eenv", "/%zz/../.env", "/.env%2", "/admin/%zz", "/x%")
+REFUSED_AS_PATHS = ("/x/../.env", "/.env%00")
+
+
+@unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
+class DeniedPathsAnswerInTheRealHaproxy(unittest.TestCase):
+    """*Denied paths* in each mode, and the paths that cannot be read (PW01)."""
+
+    servers: list[ThreadingHTTPServer]
+    haproxy: subprocess.Popen[bytes]
+    directory: tempfile.TemporaryDirectory[str]
+    port: int
+    visitors = 0
+
+    @classmethod
+    @spawned.retry_on_taken_port
+    def setUpClass(cls) -> None:
+        web = free_port()
+        cls.servers = [body_server(web)]
+        wait_for(web)
+        cls.port = free_port()
+        cls.directory = tempfile.TemporaryDirectory()
+        root = Path(cls.directory.name)
+        layer = generate(
+            [
+                load_proxy(mode, DENIED_PATHS.format(name=mode, mode=mode, web=web).encode())
+                for mode in ("deny", "block", "log")
+            ],
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+            ports={"http": cls.port},
+            trusted_proxies=("127.0.0.1",),
+        )
+        #
+        # The window onto `txn.rule`, as the class above hangs it.
+        #
+        anchor = "    timeout client "
+        window = "    http-after-response set-header X-Rule %[var(txn.rule)]\n" + anchor
+        assert any(anchor in text for text in layer.configuration.values())
+        layer = GeneratedLayer(
+            configuration={
+                name: text.replace(anchor, window) for name, text in layer.configuration.items()
+            },
+            certificate_lists=layer.certificate_lists,
+            map_files=layer.map_files,
+        )
+        arguments = write_release(root, layer)
+        #
+        # A block tracks the visitor on a counter of its own, which the core
+        # of a cluster that has one declares.
+        #
+        core = root / "haproxy.cfg"
+        core.write_text(
+            core.read_text().replace("global\n", "global\n    tune.stick-counters 5\n", 1)
+        )
+        binary = shutil.which("haproxy")
+        assert binary is not None
+        cls.haproxy = start_haproxy(binary, arguments, cls.port)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.haproxy.terminate()
+        cls.haproxy.wait(timeout=5)
+        for server in cls.servers:
+            server.shutdown()
+            server.server_close()
+        cls.directory.cleanup()
+
+    def ask(self, target: str, mode: str) -> tuple[int, str]:
+        # A visitor of its own for each request: a block holds the address.
+        type(self).visitors += 1
+        visitor = f"192.0.2.{self.visitors % 250 + 1}"
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.putrequest("GET", target, skip_host=True, skip_accept_encoding=True)
+            connection.putheader("Host", f"{mode}.example.com")
+            connection.putheader("X-Forwarded-For", visitor)
+            connection.endheaders()
+            response = connection.getresponse()
+            response.read()
+            return response.status, response.getheader("X-Rule") or ""
+        finally:
+            connection.close()
+
+    def test_what_reads_as_a_denied_path_is_refused_in_the_modes_that_refuse(self) -> None:
+        for mode in ("deny", "block"):
+            for target in READ_AS_DENIED:
+                with self.subTest(mode=mode, target=target):
+                    self.assertEqual(self.ask(target, mode), (403, "deny-paths:deny"))
+
+    def test_log_only_lets_the_path_through_and_names_the_list(self) -> None:
+        for target in READ_AS_DENIED:
+            with self.subTest(target):
+                self.assertEqual(self.ask(target, "log"), (200, "deny-paths:log"))
+
+    def test_a_path_that_is_not_a_denied_path_is_served(self) -> None:
+        for mode in ("deny", "block", "log"):
+            for target in ("/", "/.envx", "/administrator", "/a/.env2"):
+                with self.subTest(mode=mode, target=target):
+                    self.assertEqual(self.ask(target, mode), (200, ""))
+
+    def test_a_path_with_dot_segments_or_control_characters_is_refused_as_such(self) -> None:
+        for mode in ("deny", "block"):
+            for target in REFUSED_AS_PATHS:
+                with self.subTest(mode=mode, target=target):
+                    self.assertEqual(self.ask(target, mode)[0], 400)
+
+    def test_a_path_that_cannot_be_decoded_is_refused_in_the_modes_that_refuse(self) -> None:
+        # PW01: each of these was served (200) before, with no variable set.
+        for mode in ("deny", "block"):
+            for target in UNREADABLE:
+                with self.subTest(mode=mode, target=target):
+                    self.assertEqual(self.ask(target, mode), (400, "path-chars:deny"))
+
+    def test_log_only_lets_a_path_that_cannot_be_decoded_through_and_says_so(self) -> None:
+        for target in UNREADABLE:
+            with self.subTest(target):
+                self.assertEqual(self.ask(target, "log"), (200, "path-chars:log"))
 
 
 WAF_ENGINE = Path("/usr/sbin/coraza-spoa")

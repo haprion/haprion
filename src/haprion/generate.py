@@ -277,7 +277,10 @@ RETRIES = 3
 # 3 (B525): a deny rule's block lives in a table of its own time and answers
 # 403, apart from the object's dynamic block.
 #
-GENERATOR_LEVEL = 3
+# 4 (1.3.2, B534): a path the rules cannot read - a `%` that does not decode -
+# is refused, where it passed every path rule, limit and the dot-segment test.
+#
+GENERATOR_LEVEL = 4
 
 # A second, opt-in stream. The ordinary `option httplog` output is deliberately
 # untouched: this profile applies only to the additional per-frontend log
@@ -3090,13 +3093,25 @@ def _access_path_rules(proxy: Proxy, host: str) -> list[str]:
         return []
     dots = _acl_name(proxy.name, "path-dots")
     controls = _acl_name(proxy.name, "path-chars")
+    read = _acl_name(proxy.name, "path-read")
+    #
+    # A path `url_dec` cannot decode (`%zz`, a last `%`, IIS's `%u002e`) leaves
+    # the variable unset, and then no ACL that reads it - nor the dot-segment
+    # test, which decodes itself - matches: the whole path protection was
+    # gone for the request (review 26-11-24, PW01). Such a path is refused as a
+    # control character is, in the same mode, and no browser sends one.
+    #
     lines = [
         f"    http-request set-var(txn.access_path) {ACCESS_PATH_EXPRESSION} if {host}",
+        f"    acl {read} {ACCESS_PATH} -m found",
         f"    acl {dots} path,url_dec -m reg {DOT_SEGMENT}",
         f"    acl {controls} path -m reg -i {CONTROL_CHARACTER}",
     ]
-    for acl, name in ((dots, "path-dots"), (controls, "path-chars")):
-        condition = f"{host} {acl}"
+    for condition, name in (
+        (f"{host} !{read}", "path-chars"),
+        (f"{host} {dots}", "path-dots"),
+        (f"{host} {controls}", "path-chars"),
+    ):
         if (
             limited
             or any(rule.mode in ("deny", "block") for rule in rules)

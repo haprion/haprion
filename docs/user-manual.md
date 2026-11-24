@@ -1729,14 +1729,16 @@ path is:
 Behind a backend that does tell `/Admin` from `/admin`, a rule on one refuses both. The backend still
 receives the path exactly as it was sent.
 
-Two kinds of path are answered 400 on an object with a refusing path rule or a [path limit](#path-limits):
+Three kinds of path are answered 400 on an object with a refusing path rule, denied paths or a [path limit](#path-limits):
 
 - a path with a `.` or `..` segment once decoded - `/./admin`, `/x/../admin`, `/%2e%2e/admin` - or with a
   backslash, which IIS and Windows read as a slash - `/admin\x`, `/admin%5Cx` - recorded `path-dots:deny`;
-- a path with a control character - `%00`, a line break - recorded `path-chars:deny`.
+- a path with a control character - `%00`, a line break - recorded `path-chars:deny`;
+- a path with a `%` that does not decode - `/x/%zz`, a last `%`, IIS's `/%u002e` - also recorded
+  `path-chars:deny`.
 
 When the object's path rules only look, and it has no path limit, these are recorded with `:log` instead.
-Browsers send neither.
+Browsers send none of them.
 
 Write a rule's own path decoded: without `%`, `//`, `;`, `.` or `..`, and with no segment ending in a dot.
 Its case does not matter.

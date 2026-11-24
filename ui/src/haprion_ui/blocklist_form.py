@@ -29,7 +29,7 @@ from haprion.config import ConfigError
 from haprion.dns_profile_keys import DnsProfilePublicKey
 from haprion.proxy_model import dump_document, read_document
 
-from haprion_ui import db, moments, network, objects, refusals, saved_work
+from haprion_ui import db, list_sync, moments, network, objects, refusals, saved_work
 from haprion_ui import jobs as queue
 
 OPERATION = "blocklist_apply"
@@ -481,6 +481,33 @@ class Row:
     """What a job is doing with the list, or that its last apply failed; `""` otherwise."""
     status_tone: str
     job_href: str
+    button: str = ""
+    """`apply_again` for a row root's file does not match; `""` otherwise."""
+
+
+NOT_APPLIED = "Not applied"
+ONLY_ON_THE_MANAGER = "Only on the manager"
+KIND = "blocklist"
+"""What `list_file` calls a blocklist definition file."""
+
+
+def row_digest(row: db.Blocklist) -> str | None:
+    """What the row says, as `blocklist_store.content_digest` says it of the file; None if it cannot be a definition."""
+
+    try:
+        return blocklist_store.content_digest(
+            blocklists.definition(
+                name=row.name,
+                url=row.url,
+                every_hours=row.every_hours,
+                authorization=row.auth,
+                username=row.username,
+                description=row.description,
+                excepts=row.excepts,
+            )
+        )
+    except ValueError:
+        return None
 
 
 def _figure(count: int) -> str:
@@ -546,14 +573,25 @@ def rows(
     lists: Iterable[db.Blocklist],
     states: Iterable[db.BlocklistState],
     latest: Mapping[str, db.Job],
+    files: Mapping[str, db.ListFile] | None = None,
     *,
     writes: bool,
 ) -> list[Row]:
-    """The card's rows, by name; `latest` is each list's newest apply job."""
+    """The card's rows, by name; `latest` is each list's newest apply job.
+
+    `files` is what the poller last read of root's definitions. A row they do
+    not match is *Not applied*, with *Apply again* in its buttons; a file
+    without a row is *Only on the manager*, which the secret it holds keeps
+    from being taken in: the list is made again under its name, and its
+    apply takes the file over (review 26-11-24, PW02).
+    """
 
     by_name = {state.name: state for state in states}
-    found: list[Row] = []
-    for item in sorted(lists, key=lambda entry: entry.name):
+    found: list[tuple[str, Row]] = []
+    lists = list(lists)
+    known = {item.name for item in lists}
+    read_at = list_sync.last_read(dict(files or {}))
+    for item in lists:
         state = by_name.get(item.name)
         if state is None or state.fetched_at is None:
             addresses = ""
@@ -564,20 +602,59 @@ def rows(
             if item.excepts:
                 addresses += f" · {len(item.excepts)} excepted"
         fetched, tone, title = _fetched(state)
-        status, status_tone, job_href = _status(item, latest.get(item.name), writes=writes)
+        job = latest.get(item.name)
+        status, status_tone, job_href = _status(item, job, writes=writes)
+        if (
+            files is not None
+            and not status
+            and not list_sync.in_step(
+                revision=item.revision,
+                digest=row_digest(item),
+                file=files.get(item.name),
+                job=job,
+                read_at=read_at,
+            )
+        ):
+            status, status_tone, job_href = NOT_APPLIED, "warning", ""
         found.append(
-            Row(
-                name=item.name,
-                href=f"/settings/blocklists/{item.name}/edit",
-                source=_host(item.url),
-                every=f"{item.every_hours} h",
-                addresses=addresses,
-                fetched=fetched,
-                fetched_tone=tone,
-                fetched_title=title,
-                status=status,
-                status_tone=status_tone,
-                job_href=job_href,
+            (
+                item.name,
+                Row(
+                    name=item.name,
+                    href=f"/settings/blocklists/{item.name}/edit",
+                    source=_host(item.url),
+                    every=f"{item.every_hours} h",
+                    addresses=addresses,
+                    fetched=fetched,
+                    fetched_tone=tone,
+                    fetched_title=title,
+                    status=status,
+                    status_tone=status_tone,
+                    job_href=job_href,
+                    button="apply_again"
+                    if writes and status in {NOT_APPLIED, "Apply failed"}
+                    else "",
+                ),
             )
         )
-    return found
+    for name in files or {}:
+        if name not in known:
+            found.append(
+                (
+                    name,
+                    Row(
+                        name=name,
+                        href="",
+                        source="",
+                        every="",
+                        addresses="",
+                        fetched="",
+                        fetched_tone="",
+                        fetched_title="",
+                        status=ONLY_ON_THE_MANAGER,
+                        status_tone="warning",
+                        job_href="",
+                    ),
+                )
+            )
+    return [row for _name, row in sorted(found, key=lambda pair: pair[0])]

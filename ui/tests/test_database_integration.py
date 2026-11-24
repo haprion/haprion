@@ -4980,6 +4980,84 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
         self.assertEqual([(row.name, row.entries) for row in found], [("community", 12)])
         self.assertEqual(len(found[0].error), 500)
 
+    def test_the_poller_writes_the_list_files_whole_and_the_web_reads_them(self) -> None:
+        """B534, 0125: a file the reading no longer has goes; the web only reads."""
+
+        def clear() -> None:
+            with self.connection.cursor() as cursor:
+                cursor.execute("delete from list_file")
+            self.connection.commit()
+
+        self.addCleanup(clear)
+        at = datetime(2026, 11, 24, 6, 0, tzinfo=UTC)
+
+        def entry(kind: str, name: str, **fields: Any) -> db.ListFile:
+            base: dict[str, Any] = {
+                "revision": 1,
+                "digest": "a" * 64,
+                "description": None,
+                "paths": None,
+            }
+            return db.ListFile(kind, name, seen_at=at, **{**base, **fields})
+
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as poller_connection:
+            db.record_list_files(
+                poller_connection,
+                [
+                    entry("path_list", "scanners"),
+                    entry("path_list", "taken", description="", paths=["/.env"]),
+                    entry("blocklist", "scanners"),
+                    entry("blocklist", "gone", revision=0, digest=""),
+                ],
+            )
+            db.record_list_files(
+                poller_connection,
+                [
+                    entry("path_list", "scanners", revision=5),
+                    entry("path_list", "taken", description="", paths=["/.env"]),
+                    entry("blocklist", "scanners"),
+                ],
+            )
+            poller_connection.commit()
+            with self.assertRaises(psycopg.Error):
+                poller_connection.execute(
+                    "insert into list_file values ('other', 'x', 1, '', null, null, now())"
+                )
+            poller_connection.rollback()
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as web:
+            paths = db.list_files(web, "path_list")
+            blocks = db.list_files(web, "blocklist")
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                web.execute("delete from list_file")
+            web.rollback()
+
+        self.assertEqual(
+            [(f.name, f.revision, f.paths) for f in paths],
+            [("scanners", 5, None), ("taken", 1, ["/.env"])],
+        )
+        self.assertEqual([f.name for f in blocks], ["scanners"])
+
+    def test_a_path_list_file_is_taken_in_at_its_own_revision(self) -> None:
+        """B534, 0125: the web inserts the row a file on the manager has none for."""
+
+        def clear() -> None:
+            with self.connection.cursor() as cursor:
+                cursor.execute("delete from path_list where name = 'taken'")
+            self.connection.commit()
+
+        self.addCleanup(clear)
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as web:
+            row = db.take_in_path_list(
+                web, name="taken", description="Kept", paths=["/.env"], revision=4, actor="admin"
+            )
+            web.commit()
+            self.assertEqual((row.revision, row.paths), (4, ["/.env"]))
+            with self.assertRaises(db.PathListChanged):
+                db.take_in_path_list(
+                    web, name="taken", description="", paths=["/x"], revision=9, actor="admin"
+                )
+            web.rollback()
+
     def test_the_traffic_cards_read_the_deploys_that_overlap_their_window(self) -> None:
         """B496, 8: the deploy jobs of the clusters asked, started and not over before the window."""
 

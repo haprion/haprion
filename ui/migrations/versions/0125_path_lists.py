@@ -12,6 +12,12 @@ valid`, as 0109 left it. And `job_cluster_presence` names it among the
 operations queued with no cluster: a list is the manager's, named by objects
 in any cluster.
 
+`list_file` is what the poller last read of the files root keeps for path lists
+and blocklists (the `list_files` reading): per list a revision and a digest of
+what the file says, which the web compares with its own rows. A path list file
+the database has no row for also carries its description and paths, which is
+what *Take in* stores. Written whole by the poller each pass; the web reads.
+
 Haprion 1.3.1's web, poller and worker never name the table, and its worker
 refuses a `path_list_apply` job as an operation it does not know.
 
@@ -62,6 +68,36 @@ def upgrade() -> None:
     )
     op.execute(
         "grant select (name, description, paths, revision), delete on public.path_list to app_worker"
+    )
+    op.execute(
+        """
+        create table public.list_file (
+            kind text not null
+                constraint list_file_kind_check check (kind in ('path_list', 'blocklist')),
+            name text not null
+                constraint list_file_name_check check (name ~ '^[a-z][a-z0-9-]{0,39}$'),
+            revision integer not null
+                constraint list_file_revision_check check (revision between 0 and 1000000),
+            digest text not null
+                constraint list_file_digest_check check (digest ~ '^([0-9a-f]{64})?$'),
+            description text
+                constraint list_file_description_check check (char_length(description) <= 200),
+            paths text[]
+                constraint list_file_paths_check check (cardinality(paths) between 1 and 500),
+            seen_at timestamp with time zone not null,
+            primary key (kind, name)
+        )
+        """
+    )
+    op.execute(
+        "grant select (kind, name, revision, digest, description, paths, seen_at), "
+        "insert (kind, name, revision, digest, description, paths, seen_at), "
+        "update (revision, digest, description, paths, seen_at), delete "
+        "on public.list_file to app_poller"
+    )
+    op.execute(
+        "grant select (kind, name, revision, digest, description, paths, seen_at) "
+        "on public.list_file to app_web"
     )
     op.execute("alter table public.job drop constraint job_operation_allowed")
     op.execute(

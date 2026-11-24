@@ -333,6 +333,35 @@ def build_router(config: Config) -> APIRouter:
         _await(request, job.id)
         return RedirectResponse(CARD, status_code=303)
 
+    @router.post("/settings/blocklists/{name}/apply-again")
+    def blocklist_apply_again(
+        request: Request, name: str, csrf_token: Annotated[str, Form(max_length=128)]
+    ) -> Response:
+        """The stored revision applied again: a row root's file does not match (review 26-11-24, PW02)."""
+
+        gate = admin_write_gate(config, request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return forbidden_page(request, config)
+        with request.app.state.pool.connection() as connection:
+            existing = db.blocklist(connection, name)
+            if existing is None:
+                return PlainTextResponse("Not found", status_code=404)
+            try:
+                job = blocklist_form.apply_again(
+                    connection, existing, actor=gate.username, via="web"
+                )
+            except blocklist_form.FormProblem as problem:
+                refused = str(problem)
+            else:
+                refused = ""
+        if refused:
+            return refusal_page(request, config, refused, back=CARD, status_code=409)
+        _await(request, job.id)
+        return RedirectResponse(CARD, status_code=303)
+
     def _not_fetched(request: Request, name: str) -> str:
         """Why the list cannot be added yet, or "" when it has been fetched."""
 

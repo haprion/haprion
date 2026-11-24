@@ -33,7 +33,7 @@ import yaml
 from haprion import exit_codes, path_lists, safe_yaml
 from haprion.cli import apply_common, arguments
 
-from haprion_ui import db, job_wait, labels, path_list_form, tool_answer
+from haprion_ui import db, job_wait, labels, list_sync, path_list_form, tool_answer
 from haprion_ui.admin import AdminError, actor_name, connect, load_environment
 
 OPERATION = "path_lists_apply"
@@ -104,14 +104,23 @@ def read_file(path: Path) -> list[path_lists.PathList]:
     return found
 
 
-def _applied(stored: db.PathList, latest: db.Job | None) -> bool:
-    """Whether the stored revision's newest apply finished."""
+def _applied(
+    stored: db.PathList,
+    latest: db.Job | None,
+    files: Mapping[str, db.ListFile] | None,
+) -> bool:
+    """Whether root's file is the stored row: what the poller read of it, not the job history.
 
-    return (
-        latest is not None
-        and latest.state == "done"
-        and latest.payload.get("revision") == stored.revision
-        and latest.payload.get("remove") is not True
+    A restored database says *done* for a list whose file is another
+    (review 26-11-24, PW02). With no reading at all, the newest apply decides.
+    """
+
+    return list_sync.in_step(
+        revision=stored.revision,
+        digest=path_lists.content_digest(stored.description, stored.paths),
+        file=(files or {}).get(stored.name),
+        job=latest,
+        read_at=list_sync.last_read(dict(files or {})),
     )
 
 
@@ -119,6 +128,7 @@ def plan(
     found: Sequence[path_lists.PathList],
     stored: Mapping[str, db.PathList],
     latest: Mapping[str, db.Job],
+    files: Mapping[str, db.ListFile] | None = None,
     *,
     prune: bool,
 ) -> Plan:
@@ -130,7 +140,7 @@ def plan(
             changes.append(Change(item.name, "create", item))
         elif tuple(current.paths) != item.paths or current.description != item.description:
             changes.append(Change(item.name, "replace", item))
-        elif _applied(current, latest.get(item.name)):
+        elif _applied(current, latest.get(item.name), files):
             unchanged.append(item.name)
         else:
             changes.append(Change(item.name, "apply", item))
@@ -261,7 +271,8 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
 
     def make_plan(connection: Any) -> Plan:
         stored = {row.name: row for row in db.path_lists(connection)}
-        return plan(found, stored, db.latest_path_list_jobs(connection), prune=args.prune)
+        files = {entry.name: entry for entry in db.list_files(connection, path_list_form.KIND)}
+        return plan(found, stored, db.latest_path_list_jobs(connection), files, prune=args.prune)
 
     return _run(args, make_plan, sleep=sleep)
 

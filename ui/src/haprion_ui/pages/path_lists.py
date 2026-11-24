@@ -22,6 +22,7 @@ from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.editor_flow import editor_state
 from haprion_ui.reading import listed_clusters
+from haprion_ui.refusals import refusal_page
 from haprion_ui.templates import TEMPLATES
 from haprion_ui.views import posted_form
 
@@ -236,6 +237,68 @@ def build_router(config: Config) -> APIRouter:
                 request, gate, existing, used=used, problem=refused, status_code=409
             )
         _await(request, job.id)
+        return RedirectResponse(CARD, status_code=303)
+
+    @router.post("/settings/path-lists/{name}/apply-again")
+    def path_list_apply_again(
+        request: Request, name: str, csrf_token: Annotated[str, Form(max_length=128)]
+    ) -> Response:
+        """The stored revision applied again: a row root's file does not match (review 26-11-24, PW02)."""
+
+        gate = admin_write_gate(config, request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return forbidden_page(request, config)
+        with request.app.state.pool.connection() as connection:
+            existing = db.path_list(connection, name)
+            if existing is None:
+                return PlainTextResponse("Not found", status_code=404)
+            try:
+                job = path_list_form.apply_again(
+                    connection, existing, actor=gate.username, via="web"
+                )
+            except path_list_form.FormProblem as problem:
+                refused = str(problem)
+            else:
+                refused = ""
+        if refused:
+            return refusal_page(request, config, refused, back=CARD, status_code=409)
+        _await(request, job.id)
+        return RedirectResponse(CARD, status_code=303)
+
+    @router.post("/settings/path-lists/{name}/take-in")
+    def path_list_take_in(
+        request: Request, name: str, csrf_token: Annotated[str, Form(max_length=128)]
+    ) -> Response:
+        """A list only the manager's file has, made a row as the file says it (review 26-11-24, PW02)."""
+
+        gate = admin_write_gate(config, request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return forbidden_page(request, config)
+        with request.app.state.pool.connection() as connection:
+            entry = next(
+                (
+                    candidate
+                    for candidate in db.list_files(connection, path_list_form.KIND)
+                    if candidate.name == name
+                ),
+                None,
+            )
+            if entry is None:
+                return PlainTextResponse("Not found", status_code=404)
+            try:
+                path_list_form.take_in(connection, entry, actor=gate.username)
+            except path_list_form.FormProblem as problem:
+                refused = str(problem)
+            else:
+                refused = ""
+        if refused:
+            return refusal_page(request, config, refused, back=CARD, status_code=409)
         return RedirectResponse(CARD, status_code=303)
 
     def _add_page(

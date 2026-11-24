@@ -1171,6 +1171,56 @@ def record_blocklist_states(pool: Any, completed: Any, *, asked: str, at: dateti
         logger.warning("blocklist states were not recorded: %s", exc)
 
 
+def record_list_files(pool: Any, completed: Any, *, asked: str, at: datetime) -> None:
+    """The files root keeps for path lists and blocklists (B534, PW02), into `list_file`.
+
+    Asked with the certificates, as the blocklist states are. Written whole; a
+    reading that did not answer leaves the rows as they were, so the card keeps
+    saying what was last known. Never raises.
+    """
+
+    reading = _judge(
+        completed, cluster=None, operation="list_files", accept_partial=False, asked=asked
+    )
+    if reading["outcome"] != "done":
+        logger.warning(
+            "list files: %s%s",
+            reading["outcome"],
+            f" ({reading['poll_error']})" if reading.get("poll_error") else "",
+        )
+        return
+    try:
+        files = [
+            db.ListFile(
+                kind=kind,
+                name=entry["name"],
+                revision=entry["revision"],
+                digest=entry["digest"],
+                description=entry.get("description"),
+                paths=entry.get("paths"),
+                seen_at=at,
+            )
+            for kind, key in (("path_list", "path_lists"), ("blocklist", "blocklists"))
+            for entry in reading["result"][key]
+        ]
+        with pool.connection() as connection:
+            db.record_list_files(connection, files)
+            connection.commit()
+    except Exception as exc:  # noqa: BLE001 - read again on the next cycle
+        logger.warning("list files were not recorded: %s", exc)
+
+
+def _known_path_lists(pool: Any) -> list[str]:
+    """The names of the path lists the database has: the reading gives content for the others."""
+
+    try:
+        with pool.connection() as connection:
+            return [row.name for row in db.path_lists(connection)]
+    except Exception as exc:  # noqa: BLE001 - the reading is made without it, and says more
+        logger.warning("list files: the known path lists were not read: %s", exc)
+        return []
+
+
 def poll_manager(
     pool: Any,
     readings: ReadingsHelper = run_readings_helper,
@@ -1182,7 +1232,8 @@ def poll_manager(
 
     With `fetches`, the receivers' fetches are asked in the same call and
     recorded on their own (`ReceiverFetchWatch`); with `blocklists`, so is
-    what the blocklist timer last did (`record_blocklist_states`).
+    what the blocklist timer last did (`record_blocklist_states`) and the files
+    root keeps for the lists (`record_list_files`).
     """
 
     sources: tuple[Source, ...] = (MANAGER_CERTIFICATES,)
@@ -1192,7 +1243,16 @@ def poll_manager(
             Source("receiver_fetches", None, _record_nothing, reading=lambda _extra: dict(wanted)),
         )
     if blocklists:
-        sources += (Source("blocklist_states", None, _record_nothing, reading=lambda _extra: {}),)
+        known = _known_path_lists(pool)
+        sources += (
+            Source("blocklist_states", None, _record_nothing, reading=lambda _extra: {}),
+            Source(
+                "list_files",
+                None,
+                _record_nothing,
+                reading=lambda _extra: {"known_path_lists": known},
+            ),
+        )
     at = datetime.now(UTC)
     asked, answered = _local_readings(pool, None, sources, readings)
     if blocklists:
@@ -1202,6 +1262,10 @@ def poll_manager(
             )
         except Exception as exc:  # noqa: BLE001 - one failure is one log line
             logger.warning("blocklist states: the readings helper gave no answer: %s", exc)
+        try:
+            record_list_files(pool, answered["list_files"](None, asked), asked=asked, at=at)
+        except Exception as exc:  # noqa: BLE001 - one failure is one log line
+            logger.warning("list files: the readings helper gave no answer: %s", exc)
     if fetches is not None:
         try:
             fetches.record(pool, answered["receiver_fetches"](None, asked), asked=asked, at=at)

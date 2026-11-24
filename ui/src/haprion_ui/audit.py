@@ -155,6 +155,9 @@ ACTIVITY_PHRASES: Mapping[str, Callable[[Mapping[str, Any]], str]] = {
     "logout": lambda _detail: "Signed out",
     "queue_job": _queued,
     "api_block": _api_block,
+    "path_list_take_in": lambda detail: (
+        f"Took in the path list {_text(detail, 'name', 'a path list')} from the manager"
+    ),
     "save_change": lambda detail: _saved(detail, "Saved"),
     "discard_change": lambda detail: _saved(detail, "Discarded the saved"),
     "save_draft": lambda detail: f"Saved a draft of {_text(detail, 'object', 'a proxy')}",

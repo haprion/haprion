@@ -97,6 +97,37 @@ def save_path_list(
     return row
 
 
+def take_in_path_list(
+    connection: Connection[Any],
+    *,
+    name: str,
+    description: str,
+    paths: Sequence[str],
+    revision: int,
+    actor: str,
+) -> PathList:
+    """Insert the row a file on the manager has no row for, at the file's own revision."""
+
+    with connection.cursor(row_factory=class_row(PathList)) as cursor:
+        cursor.execute(
+            "insert into path_list (name, description, paths, revision, updated_by) "
+            "values (%(name)s, %(description)s, %(paths)s, %(revision)s, %(actor)s) "
+            "on conflict (name) do nothing "
+            "returning name, description, paths, revision, created_at, updated_at, updated_by",
+            {
+                "name": name,
+                "description": description,
+                "paths": list(paths),
+                "revision": revision,
+                "actor": actor,
+            },
+        )
+        row = cursor.fetchone()
+    if row is None:
+        raise PathListChanged(name)
+    return row
+
+
 def applied_path_list(connection: Connection[Any], name: str) -> AppliedPathList | None:
     """The worker's read, under its own grant."""
 

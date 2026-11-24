@@ -207,10 +207,19 @@ def build_router(config: Config) -> APIRouter:
             status_access = db.status_access(connection)
             update_row = db.update_check(connection)
             token_rows = db.api_tokens(connection)
+            #
+            # What root's files say, as the poller last read them: a row they
+            # do not match is *Not applied*, a file without a row *Only on the
+            # manager* (review 26-11-24, PW02). No file read at all is the same
+            # as no reading yet - the first poll after an upgrade - and says nothing.
+            #
+            block_files = {f.name: f for f in db.list_files(connection, blocklist_form.KIND)}
+            path_files = {f.name: f for f in db.list_files(connection, path_list_form.KIND)}
             blocklist_rows = blocklist_form.rows(
                 db.blocklists(connection),
                 db.blocklist_states(connection),
                 db.latest_blocklist_jobs(connection),
+                block_files or None,
                 writes=config.management_writes,
             )
             saved_lists = db.path_lists(connection)
@@ -219,9 +228,10 @@ def build_router(config: Config) -> APIRouter:
                     saved_lists,
                     path_list_form.usage(connection),
                     db.latest_path_list_jobs(connection),
+                    path_files or None,
                     writes=config.management_writes,
                 )
-                if saved_lists
+                if saved_lists or path_files
                 else []
             )
         creation_rows = cluster_creations(request, recent)

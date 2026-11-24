@@ -83,12 +83,19 @@ def state_row(**overrides: Any) -> db.BlocklistState:
     return db.BlocklistState(**{**fields, **overrides})
 
 
+class PathList:
+    """A path list row as far as the poller reads it: the name."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
 class Pool:
     def connection(self) -> Any:
         return contextlib.nullcontext(mock.Mock())
 
 
-def manager_readings(states: Any, *, exit_code: int = 0) -> Any:
+def manager_readings(states: Any, *, exit_code: int = 0, files: Any = None) -> Any:
     """The readings helper answering the certificates and, as given, the blocklists' state."""
 
     asked: list[Mapping[str, Any]] = []
@@ -106,12 +113,22 @@ def manager_readings(states: Any, *, exit_code: int = 0) -> Any:
             if states is not None
             else None
         )
+        listed = (
+            document("list_files", result=files, cluster=None, request_id=request_id)
+            if files is not None
+            else None
+        )
         outer = document(
             "readings",
             result={
                 "reads": {
                     "cert_list": {"exit_code": 0, "envelope": certs, "stderr": ""},
                     "blocklist_states": {"exit_code": exit_code, "envelope": answer, "stderr": ""},
+                    "list_files": {
+                        "exit_code": 0 if files is not None else 74,
+                        "envelope": listed,
+                        "stderr": "",
+                    },
                 }
             },
             cluster=None,
@@ -161,7 +178,7 @@ class ThePollerReading(unittest.TestCase):
         run = manager_readings(STATES)
         recorded = self.poll(run)
 
-        self.assertEqual(sorted(run.asked[0]), ["blocklist_states", "cert_list"])
+        self.assertEqual(sorted(run.asked[0]), ["blocklist_states", "cert_list", "list_files"])
         self.assertEqual(run.asked[0]["blocklist_states"], {})
         (states,) = recorded.call_args.args[1:]
         self.assertEqual([state.name for state in states], ["community", "drop"])
@@ -172,6 +189,56 @@ class ThePollerReading(unittest.TestCase):
 
     def test_a_reading_that_did_not_answer_leaves_the_rows(self) -> None:
         recorded = self.poll(manager_readings(None, exit_code=74))
+        recorded.assert_not_called()
+
+    def test_the_files_root_keeps_are_asked_with_the_known_lists_and_written_whole(self) -> None:
+        """Review 26-11-24, PW02."""
+
+        files = {
+            "path_lists": [
+                {"name": "scanners", "revision": 3, "digest": "a" * 64},
+                {
+                    "name": "taken",
+                    "revision": 1,
+                    "digest": "b" * 64,
+                    "description": "",
+                    "paths": ["/.env"],
+                },
+            ],
+            "blocklists": [{"name": "community", "revision": 2, "digest": "c" * 64}],
+        }
+        run = manager_readings(STATES, files=files)
+        with (
+            mock.patch("haprion_ui.db.record_manager_certificates"),
+            mock.patch("haprion_ui.db.replace_search_entries"),
+            mock.patch("haprion_ui.db.record_blocklist_states"),
+            mock.patch("haprion_ui.db.path_lists", return_value=[PathList("scanners")]),
+            mock.patch("haprion_ui.db.record_list_files") as recorded,
+        ):
+            self.assertTrue(poller.poll_manager(Pool(), run, blocklists=True))
+
+        self.assertEqual(run.asked[0]["list_files"], {"known_path_lists": ["scanners"]})
+        (written,) = recorded.call_args.args[1:]
+        self.assertEqual(
+            [(f.kind, f.name, f.revision) for f in written],
+            [
+                ("path_list", "scanners", 3),
+                ("path_list", "taken", 1),
+                ("blocklist", "community", 2),
+            ],
+        )
+        self.assertEqual(written[1].paths, ["/.env"])
+        self.assertIsNone(written[0].paths)
+
+    def test_files_that_were_not_read_leave_the_rows(self) -> None:
+        with (
+            mock.patch("haprion_ui.db.record_manager_certificates"),
+            mock.patch("haprion_ui.db.replace_search_entries"),
+            mock.patch("haprion_ui.db.record_blocklist_states"),
+            mock.patch("haprion_ui.db.path_lists", return_value=[]),
+            mock.patch("haprion_ui.db.record_list_files") as recorded,
+        ):
+            poller.poll_manager(Pool(), manager_readings(STATES), blocklists=True)
         recorded.assert_not_called()
 
     def test_without_the_flag_it_is_not_asked(self) -> None:
@@ -293,6 +360,63 @@ class TheCardRows(unittest.TestCase):
         self.assertEqual(older.status, "")
 
 
+def file_row(name: str = "community", **overrides: Any) -> db.ListFile:
+    """What the poller read of root's definition of a list: by default the row `blocklist_row()` says."""
+
+    fields: dict[str, Any] = {
+        "kind": "blocklist",
+        "name": name,
+        "revision": 1,
+        "digest": blocklist_form.row_digest(blocklist_row()),
+        "description": None,
+        "paths": None,
+        "seen_at": NOW + timedelta(minutes=5),
+    }
+    return db.ListFile(**{**fields, **overrides})
+
+
+class TheFilesOnTheManager(unittest.TestCase):
+    """Review 26-11-24, PW02: the card says what root's definitions say of the database's rows."""
+
+    def rows(
+        self, lists: list[db.Blocklist], files: list[db.ListFile], **jobs: db.Job
+    ) -> list[blocklist_form.Row]:
+        return blocklist_form.rows(
+            lists, [state_row()], jobs, {entry.name: entry for entry in files}, writes=True
+        )
+
+    def test_a_row_the_file_does_not_match_is_not_applied_with_its_button(self) -> None:
+        (row,) = self.rows([blocklist_row(revision=3)], [file_row(revision=5)])
+        self.assertEqual((row.status, row.button), ("Not applied", "apply_again"))
+
+    def test_other_content_at_the_same_revision_is_not_applied(self) -> None:
+        (row,) = self.rows([blocklist_row(every_hours=6)], [file_row()])
+        self.assertEqual(row.status, "Not applied")
+
+    def test_a_matching_file_says_nothing(self) -> None:
+        (row,) = self.rows([blocklist_row()], [file_row()])
+        self.assertEqual((row.status, row.button), ("", ""))
+
+    def test_a_file_without_a_row_is_only_on_the_manager_with_no_button(self) -> None:
+        row, only = self.rows([blocklist_row()], [file_row(), file_row("kept", revision=2)])
+        self.assertEqual(row.status, "")
+        self.assertEqual(
+            (only.name, only.status, only.button, only.href),
+            ("kept", "Only on the manager", "", ""),
+        )
+
+    def test_an_apply_that_finished_after_the_reading_is_not_called_not_applied(self) -> None:
+        done = queued(
+            operation="blocklist_apply",
+            cluster=None,
+            payload={"name": "community", "revision": 3},
+            state="done",
+            finished_at=NOW + timedelta(minutes=10),
+        )
+        (row,) = self.rows([blocklist_row(revision=3)], [file_row(revision=2)], community=done)
+        self.assertEqual(row.status, "")
+
+
 def objects_reading(cluster: str, groups: dict[str, list[str]]) -> db.ClusterObjects:
     return db.ClusterObjects(
         cluster=cluster,
@@ -411,6 +535,35 @@ class TheSettingsCard(BlocklistRouteTestCase):
             page = self.admin().get("/settings?address=not-an-address").text
         asked.assert_not_called()
         self.assertIn("Not-an-address is not an IPv4 or IPv6 address.", page)
+
+
+class ApplyingABlocklistAgain(BlocklistRouteTestCase):
+    def test_the_button_queues_the_stored_revision_and_the_card_offers_it(self) -> None:
+        self.blocklists = [blocklist_row(revision=3)]
+        self.blocklist_states = [state_row()]
+        client = self.admin()
+        with mock.patch(
+            "haprion_ui.db.list_files",
+            side_effect=lambda _c, _k: [file_row(revision=5)],
+        ):
+            page = client.get("/settings").text
+        self.assertIn("Not applied", page)
+        self.assertIn('action="/settings/blocklists/community/apply-again"', page)
+
+        response = client.post(
+            "/settings/blocklists/community/apply-again",
+            data={auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE])},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 303)
+        (job,) = self.queued
+        self.assertEqual(job["payload"], {"name": "community", "revision": 3})
+        forged = client.post(
+            "/settings/blocklists/community/apply-again",
+            data={auth.CSRF_FIELD: "forged"},
+            follow_redirects=False,
+        )
+        self.assertEqual(forged.status_code, 403)
 
 
 class SavingABlocklist(BlocklistRouteTestCase):
@@ -780,6 +933,37 @@ class TheCommand(unittest.TestCase):
             [("drop", "apply"), ("fresh", "create"), ("old", "remove")],
         )
         self.assertEqual(plan.unchanged, ("community",))
+
+        # The files, not the job history, say what is applied (review 26-11-24, PW02).
+        files = {
+            "community": file_row(revision=1),
+            "elsewhere": file_row("elsewhere"),
+            "drop": file_row("drop", revision=2, digest=blocklist_form.row_digest(stored[1])),
+        }
+        moved = blocklist_apply.plan(
+            blocklist_apply.read_file(self.file(body)),
+            {row.name: row for row in stored[:2]},
+            {"community": done},
+            {**files, "community": file_row(revision=7)},
+            replace_secret=[],
+            prune=False,
+        )
+        self.assertEqual(
+            [(change.name, change.action) for change in moved.changes],
+            [("community", "apply"), ("fresh", "create")],
+        )
+        agreed = blocklist_apply.plan(
+            blocklist_apply.read_file(self.file(body)),
+            {row.name: row for row in stored[:2]},
+            {"community": done},
+            files,
+            replace_secret=[],
+            prune=False,
+        )
+        self.assertEqual(
+            [(change.name, change.action) for change in agreed.changes], [("fresh", "create")]
+        )
+        self.assertEqual(agreed.unchanged, ("community", "drop"))
 
         changed = self.plan(
             body.replace("every_hours: 24", "every_hours: 6"), stored[:1], {"community": done}

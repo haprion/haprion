@@ -12,7 +12,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -215,6 +215,128 @@ class TheSettingsCard(PathListRouteTestCase):
         self.assertIn("No proxy", self.admin().get("/settings").text)
 
 
+def file_row(name: str = "scanners", **overrides: Any) -> db.ListFile:
+    """What the poller read of root's file for a list: by default the row `list_row()` says."""
+
+    fields: dict[str, Any] = {
+        "kind": "path_list",
+        "name": name,
+        "revision": 1,
+        "digest": path_lists.content_digest("", ["/.env", "/wp-login.php"]),
+        "description": None,
+        "paths": None,
+        "seen_at": NOW + timedelta(minutes=5),
+    }
+    return db.ListFile(**{**fields, **overrides})
+
+
+class TheFilesOnTheManager(PathListRouteTestCase):
+    """Review 26-11-24, PW02: the card says what root's files say of the database's rows."""
+
+    def card(self, rows: list[db.PathList], files: list[db.ListFile]) -> str:
+        self.lists = rows
+        with mock.patch("haprion_ui.db.list_files", side_effect=lambda _c, _kind: files):
+            return str(self.admin().get("/settings").text)
+
+    def test_a_row_the_file_does_not_match_is_not_applied_with_its_button(self) -> None:
+        page = self.card([list_row(revision=3)], [file_row(revision=5)])
+        self.assertIn("Not applied", page)
+        self.assertIn('action="/settings/path-lists/scanners/apply-again"', page)
+
+    def test_a_file_with_other_paths_is_not_applied_even_at_the_same_revision(self) -> None:
+        page = self.card([list_row()], [file_row(digest="0" * 64)])
+        self.assertIn("Not applied", page)
+
+    def test_a_file_that_matches_says_nothing(self) -> None:
+        page = self.card([list_row()], [file_row()])
+        self.assertNotIn("Not applied", page)
+        self.assertNotIn("apply-again", page)
+
+    def test_a_file_the_row_is_missing_from_says_not_applied_too(self) -> None:
+        page = self.card([list_row(), list_row(name="other")], [file_row()])
+        self.assertIn("Not applied", page)
+        self.assertEqual(page.count("apply-again"), 1)
+
+    def test_an_apply_that_finished_after_the_reading_is_not_called_not_applied(self) -> None:
+        self.lists = [list_row(revision=3)]
+        done = queued(
+            operation="path_list_apply",
+            cluster=None,
+            payload={"name": "scanners", "revision": 3},
+            state="done",
+            finished_at=NOW + timedelta(minutes=10),
+        )
+        with (
+            mock.patch(
+                "haprion_ui.db.list_files", side_effect=lambda _c, _k: [file_row(revision=2)]
+            ),
+            mock.patch("haprion_ui.db.latest_path_list_jobs", return_value={"scanners": done}),
+        ):
+            page = self.admin().get("/settings").text
+        self.assertNotIn("Not applied", page)
+
+    def test_a_file_without_a_row_is_only_on_the_manager_and_can_be_taken_in(self) -> None:
+        taken = file_row(
+            "taken", revision=4, description="Kept by hand", paths=["/.git", "/x"], digest="a" * 64
+        )
+        page = self.card([], [taken])
+        self.assertIn("Only on the manager", page)
+        self.assertIn('action="/settings/path-lists/taken/take-in"', page)
+        self.assertNotIn('href="/settings/path-lists/taken/edit"', page)
+
+    def test_apply_again_queues_the_stored_revision(self) -> None:
+        self.lists = [list_row(revision=3)]
+        client = self.admin()
+        response = client.post(
+            "/settings/path-lists/scanners/apply-again",
+            data={auth.CSRF_FIELD: self.token(client)},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 303)
+        (job,) = self.queued
+        self.assertEqual(job["payload"], {"name": "scanners", "revision": 3})
+
+    def test_take_in_makes_the_row_the_file_says_and_queues_nothing(self) -> None:
+        taken = file_row(
+            "taken", revision=4, description="Kept by hand", paths=["/.git", "/x"], digest="a" * 64
+        )
+        made: list[dict[str, Any]] = []
+
+        def take(_c: object, **fields: Any) -> db.PathList:
+            made.append(fields)
+            return list_row(name=fields["name"], revision=fields["revision"])
+
+        client = self.admin()
+        with (
+            mock.patch("haprion_ui.db.list_files", side_effect=lambda _c, _k: [taken]),
+            mock.patch("haprion_ui.db.take_in_path_list", side_effect=take),
+            mock.patch("haprion_ui.db.record_audit_event"),
+        ):
+            response = client.post(
+                "/settings/path-lists/taken/take-in",
+                data={auth.CSRF_FIELD: self.token(client)},
+                follow_redirects=False,
+            )
+        self.assertEqual(response.status_code, 303)
+        (fields,) = made
+        self.assertEqual(
+            (fields["name"], fields["revision"], fields["paths"], fields["description"]),
+            ("taken", 4, ("/.git", "/x"), "Kept by hand"),
+        )
+        self.assertEqual(self.queued, [])
+
+    def test_the_two_buttons_need_a_token(self) -> None:
+        client = self.admin()
+        for name in ("apply-again", "take-in"):
+            response = client.post(
+                f"/settings/path-lists/scanners/{name}",
+                data={auth.CSRF_FIELD: "forged"},
+                follow_redirects=False,
+            )
+            self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.queued, [])
+
+
 class SavingAPathList(PathListRouteTestCase):
     def test_a_save_stores_the_list_and_queues_its_apply_job(self) -> None:
         response = self.post(self.admin())
@@ -378,6 +500,44 @@ class TheCommand(unittest.TestCase):
             [("fresh", "create"), ("scanners", "replace"), ("stuck", "apply"), ("old", "remove")],
         )
         self.assertEqual(plan.unchanged, ("same",))
+
+    def test_the_plan_compares_with_the_file_not_with_the_job_history(self) -> None:
+        """Review 26-11-24, PW02: a restored database says *done* for a file that is another."""
+
+        found = path_list_apply.read_file(
+            self.file("path_lists:\n  - {name: same, paths: [/b]}\n  - {name: lost, paths: [/c]}\n")
+        )
+        stored = {
+            "same": list_row(name="same", paths=["/b"], revision=3),
+            "lost": list_row(name="lost", paths=["/c"]),
+        }
+        old = datetime(2026, 11, 20, tzinfo=UTC)
+        latest = {
+            name: replace(
+                queued(
+                    operation="path_list_apply",
+                    cluster=None,
+                    payload={"name": name, "revision": row.revision},
+                ),
+                state="done",
+                finished_at=old,
+            )
+            for name, row in stored.items()
+        }
+        files = {
+            "same": file_row("same", revision=5, digest=path_lists.content_digest("", ["/b"])),
+            "other": file_row("other"),
+        }
+        plan = path_list_apply.plan(found, stored, latest, files, prune=False)
+        self.assertEqual(
+            [(change.name, change.action) for change in plan.changes],
+            [("same", "apply"), ("lost", "apply")],
+        )
+        self.assertEqual(plan.unchanged, ())
+        files["same"] = file_row("same", revision=3, digest=path_lists.content_digest("", ["/b"]))
+        files["lost"] = file_row("lost", revision=1, digest=path_lists.content_digest("", ["/c"]))
+        again = path_list_apply.plan(found, stored, latest, files, prune=False)
+        self.assertEqual((again.changes, again.unchanged), ((), ("same", "lost")))
 
 
 if __name__ == "__main__":

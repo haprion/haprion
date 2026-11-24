@@ -21,7 +21,7 @@ from haprion import path_lists
 from haprion.config import ConfigError
 from haprion.proxy_model import MAX_DENIED_PATH, MAX_DENIED_PATHS, dump_document, read_document
 
-from haprion_ui import db, objects, refusals
+from haprion_ui import db, list_sync, objects, refusals
 from haprion_ui import jobs as queue
 from haprion_ui.blocklist_form import unread_sentence
 
@@ -256,6 +256,47 @@ def remove(
     )
 
 
+def take_in(connection: Any, entry: db.ListFile, *, actor: str, via: str = "web") -> db.PathList:
+    """Make the row a file without one says: its description, paths and revision (review 26-11-24, PW02).
+
+    The file is what publishes read, so the row is made to match it and no job
+    is queued: nothing has to be written. Objects may already name the list.
+    """
+
+    if entry.paths is None:
+        raise FormProblem("The list is gone from the manager.", code="expected_target_changed")
+    try:
+        item = path_lists.path_list(
+            entry.name, list(entry.paths), entry.description or "", entry.revision
+        )
+    except path_lists.PathListError as exc:
+        raise FormProblem(str(exc)) from None
+    try:
+        row = db.take_in_path_list(
+            connection,
+            name=item.name,
+            description=item.description,
+            paths=item.paths,
+            revision=item.revision,
+            actor=actor,
+        )
+    except db.PathListChanged:
+        connection.rollback()
+        raise FormProblem(
+            f"A path list called {item.name} already exists.", code="expected_target_changed"
+        ) from None
+    db.record_audit_event(
+        connection,
+        actor=actor,
+        action="path_list_take_in",
+        cluster=None,
+        request_id=uuid4(),
+        detail={"name": row.name, "revision": row.revision, "via": via},
+    )
+    connection.commit()
+    return row
+
+
 # - Add to proxies -----------------------------------------------------------
 
 
@@ -323,6 +364,11 @@ class Added:
 
 # - the card ----------------------------------------------------------------
 
+NOT_APPLIED = "Not applied"
+ONLY_ON_THE_MANAGER = "Only on the manager"
+KIND = "path_list"
+"""What `list_file` calls a path list file."""
+
 
 @dataclass(frozen=True)
 class Row:
@@ -330,11 +376,14 @@ class Row:
 
     name: str
     href: str
+    """Where the row's own page is; `""` for a list only the manager's file has."""
     paths: str
     used_by: str
     status: str
     status_tone: str
     job_href: str
+    button: str = ""
+    """`apply_again` for a row the file does not match, `take_in` for a file without a row."""
 
 
 def _status(row: db.PathList, job: db.Job | None, *, writes: bool) -> tuple[str, str, str]:
@@ -355,24 +404,76 @@ def rows(
     lists: Iterable[db.PathList],
     used: Mapping[str, Mapping[str, Sequence[str]]],
     latest: Mapping[str, db.Job],
+    files: Mapping[str, db.ListFile] | None = None,
     *,
     writes: bool,
 ) -> list[Row]:
-    """The card's rows, by name; `used` is `users` per list, `latest` each list's newest job."""
+    """The card's rows, by name; `used` is `users` per list, `latest` each list's newest job.
 
-    found: list[Row] = []
-    for item in sorted(lists, key=lambda entry: entry.name):
+    `files` is what the poller last read of root's files. A row they do not
+    match is *Not applied*; a file without a row is *Only on the manager*
+    (review 26-11-24, PW02). The two actions are the row's own buttons.
+    """
+
+    found: list[tuple[str, Row]] = []
+    lists = list(lists)
+    known = {item.name for item in lists}
+    read_at = list_sync.last_read(dict(files or {}))
+    for item in lists:
         proxies = sum(len(names) for names in used.get(item.name, {}).values())
-        status, tone, job_href = _status(item, latest.get(item.name), writes=writes)
+        job = latest.get(item.name)
+        status, tone, job_href = _status(item, job, writes=writes)
+        button = ""
+        if (
+            files is not None
+            and not status
+            and not list_sync.in_step(
+                revision=item.revision,
+                digest=path_lists.content_digest(item.description, item.paths),
+                file=files.get(item.name),
+                job=job,
+                read_at=read_at,
+            )
+        ):
+            status, tone, job_href = NOT_APPLIED, "warning", ""
+        if writes and status in {NOT_APPLIED, "Apply failed"}:
+            button = "apply_again"
         found.append(
-            Row(
-                name=item.name,
-                href=f"/settings/path-lists/{item.name}/edit",
-                paths=str(len(item.paths)),
-                used_by=("" if proxies == 0 else f"{proxies} prox{'y' if proxies == 1 else 'ies'}"),
-                status=status,
-                status_tone=tone,
-                job_href=job_href,
+            (
+                item.name,
+                Row(
+                    name=item.name,
+                    href=f"/settings/path-lists/{item.name}/edit",
+                    paths=str(len(item.paths)),
+                    used_by=(
+                        "" if proxies == 0 else f"{proxies} prox{'y' if proxies == 1 else 'ies'}"
+                    ),
+                    status=status,
+                    status_tone=tone,
+                    job_href=job_href,
+                    button=button,
+                ),
             )
         )
-    return found
+    for name, entry in (files or {}).items():
+        if name in known:
+            continue
+        proxies = sum(len(names) for names in used.get(name, {}).values())
+        found.append(
+            (
+                name,
+                Row(
+                    name=name,
+                    href="",
+                    paths=str(len(entry.paths)) if entry.paths else "",
+                    used_by=(
+                        "" if proxies == 0 else f"{proxies} prox{'y' if proxies == 1 else 'ies'}"
+                    ),
+                    status=ONLY_ON_THE_MANAGER,
+                    status_tone="warning",
+                    job_href="",
+                    button="take_in" if writes and entry.paths else "",
+                ),
+            )
+        )
+    return [row for _name, row in sorted(found, key=lambda pair: pair[0])]

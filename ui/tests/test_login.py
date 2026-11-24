@@ -382,6 +382,8 @@ class LoginTestCase(unittest.TestCase):
             # No path list (B532) unless a test says so.
             mock.patch("haprion_ui.db.path_lists", return_value=[]),
             mock.patch("haprion_ui.db.latest_path_list_jobs", return_value={}),
+            # No file has been read on the manager (B534) unless a test says so.
+            mock.patch("haprion_ui.db.list_files", side_effect=lambda _c, kind: []),
         ]
         for patch in self.patches:
             patch.start()

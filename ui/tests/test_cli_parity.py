@@ -274,6 +274,9 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
     "/settings/blocklists/{name}/edit": Command(
         "haprion-blocklists apply", "haprion-blocklists-apply"
     ),
+    "/settings/blocklists/{name}/apply-again": Command(
+        "haprion-blocklists apply", "haprion-blocklists-apply"
+    ),
     "/settings/blocklists/{name}/remove": Command(
         "haprion-blocklists remove", "haprion-blocklists-apply"
     ),
@@ -282,6 +285,13 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
     ),
     "/settings/path-lists/new": Command("haprion-path-lists apply", "haprion-path-lists-apply"),
     "/settings/path-lists/{name}/edit": Command(
+        "haprion-path-lists apply", "haprion-path-lists-apply"
+    ),
+    "/settings/path-lists/{name}/apply-again": Command(
+        "haprion-path-lists apply", "haprion-path-lists-apply"
+    ),
+    # Taking in a file makes the row it says; the command's file makes the same row and applies it.
+    "/settings/path-lists/{name}/take-in": Command(
         "haprion-path-lists apply", "haprion-path-lists-apply"
     ),
     "/settings/path-lists/{name}/remove": Command(

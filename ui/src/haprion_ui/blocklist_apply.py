@@ -44,7 +44,7 @@ from haprion import blocklists, exit_codes, safe_yaml
 from haprion.cli import apply_common, arguments
 from haprion.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 
-from haprion_ui import blocklist_form, config, db, job_wait, labels, tool_answer
+from haprion_ui import blocklist_form, config, db, job_wait, labels, list_sync, tool_answer
 from haprion_ui.admin import AdminError, actor_name, connect, load_environment
 
 OPERATION = "blocklists_apply"
@@ -181,14 +181,23 @@ def _form(definition: blocklists.Definition, secret: str) -> blocklist_form.Form
     )
 
 
-def _applied(stored: db.Blocklist, latest: db.Job | None) -> bool:
-    """Whether the stored revision's newest apply finished."""
+def _applied(
+    stored: db.Blocklist,
+    latest: db.Job | None,
+    files: Mapping[str, db.ListFile] | None,
+) -> bool:
+    """Whether root's definition is the stored row: what the poller read of it, not the job history.
 
-    return (
-        latest is not None
-        and latest.state == "done"
-        and latest.payload.get("revision") == stored.revision
-        and latest.payload.get("remove") is not True
+    A restored database says *done* for a list whose file is another
+    (review 26-11-24, PW02). With no reading at all, the newest apply decides.
+    """
+
+    return list_sync.in_step(
+        revision=stored.revision,
+        digest=blocklist_form.row_digest(stored),
+        file=(files or {}).get(stored.name),
+        job=latest,
+        read_at=list_sync.last_read(dict(files or {})),
     )
 
 
@@ -196,6 +205,7 @@ def plan(
     found: Sequence[Wanted],
     stored: Mapping[str, db.Blocklist],
     latest: Mapping[str, db.Job],
+    files: Mapping[str, db.ListFile] | None = None,
     *,
     replace_secret: Sequence[str],
     prune: bool,
@@ -221,7 +231,7 @@ def plan(
         if replacing and not item.secret and item.definition.authorization != "none":
             raise ApplyError(f"{name}: --replace-secret needs the secret in the file")
         if _same(current, item.definition) and not replacing:
-            if _applied(current, latest.get(name)):
+            if _applied(current, latest.get(name), files):
                 unchanged.append(name)
             else:
                 changes.append(Change(name, "apply"))
@@ -392,10 +402,12 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
 
     def make_plan(connection: Any) -> Plan:
         stored = {row.name: row for row in db.blocklists(connection)}
+        files = {entry.name: entry for entry in db.list_files(connection, blocklist_form.KIND)}
         return plan(
             found,
             stored,
             db.latest_blocklist_jobs(connection),
+            files,
             replace_secret=args.replace_secret,
             prune=args.prune,
         )

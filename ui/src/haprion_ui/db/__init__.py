@@ -252,6 +252,11 @@ from haprion_ui.db.jobs import (
     restore_jobs,
     wake_poller,
 )
+from haprion_ui.db.list_files import (
+    ListFile,
+    list_files,
+    record_list_files,
+)
 from haprion_ui.db.oidc import (
     _OIDC_COLUMNS,
     OIDC_SETTINGS,
@@ -277,6 +282,7 @@ from haprion_ui.db.path_lists import (
     path_list,
     path_lists,
     save_path_list,
+    take_in_path_list,
 )
 from haprion_ui.db.preferences import (
     AttentionKey,
@@ -459,6 +465,7 @@ __all__ = [
     "Health",
     "Job",
     "LastAdmin",
+    "ListFile",
     "Listener",
     "ManagerCertificates",
     "NoBreakGlass",
@@ -596,6 +603,7 @@ __all__ = [
     "known_account_name",
     "latest_blocklist_jobs",
     "latest_path_list_jobs",
+    "list_files",
     "listed_jobs",
     "listener",
     "live_drafts",
@@ -651,6 +659,7 @@ __all__ = [
     "record_cluster_regeneration",
     "record_cluster_settings",
     "record_cluster_status",
+    "record_list_files",
     "record_login_attempt",
     "record_manager_certificates",
     "record_metric_samples",
@@ -703,6 +712,7 @@ __all__ = [
     "start_oidc_login",
     "status_access",
     "switch_enabled",
+    "take_in_path_list",
     "touch_api_token",
     "touch_cluster_list",
     "touch_session",

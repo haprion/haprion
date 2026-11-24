@@ -56,6 +56,10 @@ CAUGHT = {
         "remove",
     ): "the question is drawn again; the command answers in its contract",
     ("blocklist_form.py", "apply_again"): "the command answers in its own contract",
+    (
+        "path_list_form.py",
+        "_queue",
+    ): "the form or the question is drawn again; the command answers in its contract",
     # Found when the scan widened from pages/ and views.py to the package (K01).
     ("feature_switch.py", "switch"): "the switch is refused with its own sentence",
     ("profile_apply.py", "_queue"): "the command answers in its own contract",

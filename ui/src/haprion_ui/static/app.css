@@ -2825,6 +2825,16 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .test-answer { margin: 4px 20px 0; color: var(--text-primary); font-size: 13px; }
 .blocklist-group td:nth-child(2) { color: var(--text-secondary); }
 .blocklist-table .inline-form { display: inline; margin: 0; }
+/*
+ * Settings -> Path lists (B527): the name takes what the counts leave, so a
+ * name of 40 characters stays on its line at 1280 px (26-11-24).
+ */
+@media (min-width: 1050px) {
+  .path-list-table th:nth-child(1), .path-list-table td:nth-child(1) { width: auto; }
+  .path-list-table th:nth-child(2), .path-list-table td:nth-child(2) { width: 80px; }
+  .path-list-table th:nth-child(3), .path-list-table td:nth-child(3) { width: 170px; }
+  .path-list-table th:nth-child(4), .path-list-table td:nth-child(4) { width: 230px; text-align: right; }
+}
 
 /* Protection review (B517, 12): a row per proxy, its marks, and the view's shared switches. */
 .review-bar { display: flex; flex-direction: column; gap: 10px; margin: 0 0 16px; padding: 10px 20px; border: 1px solid var(--line); border-radius: var(--radius-md, 10px); background: var(--panel); }

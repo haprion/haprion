@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-path-lists-list.schema.json",
+  "title": "haprion-path-lists list JSON result",
+  "allOf": [
+    {
+      "$ref": "common.schema.json#/$defs/envelope"
+    },
+    {
+      "properties": {
+        "operation": {
+          "const": "path_lists_list"
+        },
+        "cluster": {
+          "type": "null"
+        },
+        "outcome": {
+          "enum": [
+            "done",
+            "failed"
+          ]
+        },
+        "result": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/list_result"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "done"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/list_result"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "entry": {
+      "description": "One path list as *Settings \u2192 Path lists* shows it.",
+      "type": "object",
+      "required": [
+        "name",
+        "revision",
+        "paths",
+        "used_by",
+        "status",
+        "stored"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "paths": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 500
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How many paths; null for a file that cannot be read."
+        },
+        "used_by": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many objects name the list under Denied paths, in every cluster."
+        },
+        "status": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "What the card says beside the list: `Applying`, `Apply failed`, `Not applied` (root's file is not what the row says), `Only on the manager` (a file without a row) or empty."
+        },
+        "stored": {
+          "type": "boolean",
+          "description": "False for a list only the manager's file has."
+        }
+      },
+      "additionalProperties": false
+    },
+    "list_result": {
+      "type": "object",
+      "required": [
+        "path_lists"
+      ],
+      "properties": {
+        "path_lists": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "$ref": "#/$defs/entry"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

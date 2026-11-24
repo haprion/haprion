@@ -1969,7 +1969,8 @@ row over it. A definition with no row is *Only on the manager*; its password or 
 into a row, so make the list again under the same name and its apply takes the definition over.
 
 **From the terminal.** `haprion-blocklists apply <file>` stores and applies the lists in a file, as the
-form does, and `haprion-blocklists remove <name>` removes one. A file that changes a list's URL,
+form does, and `haprion-blocklists remove <name>` removes one. `haprion-blocklists list` (`--json`) shows
+the rows the card does. A file that changes a list's URL,
 authorization or username carries the list's `secret` again. `haprion-blocklist-check <address>` is
 *Check address*, and `haprion-blocklist-check --list <name>` is *Test* for a stored list.
 
@@ -2010,7 +2011,8 @@ writes the row over the file. A file with no row is *Only on the manager*: objec
 
 **From the terminal.** `haprion-path-lists apply <file>` stores and applies the lists in a file, as the
 form does; `--prune` removes the lists the file does not name, and `haprion-path-lists remove <name>`
-removes one.
+removes one. `haprion-path-lists list` (`--json`) shows the rows the card does, *Not applied* and
+*Only on the manager* included, and a list whose file is not the row is applied again by the next `apply`.
 
 ```yaml
 path_lists:
@@ -5704,6 +5706,7 @@ in the contract's format (`haprion-export` in `docs/CONTRACT.md`).
 | `accounts.yaml` | `haprion-user apply` |
 | `settings.yaml` | `haprion-settings apply` |
 | `profiles.yaml` | `haprion-profiles apply` |
+| `path-lists.yaml` | `haprion-path-lists apply` |
 | `clusters/<id>/objects/<name>.yaml` | `haprion-objects apply -c <id> clusters/<id>/objects` |
 | `clusters/<id>/network.yaml` | `haprion-network apply -c <id>` |
 | `clusters/<id>/cluster-settings.yaml` | `haprion-cluster-settings apply -c <id>` |
@@ -5727,6 +5730,8 @@ removes an object that was skipped. Mend the object first, or apply without `--p
 - NDES servers. A server is confirmed on this manager against the fingerprints of its CA certificates, which
   a file cannot carry; the export writes none. An NDES profile in `profiles.yaml` names one, so on a new
   installation each is added with `haprion-ndes-server add` first.
+- Blocklists. A list's password or token cannot be read back, so no file can carry it; `haprion-blocklists
+  list` shows what is stored, and `haprion-blocklists apply` takes the lists.
 - Clusters and their nodes, certificates and their targets, certificate receivers and API tokens. A
   new installation needs the clusters, nodes and certificates its objects name before the objects
   can be applied: an object that asks for a certificate its cluster does not distribute is refused.

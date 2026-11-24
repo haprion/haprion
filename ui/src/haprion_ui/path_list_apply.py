@@ -33,10 +33,11 @@ import yaml
 from haprion import exit_codes, path_lists, safe_yaml
 from haprion.cli import apply_common, arguments
 
-from haprion_ui import db, job_wait, labels, list_sync, path_list_form, tool_answer
+from haprion_ui import config, db, job_wait, labels, list_sync, path_list_form, tool_answer
 from haprion_ui.admin import AdminError, actor_name, connect, load_environment
 
 OPERATION = "path_lists_apply"
+LIST_OPERATION = "path_lists_list"
 MAX_FILE_BYTES = 1024 * 1024
 MAX_LISTS = 64
 WAIT_SECONDS = job_wait.WAIT_SECONDS
@@ -295,6 +296,57 @@ def command_remove(args: argparse.Namespace, *, sleep: Callable[[float], None] =
     return _run(args, make_plan, sleep=sleep)
 
 
+def document(connection: Any) -> dict[str, Any]:
+    """The stored lists as the file `read_file` takes: applied to the installation they came from, nothing changes."""
+
+    return {
+        "path_lists": [
+            {"name": row.name, "description": row.description, "paths": list(row.paths)}
+            for row in db.path_lists(connection)
+        ]
+    }
+
+
+def command_list(args: argparse.Namespace) -> int:
+    """The card's rows: each list's paths, users and whether root's file is what the row says."""
+
+    try:
+        settings = config.load()
+    except config.ConfigError as exc:
+        return tool_answer.refusal(
+            args, LIST_OPERATION, "dependency_unavailable", str(exc), exc.exit_code
+        )
+    with connect(load_environment()) as connection:
+        files = {entry.name: entry for entry in db.list_files(connection, path_list_form.KIND)}
+        shown = path_list_form.rows(
+            db.path_lists(connection),
+            path_list_form.usage(connection),
+            db.latest_path_list_jobs(connection),
+            files or None,
+            writes=settings.management_writes,
+        )
+    entries: list[dict[str, Any]] = [
+        {
+            "name": row.name,
+            "revision": row.revision,
+            "paths": row.count,
+            "used_by": row.proxies,
+            "status": row.status,
+            "stored": row.stored,
+        }
+        for row in shown
+    ]
+    if args.json:
+        return tool_answer.done(LIST_OPERATION, {"path_lists": entries})
+    for entry in entries:
+        paths = "?" if entry["paths"] is None else entry["paths"]
+        print(
+            f"{entry['name']:<42} {paths:>4} paths  "
+            f"{labels.counted(int(entry['used_by']), 'proxy'):<12} {entry['status']}".rstrip()
+        )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = arguments.ArgumentParser(
         prog="haprion-path-lists",
@@ -315,22 +367,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--wait", type=float, default=WAIT_SECONDS, help="seconds to wait for the job"
     )
     remove.add_argument("--json", action="store_true")
+    listing = subcommands.add_parser("list", help="the stored lists as Settings shows them")
+    listing.add_argument("--json", action="store_true")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    contract = LIST_OPERATION if args.command == "list" else OPERATION
     if os.geteuid() != 0:
         return tool_answer.refusal(
-            args, OPERATION, "not_root", "run this with sudo", exit_codes.NOT_ROOT
+            args, contract, "not_root", "run this with sudo", exit_codes.NOT_ROOT
         )
     try:
-        commands = {"apply": command_apply, "remove": command_remove}
+        commands = {"apply": command_apply, "remove": command_remove, "list": command_list}
         return commands[args.command](args)
     except AdminError as exc:
-        return tool_answer.refusal(args, OPERATION, exc.code, str(exc), exc.exit_code)
+        return tool_answer.refusal(args, contract, exc.code, str(exc), exc.exit_code)
     except psycopg.Error as exc:
-        return tool_answer.database_refusal(args, OPERATION, exc)
+        return tool_answer.database_refusal(args, contract, exc)
 
 
 def _entry() -> None:  # pragma: no cover - console script shim

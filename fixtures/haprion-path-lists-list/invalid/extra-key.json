@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "error": null,
+  "operation": "path_lists_list",
+  "result": {
+    "path_lists": [
+      {
+        "name": "scanners",
+        "revision": 3,
+        "paths": 13,
+        "used_by": 2,
+        "status": "",
+        "stored": true,
+        "paths_list": [
+          "/.env"
+        ]
+      }
+    ]
+  }
+}

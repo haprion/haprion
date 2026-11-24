@@ -683,7 +683,7 @@ def check_export_semantics(document: dict[str, object], path: Path) -> None:
     skipped = [entry["path"] for entry in result["skipped"]]
     if len(set(files + skipped)) != len(files) + len(skipped):
         raise AssertionError(f"{path}: a path is written or skipped, once")
-    for name in ("accounts.yaml", "settings.yaml", "profiles.yaml"):
+    for name in ("accounts.yaml", "settings.yaml", "profiles.yaml", "path-lists.yaml"):
         if name not in files:
             raise AssertionError(f"{path}: an export always holds {name}")
     clusters = set(result["clusters"])
@@ -1278,6 +1278,29 @@ def check_list_files_semantics(document: dict[str, object], path: Path) -> None:
                     raise AssertionError(f"{path}: {entry['name']} cannot be read yet has content")
 
 
+def check_lists_list_semantics(document: dict[str, object], path: Path) -> None:
+    # A result only on success; each list once, by name; a file without a row
+    # is the one status that comes with `stored` false, and no row says it.
+    result = document["result"]
+    if document["outcome"] == "done" and result is None:
+        raise AssertionError(f"{path}: a done {document['operation']} carries no result")
+    if document["outcome"] != "done" and result is not None:
+        raise AssertionError(
+            f"{path}: a {document['outcome']} {document['operation']} has a result"
+        )
+    if isinstance(result, dict):
+        (entries,) = result.values()
+        assert isinstance(entries, list)
+        names = [entry["name"] for entry in entries]
+        if names != sorted(set(names)):
+            raise AssertionError(f"{path}: lists are listed once each, by name")
+        for entry in entries:
+            if (entry["status"] == "Only on the manager") == entry["stored"]:
+                raise AssertionError(
+                    f"{path}: {entry['name']} is only on the manager exactly when it is not stored"
+                )
+
+
 def check_blocklist_states_semantics(document: dict[str, object], path: Path) -> None:
     # A result only on success; each list once, by name. A failure or a fetch is
     # one of the attempts, so neither is later than the last attempt, and a list
@@ -1651,6 +1674,8 @@ SEMANTIC_CHECKS = {
     "receiver_fetches": check_receiver_fetches_semantics,
     "blocklist_states": check_blocklist_states_semantics,
     "list_files": check_list_files_semantics,
+    "path_lists_list": check_lists_list_semantics,
+    "blocklists_list": check_lists_list_semantics,
     "ndes_server": check_ndes_server_semantics,
     "http01_check": check_http01_check_semantics,
     "probe": check_probe_semantics,
@@ -1820,6 +1845,10 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["receivers"].append(dict(result["receivers"][0]))
     elif operation == "blocklist_states":
         result["lists"].append(dict(result["lists"][0]))
+    elif operation in ("path_lists_list", "blocklists_list"):
+        (entries,) = result.values()
+        entries[0]["stored"] = entries[0]["status"] != "Only on the manager"
+        entries.append(dict(entries[0]))
     elif operation == "list_files":
         once = {"name": "community", "revision": 1, "digest": "a1" * 32}
         result["blocklists"] = [once, dict(once)]

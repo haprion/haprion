@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "error": null,
+  "operation": "path_lists_list",
+  "result": {
+    "path_lists": [
+      {
+        "name": "kept-by-hand",
+        "revision": 2,
+        "paths": 2,
+        "used_by": 0,
+        "status": "Only on the manager",
+        "stored": false
+      },
+      {
+        "name": "scanners",
+        "revision": 3,
+        "paths": 13,
+        "used_by": 2,
+        "status": "Not applied",
+        "stored": true
+      },
+      {
+        "name": "wordpress",
+        "revision": 1,
+        "paths": 2,
+        "used_by": 0,
+        "status": "",
+        "stored": true
+      }
+    ]
+  }
+}

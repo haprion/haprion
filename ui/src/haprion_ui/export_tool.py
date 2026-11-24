@@ -7,6 +7,7 @@ to the installation it came from changes nothing. The layout:
     accounts.yaml                       haprion-user apply
     settings.yaml                       haprion-settings apply
     profiles.yaml                       haprion-profiles apply
+    path-lists.yaml                     haprion-path-lists apply
     clusters/<id>/objects/<name>.yaml   haprion-objects apply -c <id>
     clusters/<id>/network.yaml          haprion-network apply -c <id>
     clusters/<id>/cluster-settings.yaml haprion-cluster-settings apply -c <id>
@@ -45,6 +46,7 @@ from haprion.digits import is_digits
 from haprion_ui import (
     account_apply,
     config,
+    path_list_apply,
     profile_apply,
     settings_apply,
     settings_tool,
@@ -196,6 +198,12 @@ def collect(
     written.add("accounts.yaml", _yaml(account_apply.document(connection)))
     written.add("settings.yaml", _yaml(settings_apply.document(connection)))
     written.add("profiles.yaml", _yaml(profile_apply.document(connection)))
+    #
+    # Nothing in a path list is secret, so the lists are written whole; the
+    # blocklists' are not, since a definition's password or token cannot be read back
+    # (review 26-11-24, PW07).
+    #
+    written.add("path-lists.yaml", _yaml(path_list_apply.document(connection)))
     known, _polled = settings_tool.known_clusters(connection, settings)
     unknown = sorted(set(chosen) - set(known))
     if unknown:

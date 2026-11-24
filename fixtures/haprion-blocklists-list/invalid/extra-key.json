@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "error": null,
+  "operation": "blocklists_list",
+  "result": {
+    "blocklists": [
+      {
+        "name": "community",
+        "source": "lists.example.com",
+        "every": "24 h",
+        "addresses": "",
+        "fetched": "",
+        "status": "",
+        "stored": true,
+        "secret": "x"
+      }
+    ]
+  }
+}

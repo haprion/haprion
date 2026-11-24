@@ -501,6 +501,31 @@ class TheCommand(unittest.TestCase):
         )
         self.assertEqual(plan.unchanged, ("same",))
 
+    def test_what_the_export_writes_is_read_back_as_unchanged(self) -> None:
+        """Review 26-11-24, PW07: `path-lists.yaml` is the format `apply` takes."""
+
+        stored = [
+            list_row(description="What scanners ask for"),
+            list_row(name="wordpress", paths=["/wp-admin"]),
+        ]
+        done = {
+            row.name: replace(
+                queued(
+                    operation="path_list_apply",
+                    cluster=None,
+                    payload={"name": row.name, "revision": row.revision},
+                ),
+                state="done",
+            )
+            for row in stored
+        }
+        with mock.patch("haprion_ui.db.path_lists", return_value=stored):
+            written = path_list_apply.document(object())
+        text = yaml.safe_dump(written, sort_keys=False)
+        found = path_list_apply.read_file(self.file(text))
+        plan = path_list_apply.plan(found, {row.name: row for row in stored}, done, prune=True)
+        self.assertEqual((plan.changes, plan.unchanged), ((), ("scanners", "wordpress")))
+
     def test_the_plan_compares_with_the_file_not_with_the_job_history(self) -> None:
         """Review 26-11-24, PW02: a restored database says *done* for a file that is another."""
 

@@ -16,6 +16,7 @@
       "clusters/alpha/objects/shop.yaml",
       "clusters/beta/cluster-settings.yaml",
       "clusters/beta/objects/api.yaml",
+      "path-lists.yaml",
       "profiles.yaml",
       "settings.yaml"
     ],

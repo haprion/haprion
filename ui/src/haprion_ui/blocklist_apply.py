@@ -48,6 +48,7 @@ from haprion_ui import blocklist_form, config, db, job_wait, labels, list_sync, 
 from haprion_ui.admin import AdminError, actor_name, connect, load_environment
 
 OPERATION = "blocklists_apply"
+LIST_OPERATION = "blocklists_list"
 MAX_FILE_BYTES = 256 * 1024
 MAX_LISTS = 64
 WAIT_SECONDS = job_wait.WAIT_SECONDS
@@ -436,6 +437,46 @@ def command_remove(args: argparse.Namespace, *, sleep: Callable[[float], None] =
     return _run(args, make_plan, sleep=sleep)
 
 
+def command_list(args: argparse.Namespace) -> int:
+    """The card's rows: each list's source, count, last fetch and whether root's definition is the row."""
+
+    try:
+        settings = config.load()
+    except config.ConfigError as exc:
+        return tool_answer.refusal(
+            args, LIST_OPERATION, "dependency_unavailable", str(exc), exc.exit_code
+        )
+    with connect(load_environment()) as connection:
+        files = {entry.name: entry for entry in db.list_files(connection, blocklist_form.KIND)}
+        shown = blocklist_form.rows(
+            db.blocklists(connection),
+            db.blocklist_states(connection),
+            db.latest_blocklist_jobs(connection),
+            files or None,
+            writes=settings.management_writes,
+        )
+    entries: list[dict[str, Any]] = [
+        {
+            "name": row.name,
+            "source": row.source,
+            "every": row.every,
+            "addresses": row.addresses,
+            "fetched": row.fetched,
+            "status": row.status,
+            "stored": row.stored,
+        }
+        for row in shown
+    ]
+    if args.json:
+        return tool_answer.done(LIST_OPERATION, {"blocklists": entries})
+    for entry in entries:
+        print(
+            f"{entry['name']:<42} {entry['source']:<24} {entry['every']:<6} "
+            f"{entry['fetched']}  {entry['status']}".rstrip()
+        )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = arguments.ArgumentParser(
         prog="haprion-blocklists",
@@ -463,22 +504,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--wait", type=float, default=WAIT_SECONDS, help="seconds to wait for the job"
     )
     remove.add_argument("--json", action="store_true")
+    listing = subcommands.add_parser("list", help="the stored lists as Settings shows them")
+    listing.add_argument("--json", action="store_true")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    contract = LIST_OPERATION if args.command == "list" else OPERATION
     if os.geteuid() != 0:
         return tool_answer.refusal(
-            args, OPERATION, "not_root", "run this with sudo", exit_codes.NOT_ROOT
+            args, contract, "not_root", "run this with sudo", exit_codes.NOT_ROOT
         )
     try:
-        commands = {"apply": command_apply, "remove": command_remove}
+        commands = {"apply": command_apply, "remove": command_remove, "list": command_list}
         return commands[args.command](args)
     except AdminError as exc:
-        return tool_answer.refusal(args, OPERATION, exc.code, str(exc), exc.exit_code)
+        return tool_answer.refusal(args, contract, exc.code, str(exc), exc.exit_code)
     except psycopg.Error as exc:
-        return tool_answer.database_refusal(args, OPERATION, exc)
+        return tool_answer.database_refusal(args, contract, exc)
 
 
 def _entry() -> None:  # pragma: no cover - console script shim

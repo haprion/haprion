@@ -20,7 +20,15 @@ from unittest import mock
 
 from haprion import exit_codes
 
-from haprion_ui import admin, config, db, profile_apply, settings_tool
+from haprion_ui import (
+    admin,
+    blocklist_apply,
+    config,
+    db,
+    path_list_apply,
+    profile_apply,
+    settings_tool,
+)
 from tests.contract_schema import assert_contract
 
 NOW = datetime(2026, 10, 30, tzinfo=UTC)
@@ -211,3 +219,79 @@ class TheProfilesList(AsRoot):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheListsList(AsRoot):
+    """`haprion-path-lists list` and `haprion-blocklists list` say what the cards say (review 26-11-24, PW07)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        for patch in (
+            mock.patch.object(path_list_apply, "connect", return_value=contextlib.nullcontext()),
+            mock.patch.object(path_list_apply, "load_environment"),
+            mock.patch.object(blocklist_apply, "connect", return_value=contextlib.nullcontext()),
+            mock.patch.object(blocklist_apply, "load_environment"),
+            mock.patch.object(config, "load", return_value=SimpleNamespace(management_writes=True)),
+            mock.patch.object(db, "latest_path_list_jobs", return_value={}),
+            mock.patch.object(db, "latest_blocklist_jobs", return_value={}),
+            mock.patch.object(db, "blocklist_states", return_value=[]),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_the_path_lists_say_not_applied_and_only_on_the_manager(self) -> None:
+        stored = db.PathList("scanners", "", ["/.env", "/.git"], 3, NOW, NOW, "admin")
+        files = [
+            db.ListFile("path_list", "scanners", 5, "0" * 64, None, None, NOW),
+            db.ListFile("path_list", "kept", 2, "1" * 64, "", ["/x"], NOW),
+        ]
+        with (
+            mock.patch.object(db, "path_lists", return_value=[stored]),
+            mock.patch.object(db, "list_files", return_value=files),
+            mock.patch("haprion_ui.path_list_form.usage", return_value={}),
+        ):
+            code, out, _ = run(path_list_apply.main, ["list", "--json"])
+            _, text, _ = run(path_list_apply.main, ["list"])
+
+        self.assertEqual(code, 0)
+        listed = assert_contract("haprion-path-lists-list", out)["result"]["path_lists"]
+        self.assertEqual(
+            [(e["name"], e["status"], e["stored"], e["paths"]) for e in listed],
+            [("kept", "Only on the manager", False, 1), ("scanners", "Not applied", True, 2)],
+        )
+        self.assertIn("Not applied", text)
+
+    def test_the_blocklists_say_the_same(self) -> None:
+        stored = db.Blocklist(
+            "community", "", "https://lists.example.com/a.txt", "none", "", 24, [], None, 3,
+            NOW, NOW, "admin",
+        )  # fmt: skip
+        files = [
+            db.ListFile("blocklist", "community", 5, "0" * 64, None, None, NOW),
+            db.ListFile("blocklist", "kept", 1, "1" * 64, None, None, NOW),
+        ]
+        with (
+            mock.patch.object(db, "blocklists", return_value=[stored]),
+            mock.patch.object(db, "list_files", return_value=files),
+        ):
+            code, out, _ = run(blocklist_apply.main, ["list", "--json"])
+
+        self.assertEqual(code, 0)
+        listed = assert_contract("haprion-blocklists-list", out)["result"]["blocklists"]
+        self.assertEqual(
+            [(e["name"], e["status"], e["stored"]) for e in listed],
+            [("community", "Not applied", True), ("kept", "Only on the manager", False)],
+        )
+        self.assertNotIn("secret", out)
+
+    def test_a_refusal_is_a_document_too(self) -> None:
+        with mock.patch("os.geteuid", return_value=1000):
+            _, out, _ = run(path_list_apply.main, ["list", "--json"])
+            _, again, _ = run(blocklist_apply.main, ["list", "--json"])
+
+        self.assertEqual(
+            assert_contract("haprion-path-lists-list", out)["error"]["code"], "not_root"
+        )
+        self.assertEqual(
+            assert_contract("haprion-blocklists-list", again)["error"]["code"], "not_root"
+        )

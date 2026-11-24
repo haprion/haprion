@@ -30,6 +30,7 @@ from haprion_ui import (
     config,
     db,
     export_tool,
+    path_list_apply,
     profile_apply,
     settings_apply,
 )
@@ -111,6 +112,15 @@ class Harness(unittest.TestCase):
             mock.patch.object(
                 profile_apply, "document", return_value={"dns_profiles": [], "ndes_profiles": []}
             ),
+            mock.patch.object(
+                path_list_apply,
+                "document",
+                return_value={
+                    "path_lists": [
+                        {"name": "scanners", "description": "", "paths": ["/.env", "/.git"]}
+                    ]
+                },
+            ),
             mock.patch.dict(
                 os.environ, {"SUDO_UID": str(os.getuid()), "SUDO_GID": str(os.getgid())}
             ),
@@ -143,6 +153,7 @@ class TheLayout(Harness):
                 "clusters/alpha/objects/shop.yaml",
                 "clusters/beta/cluster-settings.yaml",
                 "clusters/beta/objects/shop.yaml",
+                "path-lists.yaml",
                 "profiles.yaml",
                 "settings.yaml",
             ],

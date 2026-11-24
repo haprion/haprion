@@ -483,6 +483,8 @@ class Row:
     job_href: str
     button: str = ""
     """`apply_again` for a row root's file does not match; `""` otherwise."""
+    stored: bool = True
+    """Whether the database has the row: false for a definition only the manager's file has."""
 
 
 NOT_APPLIED = "Not applied"
@@ -654,6 +656,7 @@ def rows(
                         status=ONLY_ON_THE_MANAGER,
                         status_tone="warning",
                         job_href="",
+                        stored=False,
                     ),
                 )
             )

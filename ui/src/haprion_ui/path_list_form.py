@@ -384,6 +384,12 @@ class Row:
     job_href: str
     button: str = ""
     """`apply_again` for a row the file does not match, `take_in` for a file without a row."""
+    stored: bool = True
+    """Whether the database has the row: false for a list only the manager's file has."""
+    revision: int = 0
+    proxies: int = 0
+    count: int | None = None
+    """How many paths the list holds; None for a file that could not be read."""
 
 
 def _status(row: db.PathList, job: db.Job | None, *, writes: bool) -> tuple[str, str, str]:
@@ -452,6 +458,9 @@ def rows(
                     status_tone=tone,
                     job_href=job_href,
                     button=button,
+                    revision=item.revision,
+                    proxies=proxies,
+                    count=len(item.paths),
                 ),
             )
         )
@@ -473,6 +482,10 @@ def rows(
                     status_tone="warning",
                     job_href="",
                     button="take_in" if writes and entry.paths else "",
+                    stored=False,
+                    revision=entry.revision,
+                    proxies=proxies,
+                    count=len(entry.paths) if entry.paths else None,
                 ),
             )
         )

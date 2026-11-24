@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "error": null,
+  "operation": "blocklists_list",
+  "result": {
+    "blocklists": [
+      {
+        "name": "community",
+        "source": "lists.example.com",
+        "every": "24 h",
+        "addresses": "14 812 \u00b7 2 skipped",
+        "fetched": "26-11-12 06:00",
+        "status": "Not applied",
+        "stored": true
+      },
+      {
+        "name": "kept",
+        "source": "",
+        "every": "",
+        "addresses": "",
+        "fetched": "",
+        "status": "Only on the manager",
+        "stored": false
+      }
+    ]
+  }
+}

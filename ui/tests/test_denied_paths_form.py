@@ -132,6 +132,17 @@ class AStoredObjectFillsTheRow(EditorTestCase):
             {"mode": "block", "lists": ["scanners"], "paths": ["/server-info"], "block_for": "30m"},
         )
 
+    def test_a_block_without_a_time_shows_the_time_a_rule_would_take(self) -> None:
+        # Review 26-11-24, PW06: the object's Dynamic blocking, not always 30m.
+        document = with_paths(
+            "dynamic_block:\n  max_requests: 100\n  block_for: 2h\n"
+            "deny_paths:\n  mode: block\n  paths: [/x]\n"
+        )
+        form = preview.form_from_document(document)
+        self.assertEqual(form["deny_paths_block_for"], "2h")
+        rebuilt = yaml.safe_load(preview.build_document(form))
+        self.assertEqual(rebuilt["deny_paths"]["block_for"], "2h")
+
     def test_a_raw_port_never_carries_the_row(self) -> None:
         form: dict[str, Any] = {
             **preview.DEFAULTS,

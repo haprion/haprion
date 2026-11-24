@@ -2244,7 +2244,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
     never_blocked = _never_blocked(data, name)
     deny_rules = _deny_rules(data.get("deny_rules"), f"{name}.deny_rules")
     deny_rules = _rules_with_block_time(deny_rules, dynamic_block)
-    deny_paths = _deny_paths(data.get("deny_paths"), f"{name}.deny_paths")
+    deny_paths = _deny_paths(data.get("deny_paths"), f"{name}.deny_paths", dynamic_block)
     path_limits = _path_limits(data.get("path_limits"), f"{name}.path_limits")
     max_request_body = _body_size(data.get("max_request_body"), f"{name}.max_request_body")
     waf = _waf(data.get("waf"), f"{name}.waf")
@@ -3224,7 +3224,9 @@ def denied_paths(value: Any, location: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(checked))
 
 
-def _deny_paths(value: Any, location: str) -> DenyPaths | None:
+def _deny_paths(
+    value: Any, location: str, dynamic_block: DynamicBlock | None = None
+) -> DenyPaths | None:
     if value is None:
         return None
     data = _mapping(value, location)
@@ -3255,7 +3257,11 @@ def _deny_paths(value: Any, location: str) -> DenyPaths | None:
             )
         block_for = _block_for(data["block_for"], f"{location}.block_for")
     elif mode == "block":
-        block_for = DEFAULT_RULE_BLOCK_FOR
+        #
+        # As a rule's time is taken (`_rules_with_block_time`): the object's
+        # dynamic blocking, else the default (review 26-11-24, PW06).
+        #
+        block_for = dynamic_block.block_for if dynamic_block is not None else DEFAULT_RULE_BLOCK_FOR
     return DenyPaths(mode=mode, lists=tuple(lists_raw), paths=paths, block_for=block_for)
 
 

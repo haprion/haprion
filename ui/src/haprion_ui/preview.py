@@ -1681,15 +1681,15 @@ def _with_normalised_blocking(data: Any, networks: Collection[str]) -> Any:
             for rule in rules
         ]
     #
-    # Denied paths in block mode with no time of their own last the rule
-    # default (`proxy_model`), and the form writes that time (B527). A mode
-    # left unsaid is `log`, which the form writes too.
+    # Denied paths in block mode with no time of their own last as a rule's
+    # time does (`proxy_model`), and the form writes that time (B527, PW06). A
+    # mode left unsaid is `log`, which the form writes too.
     #
     paths = result.get("deny_paths")
     if isinstance(paths, Mapping):
         paths = {"mode": "log", **paths}
         if paths.get("mode") == "block" and not paths.get("block_for"):
-            paths["block_for"] = DEFAULT_RULE_BLOCK_FOR
+            paths["block_for"] = inherited
         result["deny_paths"] = paths
     return result
 
@@ -1707,6 +1707,9 @@ def _access_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[s
         "deny_mode": str(denied.get("mode", "log") or "log"),
         "max_request_body": str(data.get("max_request_body", "") or ""),
     }
+    inherited_block_for = (
+        str(_sub(data, "dynamic_block").get("block_for", "") or "") or DEFAULT_RULE_BLOCK_FOR
+    )
     paths = _sub(data, "deny_paths")
     lists = paths.get("lists")
     own = paths.get("paths")
@@ -1717,13 +1720,10 @@ def _access_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[s
             else (),
             "deny_paths": "\n".join(str(path) for path in own) if isinstance(own, list) else "",
             "deny_paths_mode": str(paths.get("mode", "log") or "log"),
-            "deny_paths_block_for": str(paths.get("block_for", "") or "") or DEFAULT_RULE_BLOCK_FOR,
+            "deny_paths_block_for": str(paths.get("block_for", "") or "") or inherited_block_for,
         }
     )
     columns: dict[str, list[str]] = {f"rule_{name}": [] for name in ("index", *RULE_FIELDS)}
-    inherited_block_for = (
-        str(_sub(data, "dynamic_block").get("block_for", "") or "") or DEFAULT_RULE_BLOCK_FOR
-    )
     methods: list[str] = []
     negated: list[str] = []
     rules = data.get("deny_rules")

@@ -60,6 +60,19 @@ class TheModel(unittest.TestCase):
         assert proxy.deny_paths is not None
         self.assertEqual(proxy.deny_paths.block_for, "30m")
 
+    def test_block_without_a_time_takes_the_time_a_rule_would(self) -> None:
+        # Review 26-11-24, PW06: the object's dynamic blocking, else the default.
+        proxy = _https(
+            "shop",
+            "dynamic_block:\n  max_requests: 100\n  block_for: 2h\n"
+            "deny_paths:\n  mode: block\n  paths: [/x]\n",
+        )
+        assert proxy.deny_paths is not None
+        self.assertEqual(proxy.deny_paths.block_for, "2h")
+        own = denied("  mode: block\n  paths: [/x]\n  block_for: 5m\n")
+        assert own.deny_paths is not None
+        self.assertEqual(own.deny_paths.block_for, "5m")
+
     def test_what_cannot_be_a_denied_path_is_refused(self) -> None:
         for body, said in (
             ("  mode: deny\n", "at least one path list or path"),

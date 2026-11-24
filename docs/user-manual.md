@@ -1675,7 +1675,8 @@ the proxy's page, or *New proxy*), below *Reachable from*; *Max request body* is
   `/wp-login.php`, which only scanners ask for. *Denied paths — lists* chooses [path lists](#path-lists)
   from *Settings*, and *Denied paths — paths* takes the object's own, one per line. Each path refuses itself
   and everything under it, read as a rule's path is read (below). *Denied paths — mode* is *log only*,
-  *deny* or *deny and block the address*; *Block for* says how long, and is greyed outside that mode.
+  *deny* or *deny and block the address*; *Block for* says how long, and is greyed outside that mode. Left out, it is the object's *Dynamic blocking*
+  *Block for*, or `30m` without one, as for a rule.
 - **Max request body** (http and https) is the largest body a request may declare, such as `10m`.
 - **Deny rules** (http and https) are tried in order, and any one of them is enough. *Add rule* adds one
   and *Remove rule* drops it. A rule has a *Name*, a *Mode* (*log only*, *deny* or *deny and block the
@@ -1699,7 +1700,7 @@ deny_paths:                      # http only; the whole object
   mode: block                    # log (the default), deny or block
   lists: [scanners]              # path lists from Settings
   paths: [/server-info]          # its own; each one and everything under it
-  block_for: 30m                 # block only; 1m to 24h, 30m when left out
+  block_for: 30m                 # block only; 1m to 24h; left out, as a rule's
 deny_rules:                      # http only; tried in order, any one is enough
   - name: admin-post             # lowercase, shown on the traffic record
     mode: deny
@@ -1806,7 +1807,7 @@ deny_rules:
 never_blocked: [office, 192.0.2.10]
 ```
 
-A block rule without `block_for` lasts as long as the object's `dynamic_block.block_for`, or `30m` on an object
+A block rule, or the denied paths, without `block_for` last as long as the object's `dynamic_block.block_for`, or `30m` on an object
 with no dynamic blocking.
 
 **Never blocked** (http, https and tcp), at the end of *Access*, takes groups from the *Network* page, and

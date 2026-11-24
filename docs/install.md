@@ -656,9 +656,9 @@ checksum, and writes `SHA256SUMS` beside the packages. The web interface and cer
 of the distribution they are for, with rootless podman (`ubuntu26.04` or `debian13`). The SCEP client is built
 from each distribution's certmonger package and its source, fetched from the distribution's archive and checked
 against the digests `tools/build-scep-package.py` pins. The build stops if OSV knows an advisory for the
-pinned version, unless `tools/scep-advisories-accepted.json` records it for that distribution and version, with
-the reason it does not reach the client as Haprion runs it. The build names each such entry, and it stops again once
-the advisory names a fixed version or is no longer returned.
+pinned version, unless `tools/scep-advisories-accepted.json` records its CVE, with the reason it does not reach
+the client as Haprion runs it. One entry covers every distribution's record of that CVE. The build names each
+such entry, and it stops again once the record names a fixed version.
 
 The WAF engine (Coraza SPOA with the OWASP Core Rule Set) is built from pinned upstream sources, and building the
 same version twice gives the same bytes. Before the build, govulncheck checks the source with the pinned Go: the

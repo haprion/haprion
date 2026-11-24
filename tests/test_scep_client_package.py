@@ -52,21 +52,17 @@ class FakeOsv:
         if self.fixed:
             events.append({"fixed": self.fixed})
         affected = [{"package": {"ecosystem": self.known}, "ranges": [{"events": events}]}]
-        return {"vulns": [{"id": record, "affected": affected} for record in self.found]}
+        # Debian and Ubuntu name the upstream CVE in `upstream` (measured 26-11-24).
+        return {
+            "vulns": [
+                {"id": record, "upstream": [record[record.index("CVE") :]], "affected": affected}
+                for record in self.found
+            ]
+        }
 
 
-def acceptance(
-    advisory: str = "UBUNTU-CVE-2099-0001",
-    ecosystem: str = "Ubuntu:26.04",
-    version: str = "0.79.21-1",
-) -> dict[str, str]:
-    return {
-        "advisory": advisory,
-        "ecosystem": ecosystem,
-        "version": version,
-        "decided": "2099-01-01",
-        "reason": "example",
-    }
+def acceptance(cve: str = "CVE-2099-0001") -> dict[str, str]:
+    return {"cve": cve, "decided": "2099-01-01", "reason": "example"}
 
 
 class Advisories(unittest.TestCase):
@@ -82,15 +78,20 @@ class Advisories(unittest.TestCase):
     ) -> str:
         return str(self.builder.advisories("0.79.21-1", distribution, release, osv, accepted or []))
 
-    def test_a_recorded_acceptance_passes_and_is_named_every_time(self) -> None:
+    def test_a_recorded_cve_passes_and_is_named_every_time(self) -> None:
         answer = self.check(FakeOsv(found=["UBUNTU-CVE-2099-0001"]), accepted=[acceptance()])
-        self.assertIn("beyond 1 recorded acceptance(s)", answer)
-        self.assertIn("UBUNTU-CVE-2099-0001 (decided 2099-01-01)", answer)
+        self.assertIn("UBUNTU-CVE-2099-0001 as CVE-2099-0001 (decided 2099-01-01)", answer)
 
-    def test_an_acceptance_holds_for_its_own_ecosystem_and_version_only(self) -> None:
-        for other in (acceptance(ecosystem="Debian:13"), acceptance(version="0.79.20-2")):
-            with self.assertRaisesRegex(ValueError, "known advisories.*UBUNTU-CVE-2099-0001"):
-                self.check(FakeOsv(found=["UBUNTU-CVE-2099-0001"]), accepted=[other])
+    def test_one_decision_covers_every_distributions_record_of_the_cve(self) -> None:
+        osv = FakeOsv(known="Debian:13", found=["DEBIAN-CVE-2099-0001"])
+        answer = self.check(osv, "debian", "13", accepted=[acceptance()])
+        self.assertIn("DEBIAN-CVE-2099-0001 as CVE-2099-0001", answer)
+
+    def test_a_record_of_another_cve_refuses(self) -> None:
+        with self.assertRaisesRegex(ValueError, "known advisories.*UBUNTU-CVE-2099-0001"):
+            self.check(
+                FakeOsv(found=["UBUNTU-CVE-2099-0001"]), accepted=[acceptance("CVE-2099-0002")]
+            )
 
     def test_an_advisory_beside_an_accepted_one_still_refuses(self) -> None:
         osv = FakeOsv(found=["UBUNTU-CVE-2099-0001", "UBUNTU-CVE-2099-0002"])
@@ -99,11 +100,11 @@ class Advisories(unittest.TestCase):
         ):
             self.check(osv, accepted=[acceptance()])
 
-    def test_an_acceptance_the_lookup_no_longer_returns_refuses_until_removed(self) -> None:
-        with self.assertRaisesRegex(ValueError, "no longer returns it; remove the entry"):
-            self.check(FakeOsv(), accepted=[acceptance()])
+    def test_a_recorded_cve_this_version_is_not_affected_by_holds_nothing_back(self) -> None:
+        # One distribution's build cannot tell a needless entry; the watch can.
+        self.assertIn("no known advisories", self.check(FakeOsv(), accepted=[acceptance()]))
 
-    def test_an_accepted_advisory_with_a_fixed_version_refuses_so_the_pin_moves(self) -> None:
+    def test_an_accepted_cve_with_a_fixed_version_refuses_so_the_pin_moves(self) -> None:
         osv = FakeOsv(found=["UBUNTU-CVE-2099-0001"], fixed="0.79.21-2")
         with self.assertRaisesRegex(ValueError, "fixed in 0.79.21-2 .*move the certmonger pin"):
             self.check(osv, accepted=[acceptance()])
@@ -113,6 +114,7 @@ class Advisories(unittest.TestCase):
         cases: list[Any] = [
             [],
             {"accepted": [entry], "extra": []},
+            {"accepted": [{**entry, "cve": "DEBIAN-CVE-2099-0001"}]},
             {"accepted": [{**entry, "decided": "26-11-24"}]},
             {"accepted": [{**entry, "reason": " "}]},
             {"accepted": [{**entry, "fixed": "x"}]},
@@ -127,16 +129,7 @@ class Advisories(unittest.TestCase):
                 path.write_text(json.dumps(document), encoding="utf-8")
                 with self.subTest(document=document), self.assertRaises(ValueError):
                     self.builder.accepted_advisories(path)
-
-    def test_every_recorded_acceptance_is_for_a_pinned_certmonger(self) -> None:
-        # An entry no pin asks about would never be checked, so never go stale.
-        pins = {
-            (f"{self.builder.ECOSYSTEMS[pin.distribution]}:{pin.release}", pin.version)
-            for pin in tool("build-scep-package").PINS.values()
-        }
-        for entry in self.builder.accepted_advisories():
-            with self.subTest(advisory=entry["advisory"]):
-                self.assertIn((entry["ecosystem"], entry["version"]), pins)
+        self.assertTrue(self.builder.accepted_advisories())
 
     def test_a_version_without_advisories_passes_after_the_release_is_proven_known(self) -> None:
         osv = FakeOsv()

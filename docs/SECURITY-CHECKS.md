@@ -259,9 +259,10 @@ release), the Go that compiles the engine and the govulncheck that reads it. Eve
    (`tools/upstream-watch vuln`); a finding opens an issue. A certmonger pin is moved by hand, taken
    where apt checked the distribution's signed index (`tools/build-scep-package.py`). An advisory
    with no fixed version that does not reach the client as Haprion runs it can be recorded in
-   `tools/scep-advisories-accepted.json`, for one distribution and version, with the reason and the
-   date. Both the build and the watch name each entry, and both fail on one that names a fixed version
-   or that OSV no longer returns
+   `tools/scep-advisories-accepted.json` by its CVE, with the reason and the date; one entry covers
+   every distribution's record of it. Both the build and the watch name each entry, and both fail on a
+   record of it that names a fixed version. The watch also fails on an entry no pinned certmonger is
+   affected by any more
 2. asks upstream what is newer (`tools/upstream-watch check`), verifies it - the rule set's signature
    against `keys/upstream/coreruleset.asc`, the Go archive against go.dev's digest, the engine by the
    commit its release tag names - and rewrites the pins on the branch `upstream-watch`, with one pull

@@ -956,22 +956,22 @@ if __name__ == "__main__":
 class TheScepClientsPins(unittest.TestCase):
     """B383: the pinned certmonger against OSV each night, as the package's build asks."""
 
-    def osv(self, affected: str) -> Any:
-        # What the tree records as accepted is returned too, so the clean case
-        # stays clean whatever the file holds.
-        recorded = json.loads((BASE / "tools/scep-advisories-accepted.json").read_text())
+    def osv(self, affected: str, *, recorded: bool = True) -> Any:
+        # With `recorded`, every pin is affected by the CVEs the tree accepts,
+        # so the clean case stays clean whatever the file holds.
+        cves = [
+            entry["cve"]
+            for entry in json.loads((BASE / "tools/scep-advisories-accepted.json").read_text())[
+                "accepted"
+            ]
+        ]
 
         def query(body: dict[str, Any]) -> dict[str, Any]:
             package = body["package"]
             if package["name"] == "openssl":
                 ecosystem = package["ecosystem"]
                 return {"vulns": [{"affected": [{"package": {"ecosystem": ecosystem}}]}]}
-            records = [
-                {"id": entry["advisory"]}
-                for entry in recorded["accepted"]
-                if entry["ecosystem"] == package["ecosystem"]
-                and entry["version"] == body["version"]
-            ]
+            records = [{"id": "EXAMPLE-" + cve, "upstream": [cve]} for cve in cves if recorded]
             if package["ecosystem"] == affected:
                 records.append({"id": "EXAMPLE-2026-1"})
             return {"vulns": records}
@@ -984,3 +984,14 @@ class TheScepClientsPins(unittest.TestCase):
         self.assertIn("haprion-scep debian13", found[0])
         self.assertIn("EXAMPLE-2026-1", found[0])
         self.assertEqual(WATCH.scep_advisories(BASE, self.osv("Example:1")), [])
+
+    def test_an_acceptance_no_pin_is_affected_by_is_said(self) -> None:
+        found = WATCH.scep_advisories(BASE, self.osv("Example:1", recorded=False))
+        recorded = WATCH.load(BASE / WATCH.SCEP_TOOL, "t").client.accepted_advisories()
+        self.assertEqual(len(found), len(recorded))
+        self.assertTrue(all("no pinned certmonger is affected" in line for line in found))
+
+    def test_a_needless_acceptance_waits_for_an_answer_from_every_pin(self) -> None:
+        found = WATCH.scep_advisories(BASE, self.osv("Debian:13", recorded=False))
+        self.assertEqual(len(found), 1)
+        self.assertIn("EXAMPLE-2026-1", found[0])

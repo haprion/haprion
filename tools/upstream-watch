@@ -802,15 +802,36 @@ def scep_advisories(
 
     scep = load(tree / SCEP_TOOL, "upstream_watch_scep")
     found = []
+    affecting: set[str] = set()
+    try:
+        accepted = scep.client.accepted_advisories()
+    except ValueError as exc:
+        return [f"haprion-scep: {exc}"]
     for name, pin in sorted(scep.PINS.items()):
         try:
-            print(
-                scep.client.advisories(
-                    pin.version, pin.distribution, pin.release, query or scep.client.osv_query
-                )
+            answer, cves = scep.client.lookup(
+                pin.version,
+                pin.distribution,
+                pin.release,
+                query or scep.client.osv_query,
+                accepted,
             )
         except ValueError as exc:
             found.append(f"haprion-scep {name}: {exc}")
+            continue
+        print(answer)
+        affecting |= cves
+    #
+    # An acceptance no pin is affected by is one a fix or a moved pin made
+    # needless. Only an answer from every pin shows that.
+    #
+    if not found:
+        found.extend(
+            f"haprion-scep: {entry['cve']} is recorded in {scep.client.ACCEPTED_PATH.name}, "
+            "but no pinned certmonger is affected by it any more; remove the entry"
+            for entry in accepted
+            if entry["cve"] not in affecting
+        )
     return found
 
 

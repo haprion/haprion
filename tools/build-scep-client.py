@@ -50,14 +50,18 @@ ECOSYSTEMS = {"debian": "Debian", "ubuntu": "Ubuntu"}
 #
 CONTROL_PACKAGE = "openssl"
 #
-# An advisory judged not to reach the client as Haprion runs it, with the
-# reason and the date (26-11-24, CVE-2026-133622: no distribution had a fixed
-# version). An entry holds for one advisory, ecosystem and version only, and
-# stops holding - the build is refused - once the advisory names a fixed
-# version, so the pin moves, or once the lookup no longer returns it.
+# A CVE judged not to reach the client as Haprion runs it, with the reason and
+# the date (26-11-24, CVE-2026-133622: no distribution had a fixed version).
+# It is matched by the upstream CVE each distribution's record names, so one
+# decision covers every distribution's record of it, also one published after
+# the decision. A record of it that names a fixed version is still refused, so
+# the pin moves; an entry no pinned certmonger is affected by any more is the
+# nightly watch's to report (`tools/upstream-watch vuln`), since one
+# distribution's build cannot tell.
 #
 ACCEPTED_PATH = Path(__file__).resolve().parent / "scep-advisories-accepted.json"
-ACCEPTED_FIELDS = frozenset({"advisory", "ecosystem", "version", "decided", "reason"})
+ACCEPTED_FIELDS = frozenset({"cve", "decided", "reason"})
+CVE = re.compile(r"CVE-[0-9]{4}-[0-9]{4,}")
 DECIDED = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 
@@ -76,17 +80,25 @@ def accepted_advisories(path: Path = ACCEPTED_PATH) -> list[dict[str, str]]:
             not isinstance(entry, dict)
             or set(entry) != ACCEPTED_FIELDS
             or not all(isinstance(value, str) and value.strip() for value in entry.values())
+            or CVE.fullmatch(entry["cve"]) is None
             or DECIDED.fullmatch(entry["decided"]) is None
         ):
             raise ValueError(
-                f"{path.name}: each entry is advisory, ecosystem, version, decided "
-                "(YYYY-MM-DD) and reason, all non-empty"
+                f"{path.name}: each entry is cve (CVE-YYYY-N), decided (YYYY-MM-DD) and "
+                "reason, all non-empty"
             )
-        key = (entry["advisory"], entry["ecosystem"], entry["version"])
-        if key in seen:
-            raise ValueError(f"{path.name}: {key[0]} for {key[1]} {key[2]} is recorded twice")
-        seen.add(key)
+        if entry["cve"] in seen:
+            raise ValueError(f"{path.name}: {entry['cve']} is recorded twice")
+        seen.add(entry["cve"])
     return entries
+
+
+def upstream_names(record: dict[str, Any]) -> set[str]:
+    """The record's own ID and the upstream IDs it names (Debian and Ubuntu: `upstream`)."""
+    names = {str(record.get("id"))}
+    for field in ("upstream", "aliases"):
+        names.update(str(name) for name in record.get(field) or [])
+    return names
 
 
 def fixed_versions(record: dict[str, Any], ecosystem: str) -> list[str]:
@@ -126,9 +138,20 @@ def advisories(
 ) -> str:
     """Refuse a Certmonger version with a known advisory; name the ecosystem asked.
 
-    An advisory recorded in `scep-advisories-accepted.json` for this ecosystem
-    and version passes and is named in the answer, every time.
+    An advisory whose CVE `scep-advisories-accepted.json` records passes and is
+    named in the answer, every time.
     """
+    return lookup(version, distribution, distribution_release, query, accepted)[0]
+
+
+def lookup(
+    version: str,
+    distribution: str,
+    distribution_release: str,
+    query: Callable[[dict[str, Any]], dict[str, Any]],
+    accepted: list[dict[str, str]] | None = None,
+) -> tuple[str, set[str]]:
+    """The answer `advisories` gives, and the recorded CVEs this version is affected by."""
     if distribution not in ECOSYSTEMS:
         raise ValueError(f"no vulnerability database is known for {distribution}")
     ecosystem = f"{ECOSYSTEMS[distribution]}:{distribution_release}"
@@ -145,38 +168,41 @@ def advisories(
         raise ValueError(f"certmonger {version} has more advisories in {ecosystem} than one page")
     if accepted is None:
         accepted = accepted_advisories()
-    held = {
-        entry["advisory"]: entry
-        for entry in accepted
-        if entry["ecosystem"] == ecosystem and entry["version"] == version
-    }
-    records = {str(record.get("id")): record for record in found.get("vulns", [])}
-    problems = []
-    unaccepted = sorted(name for name in records if name not in held)
-    if unaccepted:
-        problems.append(
-            f"certmonger {version} has known advisories in {ecosystem}: {', '.join(unaccepted)}"
-        )
-    for name in sorted(held):
-        if name not in records:
-            problems.append(
-                f"{name} is recorded as accepted for certmonger {version} in {ecosystem}, but the "
-                f"lookup no longer returns it; remove the entry from {ACCEPTED_PATH.name}"
-            )
-        elif fixed := fixed_versions(records[name], ecosystem):
+    recorded = {entry["cve"]: entry for entry in accepted}
+    unaccepted: list[str] = []
+    problems: list[str] = []
+    held: dict[str, list[str]] = {}
+    for record in sorted(found.get("vulns", []), key=lambda record: str(record.get("id"))):
+        name = str(record.get("id"))
+        matched = sorted(upstream_names(record) & set(recorded))
+        if not matched:
+            unaccepted.append(name)
+        elif fixed := fixed_versions(record, ecosystem):
             problems.append(
                 f"{name} is fixed in {', '.join(fixed)} in {ecosystem}; move the certmonger pin "
-                f"and remove the entry from {ACCEPTED_PATH.name}"
+                f"(and remove {', '.join(matched)} from {ACCEPTED_PATH.name} once no pin needs it)"
             )
+        else:
+            held[name] = matched
+    if unaccepted:
+        problems.insert(
+            0,
+            f"certmonger {version} has known advisories in {ecosystem}: {', '.join(unaccepted)}",
+        )
     if problems:
         raise ValueError("; ".join(problems))
+    affecting = {cve for names in held.values() for cve in names}
     if held:
-        named = ", ".join(f"{name} (decided {held[name]['decided']})" for name in sorted(held))
+        named = ", ".join(
+            f"{name} as {cve} (decided {recorded[cve]['decided']})"
+            for name, names in sorted(held.items())
+            for cve in names
+        )
         return (
             f"{ecosystem}: no advisories for certmonger {version} beyond "
-            f"{len(held)} recorded acceptance(s): {named}"
-        )
-    return f"{ecosystem}: no known advisories for certmonger {version}"
+            f"recorded acceptance(s): {named}"
+        ), affecting
+    return f"{ecosystem}: no known advisories for certmonger {version}", affecting
 
 
 def verified(path: Path, digest: str) -> bytes:

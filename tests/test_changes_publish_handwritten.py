@@ -329,6 +329,9 @@ class WhatOnlyGitSees(HandwrittenFixture):
             policy = self.runtime(Path(raw))
             self.seed()
             os.chmod(self.repo / "core/haproxy.cfg", 0o700)
+            # Git sees the change, or the test proves nothing (review 26-11-24, PW10):
+            # with core.fileMode=false the mode would pass unseen.
+            self.assertIn("mode change", git(self.repo, "diff", "--summary"))
 
             code, document, _err = self.publish_objects(policy, self.request())
 

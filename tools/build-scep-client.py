@@ -174,9 +174,13 @@ def lookup(
     held: dict[str, list[str]] = {}
     for record in sorted(found.get("vulns", []), key=lambda record: str(record.get("id"))):
         name = str(record.get("id"))
-        matched = sorted(upstream_names(record) & set(recorded))
-        if not matched:
-            unaccepted.append(name)
+        # Accepted only when every CVE the record names is (review 26-11-24, PW08):
+        # one accepted CVE must not carry a second one the record bundles with it.
+        cves = {upstream for upstream in upstream_names(record) if CVE.fullmatch(upstream)}
+        matched = sorted(cves & set(recorded))
+        if not cves or cves - set(recorded):
+            missing = sorted(cves - set(recorded))
+            unaccepted.append(f"{name} ({', '.join(missing)})" if matched and missing else name)
         elif fixed := fixed_versions(record, ecosystem):
             problems.append(
                 f"{name} is fixed in {', '.join(fixed)} in {ecosystem}; move the certmonger pin "

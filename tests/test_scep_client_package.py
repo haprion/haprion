@@ -35,8 +35,10 @@ class FakeOsv:
         known: str = "Ubuntu:26.04:LTS",
         found: list[str] | None = None,
         fixed: str | None = None,
+        upstream: dict[str, list[str]] | None = None,
     ) -> None:
         self.known, self.found, self.fixed = known, found or [], fixed
+        self.upstream = upstream or {}
         self.asked: list[dict[str, Any]] = []
 
     def __call__(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -55,7 +57,11 @@ class FakeOsv:
         # Debian and Ubuntu name the upstream CVE in `upstream` (measured 26-11-24).
         return {
             "vulns": [
-                {"id": record, "upstream": [record[record.index("CVE") :]], "affected": affected}
+                {
+                    "id": record,
+                    "upstream": self.upstream.get(record) or [record[record.index("CVE") :]],
+                    "affected": affected,
+                }
                 for record in self.found
             ]
         }
@@ -99,6 +105,24 @@ class Advisories(unittest.TestCase):
             ValueError, r"advisories in Ubuntu:26\.04: UBUNTU-CVE-2099-0002$"
         ):
             self.check(osv, accepted=[acceptance()])
+
+    def test_a_record_naming_an_accepted_and_a_new_cve_refuses_and_names_the_new_one(
+        self,
+    ) -> None:
+        # Review 26-11-24, PW08: one accepted CVE must not carry another.
+        osv = FakeOsv(
+            found=["USN-9999-1"], upstream={"USN-9999-1": ["CVE-2099-0001", "CVE-2099-0002"]}
+        )
+        with self.assertRaisesRegex(ValueError, r"USN-9999-1 \(CVE-2099-0002\)$"):
+            self.check(osv, accepted=[acceptance()])
+
+    def test_a_record_whose_every_cve_is_accepted_passes(self) -> None:
+        osv = FakeOsv(
+            found=["USN-9999-1"], upstream={"USN-9999-1": ["CVE-2099-0001", "CVE-2099-0002"]}
+        )
+        answer = self.check(osv, accepted=[acceptance(), acceptance("CVE-2099-0002")])
+        self.assertIn("USN-9999-1 as CVE-2099-0001", answer)
+        self.assertIn("USN-9999-1 as CVE-2099-0002", answer)
 
     def test_a_recorded_cve_this_version_is_not_affected_by_holds_nothing_back(self) -> None:
         # One distribution's build cannot tell a needless entry; the watch can.

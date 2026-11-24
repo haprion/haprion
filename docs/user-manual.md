@@ -1962,6 +1962,12 @@ The manager names itself to the source as `haprion/<version>`. Some sources refu
 **Removing one** is refused while an object, a saved change or a draft names it under *Denied*: take it
 out there first. The list's file then leaves every cluster; the nodes keep their copy. If a cluster could not be read, the removal waits until it has been.
 
+**When the definition is not the row.** The refresh reads the definition on the manager, not the row, and
+the card compares the two after every poll. A row whose definition says something else - a database
+restored from an older dump, an apply that did not finish - is *Not applied*, and *Apply again* writes the
+row over it. A definition with no row is *Only on the manager*; its password or token cannot be read back
+into a row, so make the list again under the same name and its apply takes the definition over.
+
 **From the terminal.** `haprion-blocklists apply <file>` stores and applies the lists in a file, as the
 form does, and `haprion-blocklists remove <name>` removes one. A file that changes a list's URL,
 authorization or username carries the list's `secret` again. `haprion-blocklist-check <address>` is
@@ -1995,6 +2001,12 @@ left as it is, and the page says which. Each cluster's changes go out with its n
 
 **Removing one** is refused while an object, a saved change or a draft names it under *Denied paths*:
 take it out there first. If a cluster could not be read, the removal waits until it has been.
+
+**When the file is not the row.** A publish reads the file on the manager, not the row, and the card
+compares the two after every poll. A row whose file says something else - a database restored from an
+older dump, an apply that did not finish, a file changed by hand - is *Not applied*, and *Apply again*
+writes the row over the file. A file with no row is *Only on the manager*: objects may already name it, and
+*Take in* makes the row the file says.
 
 **From the terminal.** `haprion-path-lists apply <file>` stores and applies the lists in a file, as the
 form does; `--prune` removes the lists the file does not name, and `haprion-path-lists remove <name>`
@@ -3825,6 +3837,9 @@ time: the database is the dump's or half made by then. If that dump cannot be ma
 nothing is restored and what was stopped is started again. The command then
 makes the database again from the dump, checks its privileges with `03-verify`, holds the waiting jobs
 and ends the sessions (`after-restore`), starts what it stopped, and replays the traffic log (below).
+The path lists and the blocklists are files on the manager as well as rows, and the files are not in the
+dump: a row the dump brings back may differ from its file. *Settings* says *Not applied* on each such row
+and *Only on the manager* on a file the dump has no row for; *Apply again* writes the row over the file.
 A dump from before an update that changed the schema is migrated to the installed release's schema
 before that check; one the release cannot take, such as one from a newer release, is refused before
 anything stops. So is a dump from before Haprion 0.99.13's schema, `0115`: read it back with 0.99.13 installed, then

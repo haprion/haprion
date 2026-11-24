@@ -577,6 +577,13 @@ SQL
     sessions="$(sed -n 2p <<<"$answer")"
     log "held for an admin on Jobs: ${jobs}"
     log "sessions ended: ${sessions}"
+    #
+    # The path lists and blocklists root keeps are files, not in the dump: a row
+    # restored from an older dump may differ from its file. Settings says so
+    # on each row, and its Apply again writes the row's content over the file
+    # (review 26-11-24, PW02).
+    #
+    log "path lists and blocklists: a row may differ from the file on the manager; Settings shows Not applied on each one, with Apply again"
     hold_api_tokens "$@"
 }
 

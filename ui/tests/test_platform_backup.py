@@ -1545,6 +1545,7 @@ class HoldingAfterARestore(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("held for an admin on Jobs: [7]", done.stdout)
         self.assertIn("sessions ended: 2", done.stdout)
+        self.assertIn("Settings shows Not applied on each one, with Apply again", done.stdout)
 
 
 class ReadingTheActiveTokens(unittest.TestCase):

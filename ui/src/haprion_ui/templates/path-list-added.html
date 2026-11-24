@@ -1,0 +1,31 @@
+{% extends "layout.html" %}
+{% from "_back.html" import back_button %}
+{% block title %}{{ name }} added — Haprion{% endblock %}
+{% block content %}
+{#
+  What Add to proxies did (B527): the list under Denied paths, in log only where
+  a proxy had none, in each http and https proxy of the chosen clusters, saved
+  for each one's next publish.
+#}
+<section class="page-heading">
+  <div class="heading-title">{{ back_button('/settings#path-lists', 'Settings') }}<h1>{{ name }} under Denied paths</h1></div>
+</section>
+
+<div class="cluster-list">
+{% for result in results %}
+<section class="cluster-card {{ result.cluster | cluster_accent }}">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>{{ result.cluster }}</h3><p>{% if result.added %}Added to {{ result.added | length }} prox{{ 'y' if result.added | length == 1 else 'ies' }}, saved for the next publish.{% if result.already %} {{ result.already | length }} already had it.{% endif %}{% elif result.already and result.skipped %}{{ result.already | length }} already had it.{% elif result.already %}Every proxy already has it.{% elif result.skipped %}Added to none.{% else %}No http or https proxy.{% endif %}</p></div></div>
+    {% if result.added %}<div class="cluster-state"><a class="secondary-button" href="/proxies?{{ {'cluster': result.cluster} | urlencode }}">Publish…</a></div>{% endif %}
+  </header>
+  {% if result.skipped %}
+  <div class="table-scroll"><table class="node-table">
+    <thead><tr><th>Not changed</th><th>Why</th></tr></thead>
+    <tbody>{% for proxy, why in result.skipped %}<tr><td data-label="Not changed"><a href="/proxies/{{ result.cluster }}/{{ proxy }}">{{ proxy }}</a></td><td data-label="Why">{{ why }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</section>
+{% else %}
+<p class="table-empty">No cluster yet.</p>
+{% endfor %}
+</div>
+{% endblock %}

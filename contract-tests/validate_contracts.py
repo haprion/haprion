@@ -1584,6 +1584,7 @@ SEMANTIC_CHECKS = {
     "settings_apply": check_settings_apply_semantics,
     "profiles_apply": check_profiles_apply_semantics,
     "blocklists_apply": check_profiles_apply_semantics,
+    "path_lists_apply": check_profiles_apply_semantics,
     "user_list": check_user_list_semantics,
     "api_token": check_api_token_semantics,
     "user_action": check_user_action_semantics,
@@ -1678,7 +1679,13 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         first = next(iter(result["reads"].values()))
         first["envelope"] = None
         first["exit_code"] = 0
-    elif operation in ("user_apply", "settings_apply", "profiles_apply", "blocklists_apply"):
+    elif operation in (
+        "user_apply",
+        "settings_apply",
+        "profiles_apply",
+        "blocklists_apply",
+        "path_lists_apply",
+    ):
         result["changed"] = not result["changed"]
     elif operation == "user_list":
         result["accounts"].append(deepcopy(result["accounts"][0]))

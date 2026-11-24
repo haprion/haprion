@@ -241,6 +241,7 @@ from haprion_ui.db.jobs import (
     job_state,
     kept_job_ids,
     latest_blocklist_jobs,
+    latest_path_list_jobs,
     listed_jobs,
     operation_jobs,
     profile_jobs,
@@ -715,4 +716,5 @@ __all__ = [
     "path_list",
     "path_lists",
     "save_path_list",
+    "latest_path_list_jobs",
 ]

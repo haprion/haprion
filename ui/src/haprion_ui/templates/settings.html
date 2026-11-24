@@ -221,6 +221,27 @@
   {% endif %}
 </section>
 
+<section class="cluster-card settings-card" id="path-lists">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Path lists</h3></div></div>
+    <div class="cluster-state"><a class="secondary-button" href="/settings/path-lists/new">Add path list</a></div>
+  </header>
+  {% if path_lists %}
+  <div class="table-scroll"><table class="node-table settings-cluster-table">
+    <thead><tr><th>Name</th><th>Paths</th><th>Used by</th><th class="settings-actions"><span class="visually-hidden">Action</span></th></tr></thead>
+    <tbody>
+      {% for row in path_lists %}
+      <tr data-href="{{ row.href }}">
+        <td data-label="Name"><a class="proxy-link" href="{{ row.href }}"><strong>{{ row.name }}</strong></a></td>
+        <td data-label="Paths">{{ row.paths }}</td>
+        <td data-label="Used by"{% if not row.used_by and not row.status %} class="table-empty"{% endif %}>{% if row.status %}<a class="status-badge status-badge-{{ 'critical' if row.status_tone == 'critical' else 'info' }}" href="{{ row.job_href }}">{{ row.status }}</a>{% else %}{{ row.used_by or 'No proxy' }}{% endif %}</td>
+        <td data-label="" class="settings-actions"><a class="secondary-button settings-edit" href="/settings/path-lists/{{ row.name }}/add-to-proxies">Add to proxies…</a> <a class="secondary-button settings-edit" href="{{ row.href }}">Edit</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+</section>
+
 {% if features %}
 <section class="cluster-card settings-card" id="features">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Features</h3></div></div></header>

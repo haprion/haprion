@@ -1,0 +1,35 @@
+{% extends "layout.html" %}
+{% from "_back.html" import back_button %}
+{% from "_certificate_job.html" import certificate_job_notice %}
+{% block title %}{% if existing %}{{ existing.name }}{% else %}New path list{% endif %} — Haprion{% endblock %}
+{% block content %}
+{#
+  One path list (B527, B532). Save stores it and has one job write it where
+  every publish reads it; each cluster whose objects name it then publishes it.
+#}
+{% set action = '/settings/path-lists/' ~ existing.name ~ '/edit' if existing else '/settings/path-lists/new' %}
+<section class="page-heading">
+  <div class="heading-title">{{ back_button('/settings#path-lists', 'Settings') }}<h1>{% if existing %}{{ existing.name }}{% else %}New path list{% endif %}</h1></div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+{% if certificate_job %}{% call certificate_job_notice(certificate_job) %}Saving waits for it to finish.{% endcall %}{% endif %}
+
+<form method="post" action="{{ action }}" class="preview-form" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+  <section class="cluster-card">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Path list</h3><p>The name is the list's name under <em>Denied paths — lists</em>.</p></div></div></header>
+    <div class="form-grid blocklist-grid">
+      <label><span class="field-title">Name</span><input name="name" value="{{ form.name }}" maxlength="40" spellcheck="false" required{% if existing %} readonly{% endif %}></label>
+      <label class="field-span3"><span class="field-title">Description <span class="optional">(optional)</span></span><input name="description" value="{{ form.description }}" maxlength="200"></label>
+      <label class="field-span4"><span class="field-title">Paths</span><textarea name="paths" rows="9" spellcheck="false" placeholder="/.env&#10;/wp-login.php">{{ form.paths }}</textarea><small>One path per line, matched as a prefix.</small></label>
+    </div>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons">{% if existing %}<a class="danger-button" href="/settings/path-lists/{{ existing.name }}/remove">Remove…</a>{% endif %}<a class="secondary-button" href="/settings#path-lists">Cancel</a><button type="submit" class="secondary-button deploy-button" name="action" value="save"{% if certificate_job %} disabled{% endif %}>Save</button></div>
+    </div>
+  </section>
+</form>
+{% endblock %}

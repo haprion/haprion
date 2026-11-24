@@ -14,6 +14,7 @@ from haprion_ui.pages import (
     dashboard,
     first_cluster,
     handwritten,
+    path_lists,
     profiles,
     proxies,
     regenerated,
@@ -28,6 +29,7 @@ def build_router(config: Config) -> APIRouter:
     router.include_router(certificates.build_router(config))
     router.include_router(settings.build_router(config))
     router.include_router(blocklists.build_router(config))
+    router.include_router(path_lists.build_router(config))
     router.include_router(api_tokens.build_router(config))
     router.include_router(proxies.build_router(config))
     router.include_router(traffic.build_router(config))

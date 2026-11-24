@@ -1,0 +1,361 @@
+"""*Settings → Path lists*: one list's form, its save and removal, and *Add to proxies* (B527, B532).
+
+A path list is a set of paths only scanners ask for, named under an object's
+*Denied paths — lists*. Saving stores the next revision and queues the
+`path_list_apply` job, which has the root helper write the list where every
+publish reads it; a cluster whose version carries another copy then says so in
+*Needs attention*. A list an object, a saved change or a draft still names
+cannot be removed. `haprion-path-lists` shares these, so the command and the
+page refuse the same things.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any
+from uuid import UUID, uuid4
+
+from haprion import path_lists
+from haprion.config import ConfigError
+from haprion.proxy_model import MAX_DENIED_PATH, MAX_DENIED_PATHS, dump_document, read_document
+
+from haprion_ui import db, objects, refusals
+from haprion_ui import jobs as queue
+from haprion_ui.blocklist_form import unread_sentence
+
+OPERATION = path_lists.OPERATION
+CARD = "/settings#path-lists"
+#
+# The objects with a path to refuse on: http and https. A raw connection has
+# none (`proxy_model`).
+#
+DENIED_PROTOCOLS = ("http", "https")
+PATHS_MAX = MAX_DENIED_PATHS * (MAX_DENIED_PATH + 2)
+
+
+class FormProblem(ValueError):
+    """What is wrong with a submission, as one sentence the form shows, and its code.
+
+    The codes are `haprion-path-lists`' own: `bad_input` for the submission,
+    `expected_target_changed` for a row that moved on, `operation_locked` for a
+    busy queue and `in_use` for a list still named.
+    """
+
+    def __init__(self, message: str, *, code: str = "bad_input") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+@dataclass(frozen=True)
+class Form:
+    """A list as the form holds it: text, as typed."""
+
+    name: str = ""
+    description: str = ""
+    paths: str = ""
+
+
+EMPTY = Form()
+
+
+def from_row(row: db.PathList) -> Form:
+    return Form(
+        name=row.name,
+        description=row.description,
+        paths="".join(f"{path}\n" for path in row.paths),
+    )
+
+
+def from_posted(text: Mapping[str, str], existing: db.PathList | None) -> Form:
+    """The submission as typed; an existing list keeps its name."""
+
+    return Form(
+        name=existing.name if existing else text.get("name", "").strip()[:64],
+        description=text.get("description", "").strip()[:400],
+        paths=text.get("paths", "")[:PATHS_MAX],
+    )
+
+
+def checked(form: Form) -> path_lists.PathList:
+    """The list the engine would read, or the field and what is wrong with it."""
+
+    try:
+        path_lists.checked_name(form.name)
+    except path_lists.PathListError as exc:
+        raise FormProblem(f"Name — {exc}.") from None
+    if len(form.description) > path_lists.DESCRIPTION_MAX:
+        raise FormProblem(f"Description — at most {path_lists.DESCRIPTION_MAX} characters.")
+    written = path_lists.lines(form.paths)
+    if not written:
+        raise FormProblem("Paths — write at least one path, one to a line.")
+    try:
+        paths = path_lists.checked_paths(written, "a path")
+    except path_lists.PathListError as exc:
+        raise FormProblem(f"Paths — {_readable(str(exc))}.") from None
+    return path_lists.PathList(name=form.name, paths=paths, description=form.description)
+
+
+def _readable(said: str) -> str:
+    """The engine's words for one path, the line counted from 1 as the field shows it."""
+
+    return re.sub(r"a path\[(\d+)\]", lambda found: f"line {int(found.group(1)) + 1}", said)
+
+
+def usage(connection: Any) -> dict[str, dict[str, tuple[str, ...]]]:
+    """Every list's users per cluster, in one reading: published, saved changes and drafts."""
+
+    found: dict[str, dict[str, set[str]]] = {}
+
+    def note(cluster: str, name: str, document: str) -> None:
+        for listed in named_lists(name, document):
+            found.setdefault(listed, {}).setdefault(cluster, set()).add(name)
+
+    readings = db.cluster_objects(connection)
+    for reading in readings:
+        if objects.was_read(reading):
+            for view in objects.cluster_object_views(reading):
+                note(reading.cluster, view.name, view.document)
+    for draft in db.live_drafts(connection, sorted({r.cluster for r in readings})):
+        note(draft.cluster, draft.object_id, draft.yaml)
+    return {
+        listed: {cluster: tuple(sorted(names)) for cluster, names in clusters.items()}
+        for listed, clusters in found.items()
+    }
+
+
+def users(connection: Any, name: str) -> dict[str, tuple[str, ...]]:
+    """The objects that name the list, per cluster: published, saved changes and drafts."""
+
+    return usage(connection).get(name, {})
+
+
+def named_lists(name: str, document: str) -> tuple[str, ...]:
+    """The lists a stored document names under *Denied paths*; none where it cannot be read."""
+
+    try:
+        data = read_document(name, document.encode())
+    except ConfigError:
+        return ()
+    denied = data.get("deny_paths")
+    lists = denied.get("lists") if isinstance(denied, dict) else None
+    return tuple(str(item) for item in lists) if isinstance(lists, list) else ()
+
+
+def in_use_sentence(name: str, used: Mapping[str, Sequence[str]]) -> str:
+    where = "; ".join(f"{', '.join(names)} on {cluster}" for cluster, names in sorted(used.items()))
+    return f"{name} is under Denied paths in {where}. Take it out there first, then remove it."
+
+
+def _queue(connection: Any, *, payload: dict[str, Any], key: UUID, actor: str, via: str) -> db.Job:
+    try:
+        job = db.queue_job(
+            connection, operation=OPERATION, cluster=None, payload=payload, idempotency_key=key
+        )
+    except db.CertificateBusy as busy:
+        connection.rollback()
+        raise FormProblem(refusals.conflict_sentence(busy), code="operation_locked") from None
+    db.record_audit_event(
+        connection,
+        actor=actor,
+        action="queue_job",
+        cluster=None,
+        request_id=job.request_id,
+        detail={"operation": OPERATION, "job": job.id, "via": via, **payload},
+    )
+    connection.commit()
+    return job
+
+
+def save(
+    connection: Any,
+    item: path_lists.PathList,
+    *,
+    existing: db.PathList | None,
+    actor: str,
+    key: UUID,
+    via: str = "web",
+) -> db.Job:
+    """Store the list's next revision and queue its apply job, committed together."""
+
+    try:
+        stored = db.save_path_list(
+            connection,
+            name=item.name,
+            previous=existing.revision if existing else None,
+            description=item.description,
+            paths=item.paths,
+            actor=actor,
+        )
+    except db.PathListChanged:
+        connection.rollback()
+        if existing is None:
+            raise FormProblem(
+                f"Name — a path list called {item.name} already exists.",
+                code="expected_target_changed",
+            ) from None
+        raise FormProblem(
+            "The path list changed while this form was open. Reload and try again.",
+            code="expected_target_changed",
+        ) from None
+    return _queue(
+        connection,
+        payload={"name": stored.name, "revision": stored.revision},
+        key=key,
+        actor=actor,
+        via=via,
+    )
+
+
+def apply_again(connection: Any, existing: db.PathList, *, actor: str, via: str) -> db.Job:
+    """Queue the stored revision's apply again: one whose last apply did not finish."""
+
+    return _queue(
+        connection,
+        payload={"name": existing.name, "revision": existing.revision},
+        key=uuid4(),
+        actor=actor,
+        via=via,
+    )
+
+
+def remove(
+    connection: Any, existing: db.PathList, *, actor: str, key: UUID, via: str = "web"
+) -> db.Job:
+    """Queue the list's removal, or `FormProblem` while an object names it."""
+
+    used = users(connection, existing.name)
+    if used:
+        raise FormProblem(in_use_sentence(existing.name, used), code="in_use")
+    if unread := unread_sentence(connection):
+        raise FormProblem(unread, code="in_use")
+    return _queue(
+        connection,
+        payload={"name": existing.name, "revision": existing.revision, "remove": True},
+        key=key,
+        actor=actor,
+        via=via,
+    )
+
+
+# - Add to proxies -----------------------------------------------------------
+
+
+def with_list(list_name: str, name: str, document: str) -> str:
+    """The object's document with the list under *Denied paths*; unchanged where it is, or cannot be.
+
+    A new *Denied paths* starts by only looking (B527, as B227 for any new
+    refusal): the list is added in `log` mode, so what it would refuse shows
+    on the traffic page before it refuses anything.
+    """
+
+    data: dict[str, Any] = dict(read_document(name, document.encode()))
+    listen = data.get("listen")
+    protocol = listen.get("protocol") if isinstance(listen, dict) else None
+    if protocol not in DENIED_PROTOCOLS:
+        return document
+    denied = data.get("deny_paths")
+    if not isinstance(denied, dict):
+        data["deny_paths"] = {"mode": "log", "lists": [list_name]}
+        return dump_document(data)
+    lists = list(denied.get("lists") or [])
+    if list_name in lists:
+        return document
+    data["deny_paths"] = {**denied, "lists": [*lists, list_name]}
+    return dump_document(data)
+
+
+@dataclass(frozen=True)
+class Reach:
+    """One cluster on *Add to proxies*: the proxies a list can stand in, and how many name it."""
+
+    cluster: str
+    proxies: int
+    named: int
+
+
+def reach(connection: Any, name: str) -> dict[str, Reach]:
+    """Each cluster read, with its http and https proxies and those already naming the list."""
+
+    named = users(connection, name)
+    found: dict[str, Reach] = {}
+    for reading in db.cluster_objects(connection):
+        if not objects.was_read(reading):
+            continue
+        proxies = {
+            view.name
+            for view in objects.cluster_object_views(reading)
+            if view.protocol in DENIED_PROTOCOLS
+        }
+        found[reading.cluster] = Reach(
+            reading.cluster, len(proxies), len(proxies & set(named.get(reading.cluster, ())))
+        )
+    return found
+
+
+@dataclass(frozen=True)
+class Added:
+    """What *Add to proxies* did in one chosen cluster."""
+
+    cluster: str
+    added: tuple[str, ...]
+    already: tuple[str, ...]
+    skipped: tuple[tuple[str, str], ...]
+
+
+# - the card ----------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Row:
+    """One list on *Settings → Path lists*."""
+
+    name: str
+    href: str
+    paths: str
+    used_by: str
+    status: str
+    status_tone: str
+    job_href: str
+
+
+def _status(row: db.PathList, job: db.Job | None, *, writes: bool) -> tuple[str, str, str]:
+    if job is None:
+        return "", "", ""
+    removing = job.payload.get("remove") is True
+    if job.state in {"pending", "running"}:
+        busy = queue.busy_with(job, writes=writes)
+        if not busy.working:
+            return busy.label, busy.tone, f"/jobs/{job.id}"
+        return ("Removing" if removing else "Applying"), "info", f"/jobs/{job.id}"
+    if job.state != "done" and (removing or job.payload.get("revision") == row.revision):
+        return ("Remove failed" if removing else "Apply failed"), "critical", f"/jobs/{job.id}"
+    return "", "", ""
+
+
+def rows(
+    lists: Iterable[db.PathList],
+    used: Mapping[str, Mapping[str, Sequence[str]]],
+    latest: Mapping[str, db.Job],
+    *,
+    writes: bool,
+) -> list[Row]:
+    """The card's rows, by name; `used` is `users` per list, `latest` each list's newest job."""
+
+    found: list[Row] = []
+    for item in sorted(lists, key=lambda entry: entry.name):
+        proxies = sum(len(names) for names in used.get(item.name, {}).values())
+        status, tone, job_href = _status(item, latest.get(item.name), writes=writes)
+        found.append(
+            Row(
+                name=item.name,
+                href=f"/settings/path-lists/{item.name}/edit",
+                paths=str(len(item.paths)),
+                used_by=("" if proxies == 0 else f"{proxies} prox{'y' if proxies == 1 else 'ies'}"),
+                status=status,
+                status_tone=tone,
+                job_href=job_href,
+            )
+        )
+    return found

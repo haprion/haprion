@@ -42,6 +42,7 @@ from haprion_ui import (
     moments,
     network,
     oidc_web,
+    path_list_form,
     update_check,
     users,
     waf,
@@ -212,6 +213,17 @@ def build_router(config: Config) -> APIRouter:
                 db.latest_blocklist_jobs(connection),
                 writes=config.management_writes,
             )
+            saved_lists = db.path_lists(connection)
+            path_list_rows = (
+                path_list_form.rows(
+                    saved_lists,
+                    path_list_form.usage(connection),
+                    db.latest_path_list_jobs(connection),
+                    writes=config.management_writes,
+                )
+                if saved_lists
+                else []
+            )
         creation_rows = cluster_creations(request, recent)
         asked_address = request.query_params.get("address", "").strip()[:64]
         response = TEMPLATES.TemplateResponse(
@@ -228,6 +240,10 @@ def build_router(config: Config) -> APIRouter:
                 # The blocklists, and what Check address answered (B500).
                 #
                 "blocklists": blocklist_rows,
+                #
+                # The path lists *Denied paths* names (B527).
+                #
+                "path_lists": path_list_rows,
                 "asked_address": asked_address,
                 "address_answer": _address_answer(asked_address) if asked_address else None,
                 #

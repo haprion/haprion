@@ -508,6 +508,21 @@ def latest_blocklist_jobs(connection: Connection[Any]) -> dict[str, Job]:
         return {str(job.payload.get("name")): job for job in cursor.fetchall()}
 
 
+def latest_path_list_jobs(connection: Connection[Any]) -> dict[str, Job]:
+    """Each path list's newest `path_list_apply` job, by the list's name (B532)."""
+
+    with connection.cursor(row_factory=class_row(Job)) as cursor:
+        cursor.execute(
+            "select distinct on (payload->>'name') id, request_id, operation, cluster, payload, "
+            "       state, created_at, started_at, finished_at, exit_code, outcome, result, "
+            "       stderr_excerpt, idempotency_key, attempts "
+            "  from job "
+            " where operation = 'path_list_apply' "
+            " order by payload->>'name', created_at desc, id desc"
+        )
+        return {str(job.payload.get("name")): job for job in cursor.fetchall()}
+
+
 def restore_jobs(connection: Connection[Any], run: str) -> list[Job]:
     """The jobs of one node restore run, oldest first.
 

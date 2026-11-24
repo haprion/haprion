@@ -117,6 +117,8 @@ REFUSED_CALLS: dict[str, list[str]] = {
     "haprion-api-token revoke": ["revoke", "no-such-token"],
     "haprion-blocklists apply": ["apply", "/nonexistent.yaml"],
     "haprion-blocklists remove": ["remove", "Bad Name!"],
+    "haprion-path-lists apply": ["apply", "/nonexistent.yaml"],
+    "haprion-path-lists remove": ["remove", "Bad Name!"],
     "haprion-backup-schedule": [*BAD_CLUSTER, "--time", "03:00"],
     "haprion-cert-delete": ["Bad ID!"],
     "haprion-cert-deploy": [*BAD_CLUSTER],
@@ -276,6 +278,16 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
         "haprion-blocklists remove", "haprion-blocklists-apply"
     ),
     "/settings/blocklists/{name}/add-to-proxies": Command(
+        "haprion-objects apply", "haprion-objects-apply"
+    ),
+    "/settings/path-lists/new": Command("haprion-path-lists apply", "haprion-path-lists-apply"),
+    "/settings/path-lists/{name}/edit": Command(
+        "haprion-path-lists apply", "haprion-path-lists-apply"
+    ),
+    "/settings/path-lists/{name}/remove": Command(
+        "haprion-path-lists remove", "haprion-path-lists-apply"
+    ),
+    "/settings/path-lists/{name}/add-to-proxies": Command(
         "haprion-objects apply", "haprion-objects-apply"
     ),
     "/dns-profiles/new": Command("haprion-profiles apply", "haprion-profiles-apply"),

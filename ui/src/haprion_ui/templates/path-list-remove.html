@@ -1,0 +1,23 @@
+{% extends "layout.html" %}
+{% from "_certificate_job.html" import certificate_job_notice %}
+{% from "_back.html" import back_button %}
+{% block title %}Remove path list — Haprion{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div class="heading-title">{{ back_button('/settings/path-lists/' ~ path_list.name ~ '/edit', path_list.name) }}<h1>Remove path list</h1><p class="page-lede">Nothing is removed until you confirm.</p></div>
+</section>
+
+<div class="refusal-card">
+  <p class="refusal-message"><span class="status-orb status-critical" aria-hidden="true"></span>Remove <strong><code>{{ path_list.name }}</code></strong>?</p>
+  {% if problem or in_use %}<p class="refusal-hint warning-text">{{ problem or in_use }}</p>{% endif %}
+  <ul class="removal-consequences">
+    <li>The list is taken off the manager. No proxy names it, so no version changes.</li>
+  </ul>
+  {% if certificate_job %}{% call certificate_job_notice(certificate_job) %}Wait for it to finish before removing this path list.{% endcall %}{% endif %}
+  <form method="post" action="/settings/path-lists/{{ path_list.name }}/remove" class="editor-actions editor-submit">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+    <div class="form-buttons"><a class="secondary-button" href="/settings#path-lists">Keep it</a><button class="danger-button" type="submit"{% if certificate_job or in_use or problem %} disabled{% endif %}>Remove path list</button></div>
+  </form>
+</div>
+{% endblock %}

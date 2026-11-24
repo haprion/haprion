@@ -379,6 +379,9 @@ class LoginTestCase(unittest.TestCase):
                 "haprion_ui.db.blocklist_states", side_effect=lambda _c: list(self.blocklist_states)
             ),
             mock.patch("haprion_ui.db.latest_blocklist_jobs", return_value={}),
+            # No path list (B532) unless a test says so.
+            mock.patch("haprion_ui.db.path_lists", return_value=[]),
+            mock.patch("haprion_ui.db.latest_path_list_jobs", return_value={}),
         ]
         for patch in self.patches:
             patch.start()

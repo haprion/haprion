@@ -190,6 +190,7 @@ COMMANDS = (
     "api-token",
     "backup",
     "blocklists",
+    "path-lists",
     "drain",
     "export",
     "profiles",

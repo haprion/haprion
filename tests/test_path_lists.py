@@ -257,6 +257,49 @@ class TheFileRootKeeps(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "path list other does not exist"):
             reader({"other"})
 
+    def test_another_lists_damaged_file_stops_nothing(self) -> None:
+        # Review 26-11-24, PW04: only the files of the lists named are read.
+        self.write(path_lists.path_list("scanners", ["/.env"]))
+        (self.directory / "other.json").write_text("{")
+        reader = path_lists.store_reader(self.directory)
+        self.assertEqual(reader({"scanners"}), {"scanners": ("/.env",)})
+        with self.assertRaisesRegex(ConfigError, "other.json could not be read"):
+            reader({"other"})
+        with self.assertRaisesRegex(ConfigError, "a path list's name"):
+            reader({"Bad Name"})
+
+    def test_a_list_can_be_saved_over_its_damaged_file_and_says_so(self) -> None:
+        (self.directory / "scanners.json").write_text("{")
+        notes: list[str] = []
+        path_lists.write(
+            path_lists.path_list("scanners", ["/.env"], revision=1),
+            directory=self.directory,
+            require_secure=False,
+            warnings=notes,
+        )
+        self.assertEqual(len(notes), 1)
+        self.assertIn("could not be read", notes[0])
+        self.assertEqual(
+            path_lists.read_all(directory=self.directory)["scanners"].paths, ("/.env",)
+        )
+
+    def test_a_directory_that_cannot_be_read_is_an_error_not_a_crash(self) -> None:
+        blocked = self.directory / "path-lists"
+        blocked.write_text("a file where a directory belongs")
+        with self.assertRaisesRegex(path_lists.PathListError, "could not be read"):
+            path_lists.read_all(directory=blocked)
+        self.assertEqual(path_lists.digest(directory=blocked), "unreadable")
+
+    def test_a_damaged_file_no_object_names_changes_the_digest_by_its_name_only(self) -> None:
+        self.write(path_lists.path_list("scanners", ["/.env"]))
+        before = path_lists.digest(directory=self.directory)
+        self.assertNotEqual(before, "unreadable")
+        (self.directory / "other.json").write_text("{")
+        after = path_lists.digest(directory=self.directory)
+        self.assertNotIn(after, (before, "unreadable"))
+        (self.directory / "other.json").write_text("{ ")
+        self.assertEqual(after, path_lists.digest(directory=self.directory))
+
     def test_the_digest_moves_with_the_paths(self) -> None:
         self.write(path_lists.path_list("scanners", ["/.env"]))
         before = path_lists.digest(directory=self.directory)

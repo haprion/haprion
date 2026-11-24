@@ -186,12 +186,29 @@ def _read_one(path: Path) -> PathList:
     return item
 
 
-def write(item: PathList, *, directory: Path = DIRECTORY, require_secure: bool = True) -> Path:
-    """Write one list atomically, root-only; an older revision does not replace a newer one."""
+def write(
+    item: PathList,
+    *,
+    directory: Path = DIRECTORY,
+    require_secure: bool = True,
+    warnings: list[str] | None = None,
+) -> Path:
+    """Write one list atomically, root-only; an older revision does not replace a newer one.
+
+    A file that cannot be read is replaced, and `warnings` says so: it holds
+    nothing to compare a revision with, and refusing would leave the list
+    impossible to save over (review 26-11-24, PW04).
+    """
 
     _secure_directory(directory, require_secure=require_secure)
     path = directory / f"{checked_name(item.name)}{SUFFIX}"
-    present = _read_one(path) if path.exists() else None
+    present = None
+    if path.exists():
+        try:
+            present = _read_one(path)
+        except PathListError as exc:
+            if warnings is not None:
+                warnings.append(f"{exc}; it is replaced")
     if present is not None and present.revision > item.revision:
         raise PathListError(
             f"{item.name} is at revision {present.revision} already; "
@@ -224,22 +241,52 @@ def remove(name: str, *, directory: Path = DIRECTORY, require_secure: bool = Tru
 def read_all(*, directory: Path = DIRECTORY) -> dict[str, PathList]:
     """Every list by name; a directory not made yet holds none."""
 
-    if not directory.exists():
-        return {}
-    found = sorted(
-        p for p in directory.iterdir() if p.suffix == SUFFIX and not p.name.startswith(".")
-    )
-    return {item.name: item for item in (_read_one(path) for path in found)}
+    return {item.name: item for item in _read_each(directory)[0]}
+
+
+def _files(directory: Path) -> list[Path]:
+    """The list files of a directory, in order; an unreadable directory is a `PathListError`."""
+
+    try:
+        if not directory.exists():
+            return []
+        return sorted(
+            p for p in directory.iterdir() if p.suffix == SUFFIX and not p.name.startswith(".")
+        )
+    except OSError as exc:
+        raise PathListError(f"{directory} could not be read: {exc.strerror}") from exc
+
+
+def _read_each(directory: Path, *, strict: bool = True) -> tuple[list[PathList], list[str]]:
+    """The readable lists and the file names that are not; the first not readable raises when strict."""
+
+    items: list[PathList] = []
+    broken: list[str] = []
+    for path in _files(directory):
+        try:
+            items.append(_read_one(path))
+        except PathListError:
+            if strict:
+                raise
+            broken.append(path.name)
+    return items, broken
 
 
 def digest(*, directory: Path = DIRECTORY) -> str:
-    """Today's lists as one digest, for a cache that must notice a changed list."""
+    """Today's lists as one digest, for a cache that must notice a changed list.
+
+    A file that cannot be read adds its name and nothing else, so one that no
+    object names does not make every cluster's cache stale in the same way as a
+    changed list does (review 26-11-24, PW04).
+    """
 
     try:
-        stored = read_all(directory=directory)
+        items, broken = _read_each(directory, strict=False)
     except PathListError:
         return "unreadable"
-    document = {name: list(item.paths) for name, item in sorted(stored.items())}
+    document: dict[str, Any] = {item.name: list(item.paths) for item in items}
+    if broken:
+        document["unreadable"] = broken
     return hashlib.sha256(json.dumps(document, sort_keys=True).encode("utf-8")).hexdigest()
 
 
@@ -256,14 +303,23 @@ def store_reader(directory: Path = DIRECTORY) -> Reader:
     def read(names: Collection[str]) -> Mapping[str, tuple[str, ...]]:
         if not names:
             return {}
-        try:
-            stored = read_all(directory=directory)
-        except PathListError as exc:
-            raise ConfigError(str(exc)) from None
+        #
+        # Only the files of the lists named: another list's damaged file is
+        # no reason to refuse this publish (review 26-11-24, PW04).
+        #
+        found: dict[str, tuple[str, ...]] = {}
         for name in sorted(names):
-            if name not in stored:
-                raise _missing(name)
-        return {name: stored[name].paths for name in sorted(names)}
+            path = directory / f"{name}{SUFFIX}"
+            try:
+                checked_name(name)
+                if not path.exists():
+                    raise _missing(name)
+                found[name] = _read_one(path).paths
+            except OSError as exc:
+                raise ConfigError(f"{path} could not be read: {exc.strerror}") from exc
+            except PathListError as exc:
+                raise ConfigError(str(exc)) from None
+        return found
 
     return read
 

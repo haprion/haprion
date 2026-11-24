@@ -75,7 +75,12 @@ def main(
                 name, directory=directory, require_secure=require_secure
             )
         else:
-            path_lists.write(item, directory=directory, require_secure=require_secure)
+            notes: list[str] = []
+            path_lists.write(
+                item, directory=directory, require_secure=require_secure, warnings=notes
+            )
+            for note in notes:
+                errors.write(f"WARNING: {note}\n")
             result["paths"] = len(item.paths)
     except PathListError as exc:
         return refuse("dependency_unavailable", str(exc), exit_codes.CONFIG)

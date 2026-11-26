@@ -101,6 +101,81 @@ class CertificateClusterView:
 
 
 @dataclass(frozen=True, slots=True)
+class BmcView:
+    """An exportable certificate's BMC, as the BMC timer last saw it (B526, B536).
+
+    `status` is the engine's word: installed, waiting (not seen serving it and
+    nothing failed - switched off, behind a firewall or not reached yet, never a
+    fault), failed, untrusted or unknown. `answered_at` is when the BMC last
+    answered at all; the row says it, so a BMC that is off reads as such.
+    """
+
+    address: str
+    status: str
+    checked_at: datetime | None
+    answered_at: datetime | None
+    served_current: bool
+    attempt_outcome: str | None = None
+    attempt_message: str | None = None
+    attempt_at: datetime | None = None
+
+
+def bmc_view(entry: Mapping[str, Any]) -> BmcView | None:
+    raw = _mapping(entry.get("bmc"))
+    address = raw.get("address")
+    if not isinstance(address, str) or not address:
+        return None
+    attempt = _mapping(raw.get("attempt"))
+    status = raw.get("status")
+    return BmcView(
+        address=address,
+        status=status if status in BMC_STATUSES else "unknown",
+        checked_at=_expiry(raw.get("checked_at")),
+        answered_at=_expiry(raw.get("answered_at")),
+        served_current=bool(raw.get("served_sha256"))
+        and raw.get("served_sha256") == entry.get("fingerprint_sha256"),
+        attempt_outcome=_text(attempt.get("outcome"), "") or None,
+        attempt_message=_text(attempt.get("message"), "") or None,
+        attempt_at=_expiry(attempt.get("at")),
+    )
+
+
+BMC_STATUSES = frozenset({"installed", "waiting", "failed", "untrusted", "unknown"})
+
+
+def bmc_state(view: BmcView) -> tuple[str, str, Tone]:
+    """The row's state for a certificate the manager installs on its BMC (B536).
+
+    Only what the BMC answered can be a fault: a BMC that does not answer, for
+    however long, is waiting and said in a neutral tone.
+    """
+
+    if view.status == "installed":
+        if view.answered_at is not None and view.checked_at != view.answered_at:
+            return (
+                "Installed",
+                f"The BMC served this certificate when it last answered ({moments.moment(view.answered_at)})",
+                "healthy",
+            )
+        return "Installed", "The BMC serves this certificate", "healthy"
+    if view.status == "failed":
+        said = view.attempt_message or "the install failed"
+        when = f" ({moments.moment(view.attempt_at)})" if view.attempt_at is not None else ""
+        return "Install failed", f"{said}{when}", "critical"
+    if view.status == "untrusted":
+        return (
+            "Untrusted BMC",
+            "The BMC serves a certificate that was not confirmed; nothing was sent to it",
+            "critical",
+        )
+    if view.status == "waiting":
+        if view.answered_at is None:
+            return "Waiting for the BMC", "Installs the first time the BMC answers", "info"
+        return "Waiting for the BMC", "Installs the next time the BMC answers", "info"
+    return "Not checked yet", "The BMC has not been asked yet", "info"
+
+
+@dataclass(frozen=True, slots=True)
 class TargetView:
     """One place a certificate goes, and what is known about the copy there.
 
@@ -308,6 +383,11 @@ class RegistryCertificateView:
     #
     exportable: bool = False
     fullchain_pem: str | None = None
+    #
+    # The BMC the manager installs it on itself (B526, B536); None for one
+    # installed by hand.
+    #
+    bmc: BmcView | None = None
     #
     # The SHA-256 over every certificate block in the measured file; see
     # `CertificateView.chain`.
@@ -1230,6 +1310,9 @@ def _registry_state(
     clusters = tuple(target.name for target in targets if target.kind == "cluster")
     receivers = tuple(target for target in targets if target.kind == "receiver")
     if not clusters and not receivers and entry.get("exportable") is True:
+        view = bmc_view(entry)
+        if view is not None:
+            return bmc_state(view)
         #
         # External (B255): nowhere to publish by design. It is downloaded
         # from the row and installed by hand.
@@ -1521,6 +1604,7 @@ def _registry_certificate(
         and pending_request.get("kind") != "csr",
         interface=entry.get("interface") is True,
         exportable=entry.get("exportable") is True,
+        bmc=bmc_view(entry) if entry.get("exportable") is True else None,
         fullchain_pem=_chain(entry.get("fullchain_pem"))
         if entry.get("exportable") is True
         else None,

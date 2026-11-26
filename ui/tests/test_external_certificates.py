@@ -253,6 +253,123 @@ def helper_file(certificate_id: str, form: str, password: str | None, **_: Any) 
     )
 
 
+PINNED, CURRENT = "ab" * 32, "a" * 64
+
+
+def with_bmc(status: str, **state: Any) -> dict[str, Any]:
+    return external(
+        fingerprint_sha256=CURRENT,
+        bmc={
+            "address": DEVICE,
+            "port": 443,
+            "fingerprint_sha256": PINNED,
+            "status": status,
+            "checked_at": "2026-11-26T03:15:00Z",
+            "answered_at": "2026-11-26T03:15:00Z",
+            "served_sha256": CURRENT,
+            "attempt": None,
+            **state,
+        },
+    )
+
+
+class TheBmcRow(unittest.TestCase):
+    """B536: the row reads the BMC timer's word, and only what the BMC answered is a fault."""
+
+    def registry(self, entry: dict[str, Any]) -> Any:
+        reading = with_registry(certificate_reading(), entry)
+        view = build_certificate_overview(
+            ("alpha",),
+            (reading,),
+            now=NOW,
+            stale_after=STALE_AFTER,
+            manager=manager_of((reading,)),
+            taken_out={},
+        )
+        return registry_of(view)
+
+    def row(self, entry: dict[str, Any]) -> Any:
+        return self.registry(entry).certificates[0]
+
+    def test_each_word_of_the_timer_is_a_state_of_the_row(self) -> None:
+        failed = {
+            "fingerprint_sha256": CURRENT,
+            "at": "2026-11-26T03:10:00Z",
+            "by": "timer",
+            "outcome": "failed",
+            "code": "refused",
+            "message": "bmc01.example.com refused the certificate: SSL certificate validation failed.",
+            "seconds": None,
+            "firmware": None,
+        }
+        for entry, label, tone in (
+            (with_bmc("installed"), "Installed", "healthy"),
+            (with_bmc("waiting", served_sha256=PINNED), "Waiting for the BMC", "info"),
+            (
+                with_bmc("waiting", answered_at=None, served_sha256=None),
+                "Waiting for the BMC",
+                "info",
+            ),
+            (
+                with_bmc("failed", served_sha256=PINNED, attempt=failed),
+                "Install failed",
+                "critical",
+            ),
+            (with_bmc("untrusted", served_sha256="cd" * 32), "Untrusted BMC", "critical"),
+            (with_bmc("unknown", checked_at=None, answered_at=None), "Not checked yet", "info"),
+        ):
+            with self.subTest(label=label, status=entry["bmc"]["status"]):
+                row = self.row(entry)
+                self.assertEqual((row.state_label, row.state_tone), (label, tone))
+                self.assertEqual(row.bmc.address, DEVICE)
+        self.assertIn(
+            "SSL certificate validation failed.",
+            self.row(with_bmc("failed", served_sha256=PINNED, attempt=failed)).state_detail,
+        )
+
+    def test_a_bmc_that_is_off_is_no_attention_however_long(self) -> None:
+        for answered in ("2026-11-20T18:40:00Z", "2026-10-01T08:00:00Z", None):
+            with self.subTest(answered=answered):
+                entry = with_bmc("waiting", answered_at=answered, served_sha256=PINNED)
+                self.assertEqual(attention.from_certificates(self.registry(entry), ()), [])
+                entry = with_bmc("installed", answered_at=answered or "2026-11-20T18:40:00Z")
+                self.assertEqual(attention.from_certificates(self.registry(entry), ()), [])
+
+    def test_only_what_the_bmc_answered_is_attention(self) -> None:
+        for status in ("failed", "untrusted"):
+            with self.subTest(status=status):
+                (item,) = attention.from_certificates(
+                    self.registry(with_bmc(status, served_sha256=PINNED)), ()
+                )
+                self.assertEqual((item.subject, item.severity), (DEVICE, "critical"))
+
+    def test_one_installed_by_hand_reads_as_it_always_did(self) -> None:
+        row = self.row(external())
+        self.assertIsNone(row.bmc)
+        self.assertEqual(row.state_label, "Installed by hand")
+
+
+class TheBmcOnThePage(CertificateFormRouteTestCase):
+    def test_used_by_names_the_bmc_and_the_detail_what_it_served_when_it_last_answered(
+        self,
+    ) -> None:
+        entry = with_bmc(
+            "installed",
+            checked_at="2026-11-26T09:00:00Z",
+            answered_at="2026-11-21T18:40:00Z",
+        )
+        with mock.patch(
+            "haprion_ui.db.cluster_certificates",
+            return_value=[with_registry(certificate_reading(), entry)],
+        ):
+            client = self.writing_client()
+            page = client.get(f"/certificates?view=registry&open={DEVICE}").text
+        self.assertIn('<span class="target-kind">BMC</span>', page)
+        self.assertIn("Installed on", page)
+        self.assertIn("serves this certificate · last answered", page)
+        self.assertNotIn('<span class="target-kind">external</span>', page)
+
+
 class TheExport(ExternalRowTestCase):
     def export(self, client: Any) -> Any:
         return post(client, f"/certificates/{DEVICE}/export")

@@ -32,7 +32,7 @@ import hashlib
 import json
 import re
 import subprocess
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -546,6 +546,10 @@ def _distribution(
     }
 
 
+type BmcState = Callable[[str, str | None, str], Mapping[str, Any]]
+"""A certificate's BMC state for its row: (id, the certificate's fingerprint, the pin) -> fields."""
+
+
 def registry_result(
     registry: Registry,
     *,
@@ -559,6 +563,7 @@ def registry_result(
     interface_served: Mapping[str, Any] | None = None,
     clusters: Collection[str] | None = None,
     ndes_renew_days: int | None = None,
+    bmc_state: BmcState | None = None,
 ) -> dict[str, Any]:
     """Every certificate the manager holds, measured at its source.
 
@@ -735,6 +740,14 @@ def registry_result(
         row["distribution"] = (
             _distribution(certificate_root, entry, fingerprint) if entry.clusters else None
         )
+        #
+        # What the BMC timer last saw of it (B536), held against the certificate
+        # measured just now: the row's word is the timer's reading of this one.
+        #
+        if entry.bmc is not None and bmc_state is not None:
+            row["bmc"].update(
+                bmc_state(entry.certificate_id, fingerprint, entry.bmc.fingerprint_sha256)
+            )
         entries.append(row)
 
     #
@@ -1027,6 +1040,7 @@ def manager_result(
     ndes_configured: bool | None = None,
     clusters: Collection[str] | None = None,
     ndes_renew_days: int | None = None,
+    bmc_state: BmcState | None = None,
 ) -> dict[str, Any]:
     """What the manager holds, asked of the manager rather than of a cluster.
 
@@ -1062,5 +1076,6 @@ def manager_result(
             interface_served=interface_served,
             clusters=clusters,
             ndes_renew_days=ndes_renew_days,
+            bmc_state=bmc_state,
         )
     return result

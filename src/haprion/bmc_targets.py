@@ -550,3 +550,25 @@ def forget(certificate_id: str, *, directory: Path = STATE_DIRECTORY) -> None:
     states = read_state(directory)
     if states.pop(certificate_id, None) is not None:
         write_state(states, directory)
+
+
+def row_state(
+    states: Mapping[str, TargetState] | None,
+) -> Callable[[str, str | None, str], dict[str, object]]:
+    """What a certificate's row carries of its BMC: the word and what it rests on (B536).
+
+    `states` None is a state file that could not be read: every BMC is then
+    `unknown`, and the listing is otherwise as it was.
+    """
+
+    def state(certificate_id: str, current: str | None, pinned: str) -> dict[str, object]:
+        known = (states or {}).get(certificate_id)
+        return {
+            "status": status(known, current=current, pinned=pinned),
+            "checked_at": known.checked_at if known else None,
+            "answered_at": known.answered_at if known else None,
+            "served_sha256": known.served_sha256 if known else None,
+            "attempt": asdict(known.attempt) if known and known.attempt else None,
+        }
+
+    return state

@@ -177,7 +177,34 @@
           "properties": {
             "address": { "type": "string", "minLength": 1, "maxLength": 253 },
             "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-            "fingerprint_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            "fingerprint_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "status": {
+              "description": "The timer's reading (B536): installed; waiting - not seen serving it and nothing failed (off, behind a firewall, not reached yet), never a fault; failed; untrusted - it serves a certificate nobody confirmed; unknown - never asked.",
+              "enum": ["installed", "waiting", "failed", "untrusted", "unknown"]
+            },
+            "checked_at": { "type": ["string", "null"], "maxLength": 32 },
+            "answered_at": { "type": ["string", "null"], "maxLength": 32 },
+            "served_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+            "attempt": {
+              "oneOf": [
+                { "type": "null" },
+                {
+                  "type": "object",
+                  "required": ["fingerprint_sha256", "at", "by", "outcome", "code", "message", "seconds", "firmware"],
+                  "properties": {
+                    "fingerprint_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                    "at": { "type": "string", "maxLength": 32 },
+                    "by": { "enum": ["timer", "install_now", "save"] },
+                    "outcome": { "enum": ["done", "failed", "unreached"] },
+                    "code": { "type": ["string", "null"], "maxLength": 64 },
+                    "message": { "type": ["string", "null"], "maxLength": 2048 },
+                    "seconds": { "type": ["number", "null"], "minimum": 0 },
+                    "firmware": { "type": ["string", "null"], "maxLength": 256 }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
           },
           "additionalProperties": false
         },

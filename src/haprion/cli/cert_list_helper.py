@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import exit_codes, ui_interface
+from haprion import bmc_targets, exit_codes, ui_interface
 from haprion.cert_inventory import CertInventoryError, cert_list_result, manager_result
 from haprion.cert_receiver import manager_name
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
@@ -107,6 +107,11 @@ def main(
     ndes_policy = getattr(policy, "ndes", None)
     try:
         if cluster is None:
+            try:
+                bmc_states: dict[str, bmc_targets.TargetState] | None = bmc_targets.read_state()
+            except bmc_targets.TargetError as exc:
+                errors.write(f"WARNING: {exc}\n")
+                bmc_states = None
             result = manager_result(
                 policy.certificate_root,
                 runtime.registry,
@@ -116,6 +121,7 @@ def main(
                 ndes_configured=ndes_policy is not None,
                 clusters=frozenset(runtime.clusters),
                 ndes_renew_days=ndes_policy.renew_days if ndes_policy is not None else None,
+                bmc_state=bmc_targets.row_state(bmc_states),
             )
         else:
             result = cert_list_result(

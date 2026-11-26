@@ -37,7 +37,21 @@
           "bmc": {
             "address": "bmc-01.example.net",
             "port": 443,
-            "fingerprint_sha256": "abababababababababababababababababababababababababababababababab"
+            "fingerprint_sha256": "abababababababababababababababababababababababababababababababab",
+            "status": "failed",
+            "checked_at": "2026-11-26T03:15:00Z",
+            "answered_at": "2026-11-26T03:15:00Z",
+            "served_sha256": "abababababababababababababababababababababababababababababababab",
+            "attempt": {
+              "fingerprint_sha256": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+              "at": "2026-11-26T03:10:00Z",
+              "by": "timer",
+              "outcome": "failed",
+              "code": "refused",
+              "message": "bmc-01.example.net refused the certificate: SSL certificate validation failed.",
+              "seconds": null,
+              "firmware": null
+            }
           }
         }
       ],

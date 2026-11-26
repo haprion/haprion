@@ -240,3 +240,33 @@ class TheAccount(TargetCase):
         with self.assertRaises(TargetError) as refused:
             bmc_targets.install(self.root_side(), DEVICE, by="install_now")
         self.assertEqual(refused.exception.code, "account_missing")
+
+
+class TheListing(TargetCase):
+    def listed(self, states: Any) -> dict[str, Any]:
+        from haprion.cert_inventory import registry_result
+
+        result = registry_result(
+            load_registry(self.root / "certificates.yaml", require_secure=False),
+            certificate_root=self.dist,
+            renewed=frozenset(),
+            now=datetime.now(UTC),
+            live=self.live,
+            store=self.store,
+            bmc_state=bmc_targets.row_state(states),
+        )
+        bmc: dict[str, Any] = next(row for row in result["certificates"] if row["id"] == DEVICE)[
+            "bmc"
+        ]
+        return bmc
+
+    def test_the_row_carries_the_timers_reading_held_against_the_certificate(self) -> None:
+        self.assertEqual(self.listed({})["status"], "unknown")
+        self.sweep()
+        row = self.listed(bmc_targets.read_state(self.root / "state"))
+        self.assertEqual((row["status"], row["served_sha256"]), ("installed", self.current))
+        self.assertEqual(row["attempt"]["outcome"], "done")
+        self.assertEqual(row["fingerprint_sha256"], self.current)
+
+    def test_a_state_file_that_cannot_be_read_leaves_every_bmc_unknown(self) -> None:
+        self.assertEqual(self.listed(None)["status"], "unknown")

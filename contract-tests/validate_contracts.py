@@ -1358,6 +1358,25 @@ def check_cert_export_semantics(document: dict[str, object], path: Path) -> None
             raise AssertionError(f"{path}: the file is not named and typed after its format")
 
 
+def check_bmc_semantics(document: dict[str, object], path: Path) -> None:
+    # An answer or a refusal, never both: a refused save wrote nothing.
+    result = document["result"]
+    if document["outcome"] == "done" and result is None:
+        raise AssertionError(f"{path}: a done bmc carries no result")
+    if document["outcome"] != "done" and result is not None:
+        raise AssertionError(f"{path}: a {document['outcome']} bmc carries a result")
+
+
+def check_bmc_install_semantics(document: dict[str, object], path: Path) -> None:
+    # Done only with the attempt that installed it; a failure is the error alone,
+    # so a job page cannot show an attempt beside a refusal.
+    result = document["result"]
+    if document["outcome"] == "done" and result is None:
+        raise AssertionError(f"{path}: a done bmc_install carries no attempt")
+    if document["outcome"] != "done" and result is not None:
+        raise AssertionError(f"{path}: a failed bmc_install carries an attempt")
+
+
 def check_oidc_semantics(document: dict[str, object], path: Path) -> None:
     # An answer or a refusal, never both; and Verify's verdict is its checks',
     # so a page reading `ok` cannot show green over a failed check.
@@ -1680,6 +1699,8 @@ SEMANTIC_CHECKS = {
     "http01_check": check_http01_check_semantics,
     "probe": check_probe_semantics,
     "cert_export": check_cert_export_semantics,
+    "bmc": check_bmc_semantics,
+    "bmc_install": check_bmc_install_semantics,
     "node_restore_prepare": check_node_restore_prepare_semantics,
     "node_restore_preview": check_node_restore_preview_semantics,
     "node_restore": check_node_restore_semantics,
@@ -1876,6 +1897,13 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
             result["filename"] = result["id"] + (
                 ".pfx" if result["format"] == "pem-key" else ".key.pem"
             )
+    elif operation == "bmc":
+        invalid["outcome"] = "failed"
+    elif operation == "bmc_install":
+        if result is None:
+            invalid["result"] = {"id": "bmc-01.example.net"}
+        else:
+            invalid["result"] = None
     elif operation == "oidc":
         if "checks" in result:
             result["ok"] = not result["ok"]

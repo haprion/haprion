@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "cluster": null,
+  "warnings": [],
+  "error": null,
+  "operation": "bmc_install",
+  "request_id": "99999999-9999-4999-8999-999999999993",
+  "result": {
+    "id": "bmc-01.example.net",
+    "fingerprint_sha256": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+    "at": "2026-11-26T03:10:00Z",
+    "by": "install_now",
+    "outcome": "maybe",
+    "code": null,
+    "message": "SSL certificate and private key were successfully uploaded",
+    "seconds": 131.4,
+    "firmware": "AST2600 01.09.06"
+  }
+}

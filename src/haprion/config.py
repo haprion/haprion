@@ -1629,7 +1629,7 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
                 f"{location} is exportable and cannot name clusters or receivers or serve "
                 "the interface"
             )
-        bmc = _bmc_target(raw.get("bmc"), f"{location}.bmc")
+        bmc = bmc_target(raw.get("bmc"), f"{location}.bmc")
         if bmc is not None and not exportable:
             raise ConfigError(
                 f"{location}.bmc belongs to an exportable certificate only: one host, no targets"
@@ -1660,7 +1660,7 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
     return Registry(receivers=receivers, certificates=certificates)
 
 
-def _bmc_target(value: Any, location: str) -> BmcTarget | None:
+def bmc_target(value: Any, location: str) -> BmcTarget | None:
     """A certificate's BMC, or None when it has none."""
 
     if value is None:

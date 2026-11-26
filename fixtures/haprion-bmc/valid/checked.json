@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "cluster": null,
+  "warnings": [],
+  "error": null,
+  "operation": "bmc",
+  "request_id": "99999999-9999-4999-8999-999999999990",
+  "result": {
+    "id": "bmc-01.example.net",
+    "address": "bmc-01.example.net",
+    "port": 443,
+    "served_sha256": "abababababababababababababababababababababababababababababababab",
+    "subject": "bmc-01.example.net",
+    "issuer": "CN=Example Issuing CA",
+    "not_after": "2026-12-20T08:09:00Z",
+    "model": "AST2600",
+    "firmware": "01.09.06"
+  }
+}

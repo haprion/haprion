@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "failed",
+  "cluster": null,
+  "warnings": [],
+  "error": {
+    "code": "bmc_refused",
+    "message": "bmc-01.example.net refused the certificate: SSL certificate validation failed."
+  },
+  "operation": "bmc_install",
+  "request_id": "99999999-9999-4999-8999-999999999994",
+  "result": null
+}

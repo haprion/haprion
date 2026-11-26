@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-bmc.schema.json",
+  "title": "haprion-bmc-helper JSON result",
+  "allOf": [
+    {
+      "$ref": "common.schema.json#/$defs/envelope"
+    },
+    {
+      "properties": {
+        "operation": {
+          "const": "bmc"
+        },
+        "cluster": {
+          "type": "null"
+        },
+        "outcome": {
+          "enum": [
+            "done",
+            "failed"
+          ]
+        },
+        "result": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/checked"
+            },
+            {
+              "$ref": "#/$defs/saved"
+            },
+            {
+              "$ref": "#/$defs/removed"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "checked": {
+      "description": "check (B526): what the BMC serves, read with the account the web sealed, for the administrator to confirm. Nothing is written.",
+      "type": "object",
+      "required": [
+        "id",
+        "address",
+        "port",
+        "served_sha256",
+        "subject",
+        "issuer",
+        "not_after",
+        "model",
+        "firmware"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,254}$"
+        },
+        "address": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "served_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "subject": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1024
+        },
+        "issuer": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1024
+        },
+        "not_after": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 32
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "firmware": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "additionalProperties": false
+    },
+    "saved": {
+      "description": "save: the target in the registry with the fingerprint that was confirmed, and the account kept for root.",
+      "type": "object",
+      "required": [
+        "id",
+        "address",
+        "port",
+        "fingerprint_sha256"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,254}$"
+        },
+        "address": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "fingerprint_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "removed": {
+      "description": "remove: the target and its account are gone; the certificate stays exportable.",
+      "type": "object",
+      "required": [
+        "id",
+        "removed"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,254}$"
+        },
+        "removed": {
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

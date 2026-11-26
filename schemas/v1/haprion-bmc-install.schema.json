@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-bmc-install.schema.json",
+  "title": "haprion-bmc-install-helper JSON result",
+  "allOf": [
+    {
+      "$ref": "common.schema.json#/$defs/envelope"
+    },
+    {
+      "properties": {
+        "operation": {
+          "const": "bmc_install"
+        },
+        "cluster": {
+          "type": "null"
+        },
+        "outcome": {
+          "enum": [
+            "done",
+            "failed"
+          ]
+        },
+        "result": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/attempt"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "attempt": {
+      "description": "The install that was made (B526, B536): done only when the BMC serves the certificate after its restart. A failed install, or a BMC that did not answer before anything was sent, is a failed answer with the BMC's words in the error (code bmc_<what>); the attempt is kept in the state file either way.",
+      "type": "object",
+      "required": [
+        "id",
+        "fingerprint_sha256",
+        "at",
+        "by",
+        "outcome",
+        "code",
+        "message",
+        "seconds",
+        "firmware"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,254}$"
+        },
+        "fingerprint_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "at": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "by": {
+          "enum": [
+            "timer",
+            "install_now",
+            "save"
+          ]
+        },
+        "outcome": {
+          "const": "done"
+        },
+        "code": {
+          "type": "null"
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2048
+        },
+        "seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "firmware": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 256
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

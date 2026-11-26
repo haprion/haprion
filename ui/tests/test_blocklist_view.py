@@ -83,13 +83,6 @@ def state_row(**overrides: Any) -> db.BlocklistState:
     return db.BlocklistState(**{**fields, **overrides})
 
 
-class PathList:
-    """A path list row as far as the poller reads it: the name."""
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-
 class Pool:
     def connection(self) -> Any:
         return contextlib.nullcontext(mock.Mock())
@@ -212,7 +205,7 @@ class ThePollerReading(unittest.TestCase):
             mock.patch("haprion_ui.db.record_manager_certificates"),
             mock.patch("haprion_ui.db.replace_search_entries"),
             mock.patch("haprion_ui.db.record_blocklist_states"),
-            mock.patch("haprion_ui.db.path_lists", return_value=[PathList("scanners")]),
+            mock.patch("haprion_ui.db.path_list_names", return_value=["scanners"]),
             mock.patch("haprion_ui.db.record_list_files") as recorded,
         ):
             self.assertTrue(poller.poll_manager(Pool(), run, blocklists=True))
@@ -235,7 +228,7 @@ class ThePollerReading(unittest.TestCase):
             mock.patch("haprion_ui.db.record_manager_certificates"),
             mock.patch("haprion_ui.db.replace_search_entries"),
             mock.patch("haprion_ui.db.record_blocklist_states"),
-            mock.patch("haprion_ui.db.path_lists", return_value=[]),
+            mock.patch("haprion_ui.db.path_list_names", return_value=[]),
             mock.patch("haprion_ui.db.record_list_files") as recorded,
         ):
             poller.poll_manager(Pool(), manager_readings(STATES), blocklists=True)

@@ -140,6 +140,7 @@ app_poller	node_event_state	SELECT	cluster, kind, since, subject, value
 app_poller	node_event_state	UPDATE	since, value
 app_poller	package_waiting	INSERT	available, installed, name, read_at
 app_poller	package_waiting	SELECT	available, installed, name, read_at
+app_poller	path_list	SELECT	name
 app_poller	receiver_fetch	INSERT	fetched_at, receiver, seen_at
 app_poller	receiver_fetch	SELECT	fetched_at, receiver, seen_at
 app_poller	receiver_fetch	UPDATE	fetched_at, seen_at

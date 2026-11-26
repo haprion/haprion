@@ -4863,6 +4863,12 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
                 db.save_path_list(web, previous=None, **{**fields, "name": "empty", "paths": []})
             web.rollback()
         self.assertEqual((first.revision, second.revision, second.paths), (1, 2, ["/.git"]))
+        # Review 26-11-24, PWA01: the poller sends the names it has, and may read nothing more.
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as poller_connection:
+            self.assertEqual(db.path_list_names(poller_connection), ["scanners"])
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                db.path_lists(poller_connection)
+            poller_connection.rollback()
         with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as worker:
             applied = db.applied_path_list(worker, "scanners")
             self.assertEqual(applied.paths if applied else None, ["/.git"])

@@ -1215,7 +1215,7 @@ def _known_path_lists(pool: Any) -> list[str]:
 
     try:
         with pool.connection() as connection:
-            return [row.name for row in db.path_lists(connection)]
+            return db.path_list_names(connection)
     except Exception as exc:  # noqa: BLE001 - the reading is made without it, and says more
         logger.warning("list files: the known path lists were not read: %s", exc)
         return []

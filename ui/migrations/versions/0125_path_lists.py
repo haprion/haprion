@@ -74,6 +74,7 @@ def upgrade() -> None:
     op.execute(
         "grant select (name, description, paths, revision), delete on public.path_list to app_worker"
     )
+    op.execute("grant select (name) on public.path_list to app_poller")
     op.execute(
         """
         create table public.list_file (

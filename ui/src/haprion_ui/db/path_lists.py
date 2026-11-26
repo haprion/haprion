@@ -45,6 +45,14 @@ def path_lists(connection: Connection[Any]) -> list[PathList]:
         return cursor.fetchall()
 
 
+def path_list_names(connection: Connection[Any]) -> list[str]:
+    """The poller's read (0125: it may select the name and nothing else)."""
+
+    with connection.cursor() as cursor:
+        cursor.execute("select name from path_list order by name")
+        return [name for (name,) in cursor.fetchall()]
+
+
 def path_list(connection: Connection[Any], name: str) -> PathList | None:
     with connection.cursor(row_factory=class_row(PathList)) as cursor:
         cursor.execute(

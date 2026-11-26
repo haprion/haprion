@@ -7,6 +7,10 @@ This is the only code that reads its key on behalf of somebody else, and it
 refuses every entry without the mark: a certificate a cluster or a receiver
 carries is never one whose key can be downloaded.
 
+An exportable entry may also name one BMC the manager installs it on itself
+(B526, B536). That is not a target it is published to: the key stays
+exportable, and the install reads it through `export` like a download does.
+
 Three forms. The key alone as PEM, for a device that takes certificate and key
 as two files (Supermicro). A PKCS#12 bundle with a password the person chose,
 as OpenSSL writes one today (AES-256, PBKDF2, a SHA-256 MAC). And the same

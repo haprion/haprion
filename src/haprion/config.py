@@ -549,6 +549,23 @@ def receiver_id_names_a_host(receiver_id: str) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
+class BmcTarget:
+    """A BMC the manager installs an exportable certificate on (B526, B536).
+
+    `fingerprint_sha256` is the certificate the BMC served when the target was
+    confirmed: the manager trusts the BMC when it serves that one or the
+    certificate the manager installed, and no other.
+    """
+
+    address: str
+    fingerprint_sha256: str
+    port: int = 443
+
+
+BMC_FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True, slots=True)
 class CertificateSource:
     kind: str
     #
@@ -618,6 +635,12 @@ class RegisteredCertificate:
     # whose key can be taken away.
     #
     exportable: bool = False
+    #
+    # Where the manager installs an exportable certificate itself (B526, B536):
+    # one BMC at most. It is not a target the certificate is published to - the
+    # key is still exportable, and the install reads it the way the export does.
+    #
+    bmc: BmcTarget | None = None
 
     def format_for(self, receiver_id: str) -> str:
         """The form this certificate is written in for that receiver."""
@@ -1544,7 +1567,9 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
             raise ConfigError(f"invalid certificate ID in certificate registry: {certificate_id!r}")
         location = f"certificates.{certificate_id}"
         raw = _mapping(raw_value, location)
-        _only_keys(raw, {"source", "clusters", "receivers", "interface", "exportable"}, location)
+        _only_keys(
+            raw, {"source", "clusters", "receivers", "interface", "exportable", "bmc"}, location
+        )
 
         raw_source = _mapping(raw.get("source"), f"{location}.source")
         _only_keys(
@@ -1604,6 +1629,11 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
                 f"{location} is exportable and cannot name clusters or receivers or serve "
                 "the interface"
             )
+        bmc = _bmc_target(raw.get("bmc"), f"{location}.bmc")
+        if bmc is not None and not exportable:
+            raise ConfigError(
+                f"{location}.bmc belongs to an exportable certificate only: one host, no targets"
+            )
         if kind == AUTHORITY and (named or interface or exportable):
             raise ConfigError(
                 f"{location} is an authority and goes to clusters only: no receivers, "
@@ -1625,8 +1655,28 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
             formats=types.MappingProxyType(formats),
             interface=interface,
             exportable=exportable,
+            bmc=bmc,
         )
     return Registry(receivers=receivers, certificates=certificates)
+
+
+def _bmc_target(value: Any, location: str) -> BmcTarget | None:
+    """A certificate's BMC, or None when it has none."""
+
+    if value is None:
+        return None
+    raw = _mapping(value, location)
+    _only_keys(raw, {"address", "port", "fingerprint_sha256"}, location)
+    address = _host(_required_string(raw, "address", location), f"{location}.address")
+    port = raw.get("port", 443)
+    if type(port) is not int or not 1 <= port <= 65535:
+        raise ConfigError(f"{location}.port must be a port number from 1 to 65535")
+    fingerprint = raw.get("fingerprint_sha256")
+    if not isinstance(fingerprint, str) or not BMC_FINGERPRINT.fullmatch(fingerprint):
+        raise ConfigError(
+            f"{location}.fingerprint_sha256 must be 64 lowercase hexadecimal characters"
+        )
+    return BmcTarget(address=address, fingerprint_sha256=fingerprint, port=port)
 
 
 def _one_of(

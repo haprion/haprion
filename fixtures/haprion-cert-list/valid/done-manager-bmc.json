@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cert_list",
+  "cluster": null,
+  "request_id": "99999999-9999-4999-8999-999999999997",
+  "result": {
+    "interface_served": null,
+    "registry": {
+      "certificates": [
+        {
+          "id": "bmc-01.example.net",
+          "source": {
+            "kind": "import",
+            "lineage": null
+          },
+          "targets": {
+            "clusters": [],
+            "receivers": []
+          },
+          "distribution": null,
+          "readable": true,
+          "validation_error": null,
+          "measured_at": "source",
+          "fingerprint_sha256": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+          "common_name": "bmc-01.example.net",
+          "sans": [
+            "bmc-01.example.net"
+          ],
+          "not_before": "2026-08-01T00:00:00Z",
+          "not_after": "2026-11-01T00:00:00Z",
+          "issuer": "Example Test CA",
+          "lifecycle": "static",
+          "valid": true,
+          "exportable": true,
+          "bmc": {
+            "address": "bmc-01.example.net",
+            "port": 443,
+            "fingerprint_sha256": "abababababababababababababababababababababababababababababababab"
+          }
+        }
+      ],
+      "receivers": [
+        "lb-01"
+      ]
+    }
+  },
+  "warnings": [],
+  "error": null
+}

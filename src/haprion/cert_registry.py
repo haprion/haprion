@@ -48,6 +48,7 @@ from haprion import atomic_file, exit_codes, labels, safe_yaml
 from haprion.cert_lock import DEFAULT_LOCK_PATH, LOCK_WAIT_SECONDS, hold
 from haprion.config import (
     DEFAULT_RECEIVER_FORMAT,
+    BmcTarget,
     ConfigError,
     Registry,
     RuntimeConfig,
@@ -315,6 +316,54 @@ def set_receiver(
         )
 
 
+class KEEP:
+    """`written_entry`'s word for a key the writer leaves as it is on file."""
+
+
+def set_bmc(
+    path: Path,
+    *,
+    certificate_id: str,
+    target: BmcTarget | None,
+    runtime: RuntimeConfig,
+    require_secure: bool = True,
+    lock_path: Path = DEFAULT_LOCK_PATH,
+    lock_held: bool = False,
+) -> None:
+    """Give an exportable certificate its BMC, change it, or (None) take it away (B526, B536).
+
+    Root work, from the BMC helper only: the address is where the manager will
+    send a certificate's key, so a job payload never names it. The entry has to
+    exist and be exportable - the reader refuses a BMC on any other, and the
+    write loads the candidate back through it before it replaces the file.
+    """
+
+    with nullcontext() if lock_held else locked(lock_path):
+        document = read_document(path)
+        certificates = dict(document.get("certificates") or {})
+        existing = certificates.get(certificate_id)
+        if not isinstance(existing, Mapping):
+            raise RegistryError(
+                "not_registered",
+                f"{certificate_id} is not in the registry",
+                exit_code=exit_codes.REFUSED,
+            )
+        if existing.get("exportable") is not True:
+            raise RegistryError(
+                "not_exportable",
+                f"{certificate_id} is not exportable; only an exportable certificate has a BMC",
+                exit_code=exit_codes.REFUSED,
+            )
+        certificates[certificate_id] = written_entry(existing, bmc=target)
+        write(
+            path,
+            document=document,
+            certificates=certificates,
+            runtime=runtime,
+            require_secure=require_secure,
+        )
+
+
 def drop_receiver(
     path: Path,
     *,
@@ -434,6 +483,7 @@ def written_entry(
     receivers: Sequence[Any] | None = None,
     interface: bool = False,
     exportable: bool = False,
+    bmc: BmcTarget | None | type[KEEP] = KEEP,
 ) -> dict[str, Any]:
     """The registry entry a writer stores: the one on file with only what it names changed.
 
@@ -443,7 +493,8 @@ def written_entry(
     there afterwards. `source` holds only the source keys the caller sets;
     `clusters` and `receivers` replace the target lists (the receivers as the
     registry's elements, an empty list leaves the key out) and None keeps what
-    is on file; `interface` and `exportable` only ever set their mark.
+    is on file; `interface` and `exportable` only ever set their mark. `bmc` is
+    kept unless named: a target sets it, None takes it away (B526).
     """
 
     entry: dict[str, Any] = copy.deepcopy(dict(existing)) if existing else {}
@@ -459,6 +510,14 @@ def written_entry(
         entry["interface"] = True
     if exportable:
         entry["exportable"] = True
+    if bmc is None:
+        entry.pop("bmc", None)
+    elif isinstance(bmc, BmcTarget):
+        entry["bmc"] = {
+            "address": bmc.address,
+            **({"port": bmc.port} if bmc.port != 443 else {}),
+            "fingerprint_sha256": bmc.fingerprint_sha256,
+        }
     return {"source": entry.pop("source"), **entry}
 
 

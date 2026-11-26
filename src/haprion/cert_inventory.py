@@ -602,6 +602,21 @@ def registry_result(
             #
             **({"interface": True} if entry.interface else {}),
             **({"exportable": True} if entry.exportable else {}),
+            #
+            # The BMC the manager installs it on (B526, B536); what the BMC
+            # serves is the install timer's reading, not this listing's.
+            #
+            **(
+                {
+                    "bmc": {
+                        "address": entry.bmc.address,
+                        "port": entry.bmc.port,
+                        "fingerprint_sha256": entry.bmc.fingerprint_sha256,
+                    }
+                }
+                if entry.bmc is not None
+                else {}
+            ),
             "readable": False,
             "validation_error": None,
             "measured_at": None,

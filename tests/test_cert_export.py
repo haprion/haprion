@@ -24,7 +24,13 @@ from haprion.cert_import import ImportError_, import_certificate
 from haprion.cert_inventory import OPENSSL, registry_result
 from haprion.certificates import CERTIFICATE_OPENING, MAX_CERTIFICATE_BYTES
 from haprion.cli import cert_export_helper
-from haprion.config import ConfigError, load_policy, load_registry, load_runtime_config
+from haprion.config import (
+    BmcTarget,
+    ConfigError,
+    load_policy,
+    load_registry,
+    load_runtime_config,
+)
 from tests.contract_schema import assert_contract
 from tests.test_cert_import import KEEPERS, ImportFixture, Pki
 
@@ -105,6 +111,167 @@ class TheRegistryHoldsTheMark(ExportableFixture):
                 require_secure=False,
             )
         self.assertIn("exportable", str(refused.exception))
+
+
+PINNED = "ab" * 32
+BMC = {"address": "bmc01.example", "fingerprint_sha256": PINNED}
+
+
+class ABmcTarget(ExportableFixture):
+    """B526, B536: an exportable certificate's one BMC, held in the registry."""
+
+    def write(self, entry: dict[str, Any]) -> Path:
+        return self.write_config({**KEEPERS, DEVICE: entry})
+
+    def test_an_exportable_entry_takes_one_bmc_on_443_unless_said(self) -> None:
+        self.write({"source": {"kind": "import"}, "exportable": True, "bmc": BMC})
+        target = self.registry().certificates[DEVICE].bmc
+        self.assertIsNotNone(target)
+        assert target is not None
+        self.assertEqual(
+            (target.address, target.port, target.fingerprint_sha256), ("bmc01.example", 443, PINNED)
+        )
+        self.write({"source": {"kind": "import"}, "exportable": True, "bmc": {**BMC, "port": 8443}})
+        self.assertEqual(self.registry().certificates[DEVICE].bmc.port, 8443)
+
+    def test_a_bmc_belongs_to_an_exportable_entry_and_is_held_to_its_shape(self) -> None:
+        for entry, said in (
+            ({"source": {"kind": "import"}, "bmc": BMC}, "exportable certificate only"),
+            (
+                {"source": {"kind": "import"}, "exportable": True, "bmc": {**BMC, "port": 0}},
+                "port",
+            ),
+            (
+                {"source": {"kind": "import"}, "exportable": True, "bmc": {**BMC, "port": "443"}},
+                "port",
+            ),
+            (
+                {
+                    "source": {"kind": "import"},
+                    "exportable": True,
+                    "bmc": {**BMC, "fingerprint_sha256": PINNED.upper()},
+                },
+                "fingerprint_sha256",
+            ),
+            (
+                {
+                    "source": {"kind": "import"},
+                    "exportable": True,
+                    "bmc": {**BMC, "address": "bmc 01"},
+                },
+                "address",
+            ),
+            (
+                {"source": {"kind": "import"}, "exportable": True, "bmc": {**BMC, "user": "x"}},
+                "unknown",
+            ),
+            (
+                {"source": {"kind": "import"}, "exportable": True, "bmc": {"address": "x.example"}},
+                "fingerprint_sha256",
+            ),
+        ):
+            with self.subTest(entry=entry):
+                self.write(entry)
+                with self.assertRaisesRegex(ConfigError, said):
+                    self.registry()
+
+    def test_a_renewal_keeps_the_bmc_and_the_key_is_still_exportable(self) -> None:
+        self.make_exportable()
+        document = self.registered()
+        self.write({**document[DEVICE], "bmc": BMC})
+        policy, runtime = self.runtime()
+        import_certificate(
+            certificate_id=DEVICE,
+            material=self.device_material(),
+            clusters=(),
+            receivers=(),
+            policy=policy,
+            runtime=runtime,
+            deployer=self.deploy,
+            live=self.live,
+            store=self.store,
+            lock_path=self.lock,
+            require_secure=False,
+        )
+        self.assertEqual(self.registered()[DEVICE]["bmc"], BMC)
+        exported = export(self.registry(), DEVICE, "pem-key", live=self.live, store=self.store)
+        self.assertEqual(exported.content, self.device.leaf_key.read_bytes())
+
+    def test_the_writer_sets_changes_and_takes_away_the_bmc_of_an_exportable_entry_only(
+        self,
+    ) -> None:
+        self.make_exportable()
+        policy, runtime = self.runtime()
+        path = self.root / "certificates.yaml"
+
+        def set_bmc(certificate_id: str, target: BmcTarget | None) -> None:
+            cert_registry.set_bmc(
+                path,
+                certificate_id=certificate_id,
+                target=target,
+                runtime=runtime,
+                require_secure=False,
+                lock_path=self.lock,
+            )
+
+        set_bmc(DEVICE, BmcTarget(address="bmc01.example", fingerprint_sha256=PINNED))
+        self.assertEqual(self.registered()[DEVICE]["bmc"], BMC)
+        set_bmc(DEVICE, BmcTarget(address="192.0.2.7", fingerprint_sha256=PINNED, port=8443))
+        self.assertEqual(
+            self.registered()[DEVICE]["bmc"],
+            {"address": "192.0.2.7", "port": 8443, "fingerprint_sha256": PINNED},
+        )
+        set_bmc(DEVICE, None)
+        self.assertEqual(
+            self.registered()[DEVICE], {"source": {"kind": "import"}, "exportable": True}
+        )
+        other = next(name for name in self.registered() if name != DEVICE)
+        for certificate_id, code in (
+            (other, "not_exportable"),
+            ("missing.example", "not_registered"),
+        ):
+            with (
+                self.subTest(certificate_id),
+                self.assertRaises(cert_registry.RegistryError) as refused,
+            ):
+                set_bmc(
+                    certificate_id, BmcTarget(address="bmc01.example", fingerprint_sha256=PINNED)
+                )
+            self.assertEqual(refused.exception.code, code)
+
+    def test_the_listing_names_the_bmc_in_its_contract(self) -> None:
+        from datetime import UTC, datetime
+
+        self.make_exportable()
+        self.write({**self.registered()[DEVICE], "bmc": BMC})
+        listed = registry_result(
+            self.registry(),
+            certificate_root=self.dist,
+            renewed=frozenset(),
+            now=datetime.now(UTC),
+            live=self.live,
+            store=self.store,
+        )
+        row = next(entry for entry in listed["certificates"] if entry["id"] == DEVICE)
+        other = next(entry for entry in listed["certificates"] if entry["id"] != DEVICE)
+        self.assertEqual(row["bmc"], {**BMC, "port": 443})
+        self.assertNotIn("bmc", other)
+        assert_contract(
+            "haprion-cert-list",
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "ok": True,
+                    "outcome": "done",
+                    "operation": "cert_list",
+                    "cluster": None,
+                    "request_id": "99999999-9999-4999-8999-999999999996",
+                    "result": {"interface_served": None, "registry": listed},
+                    "warnings": [],
+                    "error": None,
+                }
+            ),
+        )
 
 
 class MakingOne(ExportableFixture):

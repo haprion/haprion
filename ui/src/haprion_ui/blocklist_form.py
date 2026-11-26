@@ -293,6 +293,11 @@ def save(
             keep_secret=keep,
             actor=actor,
         )
+    except db.BlocklistsFull:
+        connection.rollback()
+        raise FormProblem(
+            f"Settings keeps at most {blocklists.MAX_LISTS} blocklists. Remove one first."
+        ) from None
     except db.BlocklistChanged:
         connection.rollback()
         if existing is None:

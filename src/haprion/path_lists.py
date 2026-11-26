@@ -34,6 +34,7 @@ import yaml
 from haprion import atomic_file, safe_yaml
 from haprion.config import ConfigError
 from haprion.proxy_model import (
+    MAX_DENIED_PATH,
     MAX_DENIED_PATHS,
     PATH_LIST_NAME,
     ModelError,
@@ -49,12 +50,20 @@ SUFFIX = ".json"
 SNAPSHOT = "managed/path-lists.yaml"
 DESCRIPTION_MAX = 200
 MAX_REVISION = 1_000_000
+#
+# The lists Settings keeps, and `haprion-path-lists apply` takes in one file.
+#
+MAX_LISTS = 64
 DOCUMENT_KEYS = frozenset({"schema_version", "revision", "name", "description", "paths"})
 #
-# Every list's paths and a little YAML around each: the most a version's copy
-# can need with every list full is far less, so more is a damaged file.
+# The most a version's copy can be: every list full, each path at its longest
+# and written as YAML writes it (`  - ` before, a line break after; a path
+# starts with `/` and has no quote or space, so it is never quoted), and the
+# list's name. More is a damaged file. It was 1 MiB, which nine full lists
+# passed: the version was written, and every regeneration and revert after it
+# refused its copy (review 26-11-24, PWA03).
 #
-MAX_SNAPSHOT_BYTES = 1024 * 1024
+MAX_SNAPSHOT_BYTES = MAX_LISTS * (MAX_DENIED_PATHS * (MAX_DENIED_PATH + 8) + 64) + 64
 
 type Reader = Callable[[Collection[str]], Mapping[str, tuple[str, ...]]]
 """The paths of each list named, or a `ConfigError` naming the one that is missing."""
@@ -428,7 +437,14 @@ def dump_snapshot(lists: Mapping[str, Sequence[str]]) -> bytes:
         "schema": SCHEMA_VERSION,
         "lists": {name: list(lists[name]) for name in sorted(lists)},
     }
-    return yaml.safe_dump(document, sort_keys=False, default_flow_style=False).encode("utf-8")
+    content = yaml.safe_dump(document, sort_keys=False, default_flow_style=False).encode("utf-8")
+    #
+    # The limit `load_snapshot` reads with: a version is never written with a
+    # copy it could not take back.
+    #
+    if len(content) > MAX_SNAPSHOT_BYTES:
+        raise ConfigError(f"{SNAPSHOT} would exceed the {MAX_SNAPSHOT_BYTES} byte size limit")
+    return content
 
 
 def tree_reader(files: Mapping[str, bytes]) -> Reader:
@@ -468,7 +484,9 @@ __all__ = [
     "DIRECTORY",
     "HELPER",
     "MAX_DENIED_PATHS",
+    "MAX_LISTS",
     "MAX_REVISION",
+    "MAX_SNAPSHOT_BYTES",
     "OPERATION",
     "SNAPSHOT",
     "PathList",

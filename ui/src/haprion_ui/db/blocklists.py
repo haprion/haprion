@@ -7,12 +7,28 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from haprion.blocklists import MAX_LISTS
 from psycopg import Connection
 from psycopg.rows import class_row
 
 
 class BlocklistChanged(Exception):
     """The row is not at the revision the caller saw: another save came first."""
+
+
+class BlocklistsFull(Exception):
+    """Settings already keeps `MAX_LISTS` blocklists (review 26-11-24, PWA03)."""
+
+
+def _room_for_one_more_blocklist(connection: Connection[Any]) -> None:
+    """Refuse a new row at `MAX_LISTS`, counted one save at a time (as for path lists)."""
+
+    with connection.cursor() as cursor:
+        cursor.execute("select pg_advisory_xact_lock(hashtext('blocklist_count'))")
+        cursor.execute("select count(*) from blocklist")
+        row = cursor.fetchone()
+    if row is not None and row[0] >= MAX_LISTS:
+        raise BlocklistsFull(MAX_LISTS)
 
 
 @dataclass(frozen=True)
@@ -123,6 +139,8 @@ def save_blocklist(
         "actor": actor,
         "previous": previous,
     }
+    if previous is None:
+        _room_for_one_more_blocklist(connection)
     with connection.cursor(row_factory=class_row(Blocklist)) as cursor:
         if previous is None:
             cursor.execute(

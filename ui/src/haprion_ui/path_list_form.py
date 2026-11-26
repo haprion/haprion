@@ -59,6 +59,7 @@ class Form:
 
 
 EMPTY = Form()
+FULL = f"Settings keeps at most {path_lists.MAX_LISTS} path lists. Remove one first."
 
 
 def from_row(row: db.PathList) -> Form:
@@ -206,6 +207,9 @@ def save(
             paths=item.paths,
             actor=actor,
         )
+    except db.PathListsFull:
+        connection.rollback()
+        raise FormProblem(FULL) from None
     except db.PathListChanged:
         connection.rollback()
         if existing is None:
@@ -281,6 +285,9 @@ def take_in(connection: Any, entry: db.ListFile, *, actor: str, via: str = "web"
             revision=item.revision,
             actor=actor,
         )
+    except db.PathListsFull:
+        connection.rollback()
+        raise FormProblem(FULL) from None
     except db.PathListChanged:
         connection.rollback()
         raise FormProblem(

@@ -25,7 +25,7 @@ from uuid import uuid4
 
 import psycopg
 import psycopg.sql
-from haprion import exit_codes
+from haprion import blocklists, exit_codes, path_lists
 from haprion.config import CLUSTER_ID
 from haprion.traffic_collector import (
     RETENTION_DAYS,
@@ -4878,6 +4878,78 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 worker.execute("update path_list set description = ''")
             worker.rollback()
+
+    def test_settings_keeps_at_most_the_lists_apply_takes_of_each_kind(self) -> None:
+        """Review 26-11-24, PWA03: no limit here, 64 in `apply`'s file; counted one save at a time."""
+
+        def clear() -> None:
+            with self.connection.cursor() as cursor:
+                cursor.execute("delete from path_list")
+                cursor.execute("delete from blocklist")
+            self.connection.commit()
+
+        self.addCleanup(clear)
+        clear()
+        blocklist: dict[str, Any] = {
+            "description": "",
+            "url": "https://lists.example.com/community.txt",
+            "auth": "none",
+            "username": "",
+            "every_hours": 24,
+            "excepts": (),
+            "key_id": None,
+            "ciphertext": None,
+            "keep_secret": False,
+            "actor": "admin",
+        }
+
+        def path_list(web: psycopg.Connection, name: str) -> db.PathList:
+            return db.save_path_list(
+                web, name=name, previous=None, description="", paths=["/x"], actor="admin"
+            )
+
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as web:
+            for number in range(path_lists.MAX_LISTS):
+                path_list(web, f"list-{number:02d}")
+            for number in range(blocklists.MAX_LISTS):
+                db.save_blocklist(web, name=f"list-{number:02d}", previous=None, **blocklist)
+            web.commit()
+            with self.assertRaises(db.PathListsFull):
+                path_list(web, "one-more")
+            web.rollback()
+            with self.assertRaises(db.PathListsFull):
+                db.take_in_path_list(
+                    web, name="one-more", description="", paths=["/x"], revision=1, actor="admin"
+                )
+            web.rollback()
+            with self.assertRaises(db.BlocklistsFull):
+                db.save_blocklist(web, name="one-more", previous=None, **blocklist)
+            web.rollback()
+            changed = db.save_path_list(
+                web, name="list-00", previous=1, description="", paths=["/y"], actor="admin"
+            )
+            self.assertEqual(changed.revision, 2)
+            web.commit()
+        with self.connection.cursor() as cursor:
+            cursor.execute("delete from path_list where name = 'list-00'")
+        self.connection.commit()
+        #
+        # One save at a time: the last place, taken and not yet committed,
+        # holds the next save until it is.
+        #
+        with (
+            self.connect("HAPRION_UI_TEST_WEB_ROLE") as first,
+            self.connect("HAPRION_UI_TEST_WEB_ROLE") as second,
+        ):
+            path_list(first, "last")
+            second.execute("set lock_timeout = '200ms'")
+            with self.assertRaises(psycopg.errors.LockNotAvailable):
+                path_list(second, "racing")
+            second.rollback()
+            first.commit()
+            with self.assertRaises(db.PathListsFull):
+                path_list(second, "racing")
+            second.rollback()
 
     def test_a_list_without_authorization_keeps_its_secret_revision_through_every_save(
         self,

@@ -8,6 +8,7 @@ import unittest
 from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from haprion import path_lists, regeneration
 from haprion.candidate_validation import DERIVED_LIMITS
@@ -21,12 +22,21 @@ from haprion.generate import (
 )
 from haprion.golden import CERTIFICATES, DEFAULT_VIPS
 from haprion.managed_publish import managed_files
-from haprion.proxy_model import ModelError, Proxy, load_proxy
+from haprion.proxy_model import MAX_DENIED_PATH, MAX_DENIED_PATHS, ModelError, Proxy, load_proxy
 from tests.test_golden import _haproxy_check, _https
 from tests.test_managed_publish import NETWORK, cluster
 from tests.test_regeneration import COMMIT, KEY
 
 SCANNERS = {"scanners": ("/.env", "/wp-login.php")}
+
+
+def full_list(number: int) -> tuple[str, ...]:
+    """A list at its limits: every path there may be, each as long as a path may be."""
+
+    return tuple(
+        f"/{number:02d}-{index:03d}/".ljust(MAX_DENIED_PATH, "a")
+        for index in range(MAX_DENIED_PATHS)
+    )
 
 
 def denied(body: str) -> Proxy:
@@ -253,7 +263,9 @@ class TheModuleSaysWhatItOffers(unittest.TestCase):
             "map_file_name",
             "DESCRIPTION_MAX",
             "HELPER",
+            "MAX_LISTS",
             "MAX_REVISION",
+            "MAX_SNAPSHOT_BYTES",
             "OPERATION",
         ):
             with self.subTest(name):
@@ -481,6 +493,30 @@ class TheVersionCarriesACopy(unittest.TestCase):
         document = object_document("deny_paths:\n  mode: deny\n  lists: [scanners]\n")
         with self.assertRaisesRegex(ConfigError, "path list scanners does not exist"):
             self.publish({"managed/proxies/shop.yaml": document}, {})
+
+    def test_a_version_with_full_lists_takes_its_own_copy_back(self) -> None:
+        # Review 26-11-24, PWA03: nine full lists made a copy over the old 1 MiB.
+        # The version was written, and the next publish that took the version's
+        # own copy - as a regeneration or a revert does - refused it.
+        full = {f"full-{number}": full_list(number) for number in range(9)}
+        document = object_document(
+            f"deny_paths:\n  mode: deny\n  lists: [{', '.join(sorted(full))}]\n"
+        )
+        first = self.publish({"managed/proxies/shop.yaml": document}, full)
+        self.assertGreater(len(first[path_lists.SNAPSHOT]), 1024 * 1024)
+        again = self.publish(first, None)
+        self.assertEqual(again[path_lists.SNAPSHOT], first[path_lists.SNAPSHOT])
+
+    def test_the_copy_of_every_list_full_is_within_the_limit_both_ways(self) -> None:
+        lists = {f"list-{number:02d}": full_list(number) for number in range(path_lists.MAX_LISTS)}
+        content = path_lists.dump_snapshot(lists)
+        self.assertLessEqual(len(content), path_lists.MAX_SNAPSHOT_BYTES)
+        self.assertEqual(path_lists.load_snapshot(content), lists)
+        with (
+            mock.patch.object(path_lists, "MAX_SNAPSHOT_BYTES", len(content) - 1),
+            self.assertRaisesRegex(ConfigError, "would exceed"),
+        ):
+            path_lists.dump_snapshot(lists)
 
     def test_a_damaged_copy_is_refused(self) -> None:
         for content, said in (

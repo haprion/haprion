@@ -51,7 +51,7 @@ from haprion_ui.admin import AdminError, actor_name, connect, load_environment
 OPERATION = "blocklists_apply"
 LIST_OPERATION = "blocklists_list"
 MAX_FILE_BYTES = 256 * 1024
-MAX_LISTS = 64
+MAX_LISTS = blocklists.MAX_LISTS
 WAIT_SECONDS = job_wait.WAIT_SECONDS
 FIELDS = frozenset(
     {"name", "url", "every_hours", "authorization", "username", "secret", "description", "except"}

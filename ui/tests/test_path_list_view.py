@@ -420,6 +420,31 @@ class SavingAPathList(PathListRouteTestCase):
         self.assertIn("Paths — at most 500 paths of 256 characters", response.text)
         self.assertEqual((self.saved, self.queued), ([], []))
 
+    def test_a_new_list_past_the_most_settings_keeps_says_so(self) -> None:
+        """Review 26-11-24, PWA03: the database had no limit, and `apply` takes 64."""
+
+        with mock.patch("haprion_ui.db.save_path_list", side_effect=db.PathListsFull(64)):
+            response = self.post(self.admin())
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("Settings keeps at most 64 path lists. Remove one first.", response.text)
+        self.assertEqual(self.queued, [])
+        self.assertEqual(path_list_apply.MAX_LISTS, path_lists.MAX_LISTS)
+
+    def test_take_in_past_the_most_settings_keeps_says_so(self) -> None:
+        taken = file_row("taken", revision=4, description="", paths=["/.git"], digest="a" * 64)
+        client = self.admin()
+        with (
+            mock.patch("haprion_ui.db.list_files", side_effect=lambda _c, _k: [taken]),
+            mock.patch("haprion_ui.db.take_in_path_list", side_effect=db.PathListsFull(64)),
+        ):
+            response = client.post(
+                "/settings/path-lists/taken/take-in",
+                data={auth.CSRF_FIELD: self.token(client)},
+                follow_redirects=False,
+            )
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("Settings keeps at most 64 path lists.", response.text)
+
 
 class RemovingAPathList(PathListRouteTestCase):
     def remove(self, client: Any) -> Any:

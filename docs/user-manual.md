@@ -1891,7 +1891,7 @@ provider's list of networks that send only abuse. The manager fetches it on a sc
 every cluster. An object refuses the addresses on it by naming the list under *Denied — groups*. The list
 changes without a publish or a deploy: the nodes swap it in place.
 
-**Adding one.** *Settings → Blocklists → Add blocklist*:
+**Adding one.** *Settings → Blocklists → Add blocklist* (Settings keeps up to 64):
 
 - *Name* is the group's name under *Denied — groups*: lowercase letters, digits and `-`, at most 40.
 - *URL* is where the list is, over https. The list has one address or network per line; text after `#`
@@ -1980,7 +1980,7 @@ A path list is a set of paths that only scanners ask for - `/.env`, `/.git`, `/w
 once and used by any object under *Denied paths — lists*. Haprion ships no list of its own: what is
 worth refusing depends on what the sites run.
 
-**Adding one.** *Settings → Path lists → Add path list*:
+**Adding one.** *Settings → Path lists → Add path list* (Settings keeps up to 64):
 
 - *Name* is the list's name under *Denied paths — lists*: lowercase letters, digits and `-`, at most 40.
 - *Description* is for whoever opens the list next.

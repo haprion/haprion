@@ -40,7 +40,7 @@ from haprion_ui.admin import AdminError, actor_name, connect, load_environment
 OPERATION = "path_lists_apply"
 LIST_OPERATION = "path_lists_list"
 MAX_FILE_BYTES = 1024 * 1024
-MAX_LISTS = 64
+MAX_LISTS = path_lists.MAX_LISTS
 WAIT_SECONDS = job_wait.WAIT_SECONDS
 FIELDS = frozenset({"name", "description", "paths"})
 

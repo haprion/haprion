@@ -55,6 +55,7 @@ URL_MAX = 2048
 USERNAME_MAX = 200
 SECRET_MAX = 4096
 EXCEPT_MAX = 256  # what the blocklist table's excepts column holds (0119)
+MAX_LISTS = 64  # the lists Settings keeps, and `haprion-blocklists apply` takes in one file
 
 #
 # B500: a list over either limit is refused, and the last good one stays.

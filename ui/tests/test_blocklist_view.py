@@ -642,6 +642,16 @@ class SavingABlocklist(BlocklistRouteTestCase):
         self.assertIn("Password must be typed again when the URL changes.", response.text)
         self.assertEqual((self.saved, self.queued), ([], []))
 
+    def test_a_new_list_past_the_most_settings_keeps_says_so(self) -> None:
+        """Review 26-11-24, PWA03: the database had no limit, and `apply` takes 64."""
+
+        with mock.patch("haprion_ui.db.save_blocklist", side_effect=db.BlocklistsFull(64)):
+            response = self.post(self.admin())
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("Settings keeps at most 64 blocklists. Remove one first.", response.text)
+        self.assertEqual(self.queued, [])
+        self.assertEqual(blocklist_apply.MAX_LISTS, blocklists.MAX_LISTS)
+
     def test_a_refusal_redraws_the_form_without_the_secret(self) -> None:
         response = self.post(self.admin(), url="http://lists.example.com/l.txt")
 

@@ -7,12 +7,32 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from haprion.path_lists import MAX_LISTS
 from psycopg import Connection
 from psycopg.rows import class_row
 
 
 class PathListChanged(Exception):
     """The row is not at the revision the caller saw: another save came first."""
+
+
+class PathListsFull(Exception):
+    """Settings already keeps `MAX_LISTS` path lists (review 26-11-24, PWA03)."""
+
+
+def _room_for_one_more_path_list(connection: Connection[Any]) -> None:
+    """Refuse a new row at `MAX_LISTS`, counted one save at a time.
+
+    The lock is held until the caller's transaction ends, so two lists added at
+    once are counted one after the other and cannot both be the last.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute("select pg_advisory_xact_lock(hashtext('path_list_count'))")
+        cursor.execute("select count(*) from path_list")
+        row = cursor.fetchone()
+    if row is not None and row[0] >= MAX_LISTS:
+        raise PathListsFull(MAX_LISTS)
 
 
 @dataclass(frozen=True)
@@ -81,6 +101,8 @@ def save_path_list(
         "actor": actor,
         "previous": previous,
     }
+    if previous is None:
+        _room_for_one_more_path_list(connection)
     with connection.cursor(row_factory=class_row(PathList)) as cursor:
         if previous is None:
             cursor.execute(
@@ -116,6 +138,7 @@ def take_in_path_list(
 ) -> PathList:
     """Insert the row a file on the manager has no row for, at the file's own revision."""
 
+    _room_for_one_more_path_list(connection)
     with connection.cursor(row_factory=class_row(PathList)) as cursor:
         cursor.execute(
             "insert into path_list (name, description, paths, revision, updated_by) "

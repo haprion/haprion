@@ -1,0 +1,59 @@
+# Checks, saves or removes an exportable certificate's BMC for the interface, then exits.
+#
+# Started by haprion-bmc-helper.socket, one instance per connection. The
+# connection is this process's stdin and stdout.
+#
+# What it may do with root
+# ------------------------
+# Open the BMC account the web sealed, with the installation's private key, and
+# sign in to the BMC over Redfish - pinned to the certificate the BMC serves -
+# to say what it serves. When the administrator confirmed that certificate,
+# asked again here, keep the sealed account under /etc/haprion/bmc-accounts
+# and write the target into the certificate registry, read back by the
+# engine's reader before it replaces the file. Remove a target and its account.
+#
+# Why this sandbox is looser than the worker's: writing /etc/haprion is the
+# job, as it is the NDES server helper's, and asking the BMC needs the network.
+#
+# Installed as /etc/systemd/system/haprion-bmc-helper@.service.
+# A check is a handshake (5 s) and a few Redfish calls (30 s each at most);
+# ended under the web's 100 s, so a target is never written after the web
+# has said the service did not answer.
+
+[Unit]
+Description=Check or save a certificate's BMC for the Haprion interface
+Documentation=file:///opt/haprion/current
+CollectMode=inactive-or-failed
+
+[Service]
+Type=exec
+ExecStart=/opt/haprion/current/bin/haprion-bmc-helper
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+MemoryMax=256M
+MemorySwapMax=0
+TimeoutStartSec=60
+RuntimeMaxSec=90
+TimeoutStopSec=10
+
+NoNewPrivileges=yes
+ProtectSystem=yes
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@obsolete
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

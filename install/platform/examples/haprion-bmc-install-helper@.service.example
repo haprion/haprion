@@ -1,0 +1,55 @@
+# Installs an exportable certificate on its BMC, then exits.
+#
+# Started by haprion-bmc-install-helper.socket, one instance per connection,
+# for the worker's job: Install now, and the install a saved target starts.
+#
+# What it may do with root
+# ------------------------
+# Read the certificate and its key the way the export reads them, open the
+# BMC account, and over Redfish - pinned to the certificate the BMC was
+# confirmed with or the one installed - upload the certificate and key and
+# restart the BMC. Wait until it serves the certificate, move the pin in the
+# registry to it and record the attempt in /var/lib/haprion/bmc. The key is
+# never written anywhere: it goes from the store to the BMC.
+#
+# Installed as /etc/systemd/system/haprion-bmc-install-helper@.service.
+# An upload is allowed 180 s and the restart 300 s: ended under the worker's
+# 620 s, so an install is never recorded after the job has said it timed out.
+
+[Unit]
+Description=Install a certificate on its BMC for Haprion
+Documentation=file:///opt/haprion/current
+CollectMode=inactive-or-failed
+
+[Service]
+Type=exec
+ExecStart=/opt/haprion/current/bin/haprion-bmc-install-helper
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+MemoryMax=256M
+MemorySwapMax=0
+TimeoutStartSec=60
+RuntimeMaxSec=600
+TimeoutStopSec=10
+
+NoNewPrivileges=yes
+ProtectSystem=yes
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@obsolete
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

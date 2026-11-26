@@ -125,6 +125,29 @@ systemctl is-active --quiet haprion-ndes-server-helper.socket \
 log "  listening on /run/haprion/ndes-server.sock  (group ${WEB_USER})"
 
 #
+# An exportable certificate's BMC is checked and saved from the interface
+# (B526): the web asks over a socket, group this account, and a root helper
+# signs in to the BMC and writes the registry and the sealed account. The
+# install itself is the worker's, over a socket of its own.
+#
+install_file "/etc/systemd/system/haprion-bmc-helper@.service" root:root 644 \
+    "$(cat 'examples/haprion-bmc-helper@.service.example')"
+install_file "/etc/systemd/system/haprion-bmc-helper.socket" root:root 644 \
+    "$(sed "s|WEB_USER|${WEB_USER}|g" examples/haprion-bmc-helper.socket.example)"
+install_file "/etc/systemd/system/haprion-bmc-install-helper@.service" root:root 644 \
+    "$(cat 'examples/haprion-bmc-install-helper@.service.example')"
+install_file "/etc/systemd/system/haprion-bmc-install-helper.socket" root:root 644 \
+    "$(sed "s|WORKER_USER|${WORKER_USER}|g" examples/haprion-bmc-install-helper.socket.example)"
+systemctl daemon-reload
+for socket in haprion-bmc-helper haprion-bmc-install-helper; do
+    systemctl enable --quiet "${socket}.socket"
+    systemctl restart "${socket}.socket"
+    systemctl is-active --quiet "${socket}.socket" || die "${socket}.socket did not start"
+done
+log "  listening on /run/haprion/bmc.sock  (group ${WEB_USER})"
+log "  listening on /run/haprion/bmc-install.sock  (group ${WORKER_USER})"
+
+#
 # Whether Let's Encrypt's HTTP-01 would reach this manager for a name is
 # checked from the interface: the web asks over a socket, group this account,
 # and a root helper writes one test file in the HTTP-01 webroot, fetches it
@@ -333,6 +356,18 @@ done
 systemctl daemon-reload
 systemctl enable --quiet --now haprion-blocklist-refresh.timer
 log "  enabled  haprion-blocklist-refresh.timer (every 15 minutes)"
+
+#
+# B536: root asks every certificate's BMC what it serves, and installs the
+# current certificate where one answers with anything else.
+#
+for kind in service timer; do
+    install_file "/etc/systemd/system/haprion-bmc-sweep.${kind}" root:root 644 \
+        "$(cat "examples/haprion-bmc-sweep.${kind}.example")"
+done
+systemctl daemon-reload
+systemctl enable --quiet --now haprion-bmc-sweep.timer
+log "  enabled  haprion-bmc-sweep.timer (every 15 minutes)"
 
 step "Starting"
 #

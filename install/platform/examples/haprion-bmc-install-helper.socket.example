@@ -1,0 +1,25 @@
+# The socket the worker installs a certificate on its BMC through.
+#
+# Owned by root, connectable by the worker's account. Each connection starts
+# one instance of haprion-bmc-install-helper@.service, which installs one
+# certificate on its BMC and answers how it went.
+#
+# Installed as /etc/systemd/system/haprion-bmc-install-helper.socket, with
+# WORKER_USER rendered by 07-platform-services.
+
+[Unit]
+Description=Socket Haprion installs a certificate on its BMC through
+Documentation=file:///opt/haprion/current
+
+[Socket]
+ListenStream=/run/haprion/bmc-install.sock
+SocketUser=root
+SocketGroup=WORKER_USER
+SocketMode=0660
+Accept=yes
+# One at a time: the installs take one lock, and a BMC restarts for each.
+MaxConnections=1
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

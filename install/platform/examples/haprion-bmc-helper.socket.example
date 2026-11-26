@@ -1,0 +1,26 @@
+# The socket the interface checks and saves a certificate's BMC through.
+#
+# Owned by root, connectable by the web's account. Each connection starts one
+# instance of haprion-bmc-helper@.service, which reads one request - check a
+# BMC, save it as a certificate's target, or remove it - and writes one answer.
+# It cannot install: that is the worker's socket.
+#
+# Installed as /etc/systemd/system/haprion-bmc-helper.socket, with WEB_USER
+# rendered by 07-platform-services.
+
+[Unit]
+Description=Socket the Haprion interface checks and saves a BMC through
+Documentation=file:///opt/haprion/current
+
+[Socket]
+ListenStream=/run/haprion/bmc.sock
+SocketUser=root
+SocketGroup=WEB_USER
+SocketMode=0660
+Accept=yes
+# A person checks one BMC at a time; a few, so a page reading another is not held.
+MaxConnections=4
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

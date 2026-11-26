@@ -413,7 +413,10 @@ class TheListsAreTheSteps(unittest.TestCase):
         ),
         ("11-platform-retention", '"/etc/systemd/system/${timer}.${kind}"'): ("haprion-retention"),
         ("07-platform-services", '"/etc/systemd/system/haprion-blocklist-refresh.${kind}"'): (
-            "ALWAYS_TIMERS=(haprion-blocklist-refresh)"
+            "ALWAYS_TIMERS=(haprion-blocklist-refresh haprion-bmc-sweep)"
+        ),
+        ("07-platform-services", '"/etc/systemd/system/haprion-bmc-sweep.${kind}"'): (
+            "ALWAYS_TIMERS=(haprion-blocklist-refresh haprion-bmc-sweep)"
         ),
         ("13-platform-traffic-collector", '"/etc/systemd/system/${UNIT}.${kind}"'): (
             "haprion-traffic-collector"
@@ -443,6 +446,8 @@ class TheListsAreTheSteps(unittest.TestCase):
             "ndes-server",
             "http01-check",
             "blocklist-check",
+            "bmc",
+            "bmc-install",
         )
         for suffix in ("@.service", ".socket")
     }

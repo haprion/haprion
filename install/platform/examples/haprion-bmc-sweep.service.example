@@ -1,0 +1,41 @@
+[Unit]
+Description=Haprion BMC certificates
+Documentation=file:///opt/haprion/current
+After=network-online.target
+Wants=network-online.target
+# Asks every BMC the certificate registry names what it serves, and installs
+# the current certificate where one answers with anything else. A BMC that does
+# not answer - switched off, a firewall in the way - is no fault: the pass
+# notes when it asked. A BMC serving a certificate nobody confirmed is sent
+# nothing. As root, with the network, writing the registry, the state in
+# /var/lib/haprion/bmc and nothing else.
+
+[Service]
+Type=oneshot
+ExecStart=/opt/haprion/current/bin/haprion-bmc-sweep
+MemoryMax=256M
+MemorySwapMax=0
+# A BMC that does not answer costs 5 s; an install up to eight minutes. A pass
+# that stalls past this is ended and the next timer starts one.
+TimeoutStartSec=30min
+
+NoNewPrivileges=yes
+ProtectSystem=yes
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@obsolete
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

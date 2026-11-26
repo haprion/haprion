@@ -490,6 +490,19 @@ the network. It fetches a list as the form holds it and keeps nothing, or says w
 the lists the timer keeps hold an address. It reads the saved secrets and the kept lists
 and writes nothing. The CLI release must carry `haprion-blocklist-check-helper`.
 
+And the web's way to check and save a certificate's BMC:
+`haprion-bmc-helper.socket` (`/run/haprion/bmc.sock`, group `_haprion-web`) and the
+per-request `haprion-bmc-helper@.service`, root with the network. It opens the account
+the web sealed, signs in to the BMC to say what it serves, and - once the administrator
+confirms that certificate - keeps the sealed account in `/etc/haprion/bmc-accounts` and
+writes the target into the certificate registry. The worker's way to install on it is
+`haprion-bmc-install-helper.socket` (`/run/haprion/bmc-install.sock`, group
+`_haprion-worker`) and `haprion-bmc-install-helper@.service`; the
+`haprion-bmc-sweep.timer` asks every BMC every 15 minutes and installs where one serves
+anything but the current certificate. A BMC that does not answer is no fault. The CLI
+release must carry `haprion-bmc-helper`, `haprion-bmc-install-helper` and
+`haprion-bmc-sweep`.
+
 ## Step 6 — backups that have been read back
 
 `./06-platform-backup` installs a daily dump timer and a weekly restore check for

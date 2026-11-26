@@ -15,8 +15,8 @@ intrusion equal to worker access, which is deploy rights.
 
 | Account | What it is | Root helpers it may reach | Private keys it holds | Database role |
 |---|---|---|---|---|
-| `_haprion-web` | the web interface | eight sockets: probe, name lookup, certificate export, sign-in, NDES servers, HTTP-01 check, blocklist check, block | none stored | `app_web` |
-| `_haprion-worker` | runs the jobs the interface queues | fifteen sudo helpers and five sockets (below) | none | `app_worker` |
+| `_haprion-web` | the web interface | nine sockets: probe, name lookup, certificate export, sign-in, NDES servers, HTTP-01 check, blocklist check, block, BMC | none stored | `app_web` |
+| `_haprion-worker` | runs the jobs the interface queues | fifteen sudo helpers and six sockets (below) | none | `app_worker` |
 | `_haprion-poller` | reads status, metrics and listings in the background | four read-only sudo helpers | none | `app_poller` |
 | `_haprion-collector` | fetches the traffic log from the nodes | none | one read-only key to the nodes' logs | `app_collector` |
 | `_haprion-oidc` | talks to the sign-in provider for the web | is itself the helper behind the sign-in socket | the key that opens the stored client secret | none |
@@ -149,6 +149,12 @@ never hold a transaction open across a CLI command.
 - A path list is root's alone: one file in `/etc/haprion/path-lists`, mode 0600 in a 0700 directory,
   written by its helper from the worker's job. Every publish reads it as root and copies the lists its
   objects name into the version, where the nodes' configuration is made from that copy. Removing one reads each cluster's committed objects, as a publish does, and refuses while one names it.
+- A BMC's account is root's alone: one file per certificate in `/etc/haprion/bmc-accounts`, mode
+  0600 in a 0700 directory, holding the box the web sealed for that certificate and that BMC's address;
+  only the BMC helpers and the BMC timer open it, to sign in to that BMC. Installing a certificate on its
+  BMC reads the key the way an export does and sends it to the BMC alone, over a connection pinned to the
+  certificate the BMC was confirmed with or the one installed. What the timer and the installs did is kept
+  in `/var/lib/haprion/bmc`, root's.
 - The HTTP-01 check makes its directory under the webroot world-readable (0755, its test file 0644) because the web server reads it as its own user and serves it to anyone, the same way the certificate client's webroot plugin does.
 - The traffic log mirror is written by the collector and readable, never writable, by the web.
 - The answers the socket helpers keep for recovery are in `/var/lib/haprion/answers`, root's and
@@ -215,8 +221,8 @@ the caller dies. Once a helper has read its request, it moves that stream aside 
 |---|---|
 | the poller, through sudo | status, inventory, readings, cluster list - read only |
 | the worker, through sudo | deploy, certificate deploy, revert, changes publish, certificate issue, publish, target, import, request, delete, NDES enrollment, DNS profile apply, NDES profile apply, blocklist apply, server state |
-| the worker, through a socket | certificate receivers, backup jobs, node restore, the interface certificate, nodes and clusters |
-| the web, through a socket | health probe, name lookup, certificate export, sign-in, confirming an NDES server from its CA, checking HTTP-01 for a name, testing a blocklist and looking an address up in the kept lists, placing a block for an API token |
+| the worker, through a socket | certificate receivers, backup jobs, node restore, the interface certificate, nodes and clusters, installing a certificate on its BMC |
+| the web, through a socket | health probe, name lookup, certificate export, sign-in, confirming an NDES server from its CA, checking HTTP-01 for a name, testing a blocklist and looking an address up in the kept lists, placing a block for an API token, checking and saving a certificate's BMC |
 
 A helper that writes `/etc` - accounts, sshd, nginx - answers on a socket from a unit of its own
 rather than through sudo: the worker's sandbox keeps `/etc` read-only, and a helper started through

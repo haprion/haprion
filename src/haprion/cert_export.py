@@ -98,20 +98,24 @@ def _read(path: Path) -> bytes:
     return path.read_bytes()
 
 
-def export(
+@dataclass(frozen=True, slots=True)
+class Material:
+    """An exportable certificate's chain and key, checked to belong together."""
+
+    fullchain: bytes
+    privkey: bytes
+    fingerprint: str
+
+
+def material(
     registry: Registry | None,
     certificate_id: str,
-    form: str,
-    password: object = None,
     *,
     live: Path = LETSENCRYPT_LIVE,
     store: Path = IMPORT_STORE,
-) -> Export:
-    """One exportable certificate's key, in the form asked for."""
+) -> Material:
+    """The one read of an exportable entry's key: for a download, and for its BMC (B536)."""
 
-    if form not in FORMATS:
-        raise ExportError("bad_input", f"format must be one of: {', '.join(FORMATS)}")
-    secret = check_password(form, password)
     entry = registry.certificates.get(certificate_id) if registry is not None else None
     if entry is None:
         raise ExportError("not_registered", f"{certificate_id} is not in the registry")
@@ -141,6 +145,25 @@ def export(
         raise ExportError(
             "key_mismatch", "the private key does not belong to the certificate", exit_codes.CONFIG
         )
+    return Material(fullchain, privkey, fingerprint)
+
+
+def export(
+    registry: Registry | None,
+    certificate_id: str,
+    form: str,
+    password: object = None,
+    *,
+    live: Path = LETSENCRYPT_LIVE,
+    store: Path = IMPORT_STORE,
+) -> Export:
+    """One exportable certificate's key, in the form asked for."""
+
+    if form not in FORMATS:
+        raise ExportError("bad_input", f"format must be one of: {', '.join(FORMATS)}")
+    secret = check_password(form, password)
+    read = material(registry, certificate_id, live=live, store=store)
+    fullchain, privkey, fingerprint = read.fullchain, read.privkey, read.fingerprint
 
     if form == "pem-key":
         return Export(

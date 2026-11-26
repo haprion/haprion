@@ -1739,7 +1739,7 @@ Three kinds of path are answered 400 on an object with a refusing path rule, den
   `path-chars:deny`.
 
 When the object's path rules only look, and it has no path limit, these are recorded with `:log` instead.
-Browsers send none of them.
+Browsers send none of them. A request with no path at all, such as `OPTIONS *`, goes on to the backend.
 
 Write a rule's own path decoded: without `%`, `//`, `;`, `.` or `..`, and with no segment ending in a dot.
 Its case does not matter.

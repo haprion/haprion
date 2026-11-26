@@ -3110,6 +3110,7 @@ def _access_path_rules(proxy: Proxy, host: str) -> list[str]:
     dots = _acl_name(proxy.name, "path-dots")
     controls = _acl_name(proxy.name, "path-chars")
     read = _acl_name(proxy.name, "path-read")
+    given = _acl_name(proxy.name, "path-given")
     #
     # A path `url_dec` cannot decode (`%zz`, a last `%`, IIS's `%u002e`) leaves
     # the variable unset, and then no ACL that reads it - nor the dot-segment
@@ -3117,14 +3118,19 @@ def _access_path_rules(proxy: Proxy, host: str) -> list[str]:
     # gone for the request (review 26-11-24, PW01). Such a path is refused as a
     # control character is, in the same mode, and no browser sends one.
     #
+    # A request with no path at all - `OPTIONS *`, `CONNECT host:port` - leaves
+    # it unset too, and has nothing a path rule could match: it goes on, as it
+    # does to an object without one (review 26-11-24, PWA02).
+    #
     lines = [
         f"    http-request set-var(txn.access_path) {ACCESS_PATH_EXPRESSION} if {host}",
+        f"    acl {given} path -m found",
         f"    acl {read} {ACCESS_PATH} -m found",
         f"    acl {dots} path,url_dec -m reg {DOT_SEGMENT}",
         f"    acl {controls} path -m reg -i {CONTROL_CHARACTER}",
     ]
     for condition, name in (
-        (f"{host} !{read}", "path-chars"),
+        (f"{host} {given} !{read}", "path-chars"),
         (f"{host} {dots}", "path-dots"),
         (f"{host} {controls}", "path-chars"),
     ):

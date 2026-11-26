@@ -140,7 +140,8 @@ class TheGenerator(unittest.TestCase):
         self.assertFalse(any("ruleblock" in line for line in lines))
 
     def test_a_path_that_cannot_be_decoded_is_refused_in_every_mode_that_reads_it(self) -> None:
-        # Review 26-11-24, PW01: the variable is unset for such a path.
+        # Review 26-11-24, PW01: the variable is unset for such a path. PWA02:
+        # and for a request with no path, which is not refused.
         for mode, verdict in (("deny", "deny"), ("block", "deny"), ("log", "log")):
             lines = frontend(denied(f"  mode: {mode}\n  lists: [scanners]\n"))
             with self.subTest(mode=mode):
@@ -150,7 +151,20 @@ class TheGenerator(unittest.TestCase):
                         for line in lines
                     )
                 )
-                refused = [line for line in lines if "mgd-shop-host !mgd-shop-path-read" in line]
+                self.assertIn("    acl mgd-shop-path-given path -m found", lines)
+                self.assertEqual(
+                    [line for line in lines if "!mgd-shop-path-read" in line],
+                    [
+                        line
+                        for line in lines
+                        if "mgd-shop-host mgd-shop-path-given !mgd-shop-path-read" in line
+                    ],
+                )
+                refused = [
+                    line
+                    for line in lines
+                    if "mgd-shop-host mgd-shop-path-given !mgd-shop-path-read" in line
+                ]
                 self.assertTrue(any(f"str(path-chars:{verdict})" in line for line in refused))
                 self.assertEqual(
                     any("deny deny_status 400" in line for line in refused), mode != "log"

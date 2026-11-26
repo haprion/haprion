@@ -3019,6 +3019,35 @@ class DeniedPathsAnswerInTheRealHaproxy(unittest.TestCase):
             with self.subTest(target):
                 self.assertEqual(self.ask(target, "log"), (200, "path-chars:log"))
 
+    def test_a_request_without_a_path_goes_on_to_the_backend(self) -> None:
+        # PWA02: `OPTIONS *` and `CONNECT` have no path for a rule to match, and
+        # were answered 400 as a path that cannot be decoded. The test server
+        # answers neither method (501): what matters is that it was asked.
+        for mode in ("deny", "block", "log"):
+            for line in ("OPTIONS * HTTP/1.1", f"CONNECT {mode}.example.com:443 HTTP/1.1"):
+                with self.subTest(mode=mode, line=line):
+                    self.assertEqual(self.ask_raw(line, mode), (501, ""))
+
+    def ask_raw(self, line: str, mode: str) -> tuple[int, str]:
+        """A request line `http.client` would not send as it is, and its status and rule."""
+
+        type(self).visitors += 1
+        visitor = f"192.0.2.{self.visitors % 250 + 1}"
+        request = (
+            f"{line}\r\nHost: {mode}.example.com\r\nX-Forwarded-For: {visitor}\r\n"
+            "Connection: close\r\n\r\n"
+        )
+        with socket.create_connection(("127.0.0.1", self.port), timeout=5) as connection:
+            connection.sendall(request.encode())
+            answer = b""
+            while b"\r\n\r\n" not in answer and (piece := connection.recv(4096)):
+                answer += piece
+        head = answer.split(b"\r\n\r\n", 1)[0].decode("latin-1").split("\r\n")
+        rule = next(
+            (h.split(":", 1)[1].strip() for h in head[1:] if h.lower().startswith("x-rule:")), ""
+        )
+        return int(head[0].split()[1]), rule
+
 
 WAF_ENGINE = Path("/usr/sbin/coraza-spoa")
 WAF_RULES = Path("/usr/share/haprion/crs")

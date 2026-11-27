@@ -345,6 +345,24 @@ class TheBmcRow(unittest.TestCase):
                 )
                 self.assertEqual((item.subject, item.severity), (DEVICE, "critical"))
 
+    def test_the_attention_row_leads_to_the_bmc_and_installs_where_that_can_help(self) -> None:
+        """Sketch 26-11-26, 4: the BMC's page, and *Install now* on the row itself."""
+
+        (failed,) = attention.from_certificates(
+            self.registry(with_bmc("failed", served_sha256=PINNED)), ()
+        )
+        self.assertEqual((failed.link, failed.page), (f"/certificates/{DEVICE}/bmc", "BMC"))
+        self.assertEqual(failed.install, f"/certificates/{DEVICE}/bmc/install")
+        self.assertTrue(failed.message.startswith("Install failed: "))
+        #
+        # An admin's page with writes on: a reader is not sent to a refusal.
+        #
+        self.assertFalse(failed.reader_opens)
+        (untrusted,) = attention.from_certificates(
+            self.registry(with_bmc("untrusted", served_sha256="cd" * 32)), ()
+        )
+        self.assertEqual((untrusted.link, untrusted.install), (f"/certificates/{DEVICE}/bmc", ""))
+
     def test_one_installed_by_hand_reads_as_it_always_did(self) -> None:
         row = self.row(external())
         self.assertIsNone(row.bmc)

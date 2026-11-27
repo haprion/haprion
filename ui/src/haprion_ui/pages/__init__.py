@@ -10,6 +10,7 @@ from haprion_ui.pages import (
     api_tokens,
     backups,
     blocklists,
+    certificate_bmc,
     certificates,
     dashboard,
     first_cluster,
@@ -27,6 +28,7 @@ from haprion_ui.pages import (
 def build_router(config: Config) -> APIRouter:
     router = APIRouter(dependencies=[Depends(hidden_by_a_switch)])
     router.include_router(certificates.build_router(config))
+    router.include_router(certificate_bmc.build_router(config))
     router.include_router(settings.build_router(config))
     router.include_router(blocklists.build_router(config))
     router.include_router(path_lists.build_router(config))

@@ -122,6 +122,19 @@ REFUSED_CALLS: dict[str, list[str]] = {
     "haprion-backup-schedule": [*BAD_CLUSTER, "--time", "03:00"],
     "haprion-cert-delete": ["Bad ID!"],
     "haprion-cert-deploy": [*BAD_CLUSTER],
+    "haprion-cert-bmc check": ["check", "Bad ID!", "--address", "192.0.2.7", "--user", "admin"],
+    "haprion-cert-bmc install": ["install", "Bad ID!"],
+    "haprion-cert-bmc remove": ["remove", "Bad ID!"],
+    "haprion-cert-bmc save": [
+        "save",
+        "Bad ID!",
+        "--address",
+        "192.0.2.7",
+        "--user",
+        "admin",
+        "--sha256",
+        "ab" * 32,
+    ],
     "haprion-cert-renew": ["--ndes-now", "no-such-certificate"],
     "haprion-cert-request": ["--id", "Bad ID!", "--domain", "Bad Name!"],
     "haprion-cert-import": ["--id", "Bad ID!", "--certificate", "/nonexistent.pem"],
@@ -270,6 +283,17 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
         "haprion-cert-receiver secret", "haprion-cert-receiver"
     ),
     "/certificates/receivers/key": Command("haprion-cert-receiver key", "haprion-cert-receiver"),
+    #
+    # A certificate's BMC (B526, B536). The page saves and then installs; the
+    # terminal says the install as a command of its own, each with its contract.
+    #
+    "/certificates/bmc": NotASetting("opens the BMC page of the row ticked"),
+    "/certificates/{certificate_id}/bmc/check": Command("haprion-cert-bmc check", "haprion-bmc"),
+    "/certificates/{certificate_id}/bmc/save": Command("haprion-cert-bmc save", "haprion-bmc"),
+    "/certificates/{certificate_id}/bmc/install": Command(
+        "haprion-cert-bmc install", "haprion-bmc-install"
+    ),
+    "/certificates/{certificate_id}/bmc/remove": Command("haprion-cert-bmc remove", "haprion-bmc"),
     "/settings/blocklists/new": Command("haprion-blocklists apply", "haprion-blocklists-apply"),
     "/settings/blocklists/{name}/edit": Command(
         "haprion-blocklists apply", "haprion-blocklists-apply"

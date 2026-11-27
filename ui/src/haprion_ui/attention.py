@@ -87,6 +87,12 @@ class Item:
     # carries. Part of what an acknowledgement names, with the severity.
     #
     variant: str = ""
+    #
+    # The action the row's decision is (B536): *Install now* for a BMC whose
+    # install failed, posted from the row itself. An admin's, with writes on;
+    # empty for every other row.
+    #
+    install: str = ""
 
     @property
     def page(self) -> str:
@@ -96,6 +102,8 @@ class Item:
         #
         if self.link.startswith("/jobs"):
             return "Events"
+        if self.link.endswith("/bmc"):
+            return "BMC"
         return PAGES[self.kind]
 
     @property
@@ -117,6 +125,11 @@ class Item:
 
         if self.link == "/settings/api-tokens":
             return False
+        #
+        # A certificate's BMC page is an admin's with writes on, as Settings is.
+        #
+        if self.link.startswith("/certificates/") and self.link.endswith("/bmc"):
+            return True
         return self.link == "/settings" or self.link.startswith(
             ("/settings/", "/settings#", "/settings?")
         )
@@ -595,8 +608,21 @@ def from_certificates(
             parts = []
             if _severity(row.tone):
                 parts.append(_expires(row.expiry_label))
+            #
+            # A BMC's install that failed, or a BMC nobody confirmed (B536):
+            # what it said, and its own page, where it is installed again or
+            # confirmed again. *Install now* on the row itself where an install
+            # can help; a BMC that is not trusted is sent nothing.
+            #
+            bmc = getattr(row, "bmc", None)
+            on_bmc = bmc is not None and bool(_severity(state_tone))
             if _severity(state_tone):
-                parts.append(row.state_label)
+                parts.append(
+                    f"{row.state_label}: {row.state_detail}" if on_bmc else row.state_label
+                )
+            link = "/settings" if row.interface else "/certificates?view=registry"
+            if on_bmc:
+                link = f"/certificates/{row.identifier}/bmc"
             items.append(
                 Item(
                     kind="certificate",
@@ -605,7 +631,13 @@ def from_certificates(
                     subject=row.identifier,
                     message=" · ".join(part for part in parts if part),
                     since=None,
-                    link="/settings" if row.interface else "/certificates?view=registry",
+                    link=link,
+                    install=f"{link}/install"
+                    if on_bmc
+                    and bmc is not None
+                    and bmc.status != "untrusted"
+                    and not row.state_active
+                    else "",
                 )
             )
         served = registry.served

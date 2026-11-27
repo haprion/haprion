@@ -224,6 +224,16 @@ ACTIVITY_PHRASES: Mapping[str, Callable[[Mapping[str, Any]], str]] = {
         if detail.get("outcome") == "unknown"
         else f"Removed the NDES server {_text(detail, 'endpoint', '?')}"
     ),
+    "bmc_target_saved": lambda detail: (
+        f"Asked to save the BMC {_text(detail, 'address', '?')} for {_text(detail, 'certificate', '?')}; the service did not answer"
+        if detail.get("outcome") == "unknown"
+        else f"Saved the BMC {_text(detail, 'address', '?')} for {_text(detail, 'certificate', '?')}"
+    ),
+    "bmc_target_removed": lambda detail: (
+        f"Asked to remove the BMC of {_text(detail, 'certificate', '?')}; the service did not answer"
+        if detail.get("outcome") == "unknown"
+        else f"Removed the BMC of {_text(detail, 'certificate', '?')}"
+    ),
     "certificate_download": lambda detail: (
         f"Downloaded {_text(detail, 'certificate', 'a certificate')} without its key"
     ),

@@ -498,6 +498,19 @@ def _catalogue(
         now=moment,
     )
     #
+    # An external certificate the manager installs on a BMC (B526, B536), so
+    # the BMC's row, page and button can be seen without a BMC.
+    #
+    device = _certificate(
+        "bmc-01.demo.example",
+        common_name="bmc-01.demo.example",
+        sans=["bmc-01.demo.example"],
+        days_left=330,
+        lifecycle="static",
+        referenced=False,
+        now=moment,
+    )
+    #
     # The registry block, as the helper carries it beside the catalogue: the
     # same certificates with a source and targets, and the receivers the
     # receivers page lists (B142). Enough rows to see the list's shape, not
@@ -584,6 +597,37 @@ def _catalogue(
                 retired,
                 source={"kind": "import", "lineage": None},
                 distribution=None,
+            ),
+            _registered(
+                device,
+                source={"kind": "import", "lineage": None},
+                targets={"clusters": [], "receivers": []},
+                distribution=None,
+                exportable=True,
+                bmc={
+                    "address": "bmc-01.demo.example",
+                    "port": 443,
+                    "fingerprint_sha256": device["fingerprint_sha256"],
+                    "username": "admin",
+                    "status": "installed",
+                    "checked_at": (moment - timedelta(minutes=4))
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    "answered_at": (moment - timedelta(minutes=4))
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    "served_sha256": device["fingerprint_sha256"],
+                    "attempt": {
+                        "fingerprint_sha256": device["fingerprint_sha256"],
+                        "at": stamp,
+                        "by": "timer",
+                        "outcome": "done",
+                        "code": None,
+                        "message": None,
+                        "seconds": 130.0,
+                        "firmware": "X13SCL-IF 01.09.06",
+                    },
+                },
             ),
         ],
         "receivers": [row["id"] for row in receivers],

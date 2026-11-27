@@ -118,6 +118,16 @@ class BmcView:
     attempt_outcome: str | None = None
     attempt_message: str | None = None
     attempt_at: datetime | None = None
+    #
+    # For the BMC's own page: where it is reached, the account's user, the
+    # certificate the manager trusts it with, and who started the last install
+    # and how long it took.
+    #
+    port: int = 443
+    username: str = ""
+    pinned_sha256: str = ""
+    attempt_by: str | None = None
+    attempt_seconds: float | None = None
 
 
 def bmc_view(entry: Mapping[str, Any]) -> BmcView | None:
@@ -137,6 +147,14 @@ def bmc_view(entry: Mapping[str, Any]) -> BmcView | None:
         attempt_outcome=_text(attempt.get("outcome"), "") or None,
         attempt_message=_text(attempt.get("message"), "") or None,
         attempt_at=_expiry(attempt.get("at")),
+        port=port if isinstance(port := raw.get("port"), int) else 443,
+        username=_text(raw.get("username"), ""),
+        pinned_sha256=_text(raw.get("fingerprint_sha256"), ""),
+        attempt_by=_text(attempt.get("by"), "") or None,
+        attempt_seconds=float(seconds)
+        if isinstance(seconds := attempt.get("seconds"), int | float)
+        and not isinstance(seconds, bool)
+        else None,
     )
 
 

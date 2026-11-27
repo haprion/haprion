@@ -1208,6 +1208,21 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .certificate-export-table th:nth-child(1) { width: 34%; }
 .certificate-export-table th:nth-child(2) { width: auto; }
 .certificate-export-table th:nth-child(3) { width: 140px; }
+/* A certificate's BMC (B526, B536): the fields in a row with Check at their end, the
+ * BMC's answer inset under them, and the fingerprint on one line, as the BMC's own
+ * web page shows it, to be compared there. */
+.bmc-card .bmc-fields { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); align-items: start; }
+.bmc-card .bmc-fields .field > button { align-self: stretch; }
+.bmc-card .bmc-answer { display: grid; gap: 12px; margin: 14px 20px 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.bmc-card .bmc-details { padding: 18px 20px 4px; }
+@media (min-width: 900px) {
+  .bmc-card .bmc-details { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1.5fr); }
+  .bmc-card .bmc-answer .registry-detail-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 2fr); }
+}
+.bmc-card .registry-detail-grid > .registry-detail-wide { grid-column: 1 / -1; }
+.bmc-card .bmc-fingerprint { white-space: nowrap; overflow-wrap: normal; }
+.bmc-card .removal-consequences { margin: 14px 20px 0; }
+.bmc-card .bmc-answer .warning-text { margin: 0; padding: 0; }
 .certificate-export-table td:nth-child(1) strong { overflow-wrap: anywhere; }
 .certificate-export-table td:nth-child(3) { text-align: right; }
 .certificate-export-table form { margin: 0; }

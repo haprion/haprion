@@ -196,6 +196,11 @@
       #}
       {% if feature_on('cert_receivers') %}<button class="secondary-button" type="submit" form="certificate-selection" formaction="/certificates/export" data-export-submit disabled>Export…</button>{% endif %}
       {#
+        The BMC the manager installs an external certificate on (B526, B536),
+        on its own page. Wakes like Export…: one box, an external row.
+      #}
+      {% if feature_on('cert_receivers') %}<button class="secondary-button" type="submit" form="certificate-selection" formaction="/certificates/bmc" data-export-submit disabled>BMC…</button>{% endif %}
+      {#
         A request the CA still holds, given up as `haprion-cert-scep --abandon`
         does it (B388). Wakes at one box, and only on such a row.
       #}

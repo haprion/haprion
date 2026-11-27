@@ -1,0 +1,88 @@
+{% extends "layout.html" %}
+{% from "_back.html" import back_button %}
+{% block title %}BMC for {{ row.identifier }} — Haprion{% endblock %}
+{% block content %}
+{#
+  An external certificate's BMC (B526, B536). Check signs in through root with
+  the account sealed in this request and shows what the BMC serves; the
+  administrator compares the fingerprint with the BMC's own web page and saves.
+  From then on the manager trusts the BMC only while it serves that
+  certificate or the one the manager installed. The account is never shown
+  again; Change… types it anew.
+#}
+<section class="page-heading">
+  <div class="heading-title">{{ back_button(back, 'Certificates') }}<h1>BMC for {{ row.identifier }}</h1><p class="page-lede">Haprion installs this certificate on the BMC after every renewal and checks what the BMC then serves.</p></div>
+  <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+<section class="cluster-card bmc-card">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>BMC</h3></div></div></header>
+{% if mode == 'form' %}
+  <form method="post" action="/certificates/{{ row.identifier }}/bmc/check" class="preview-form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="port" value="{{ values.port }}">
+    <div class="form-grid bmc-fields">
+      <label><span class="field-title">Address</span><input name="address" value="{{ values.address }}" maxlength="253" spellcheck="false" required><small>Name or address the manager reaches the BMC's web interface on, port {{ values.port }}.</small></label>
+      <label><span class="field-title">Redfish user</span><input name="bmc_username" value="{{ values.bmc_username }}" maxlength="64" spellcheck="false" autocomplete="off" required></label>
+      <label><span class="field-title">Password</span><input name="password" type="password" maxlength="256" autocomplete="new-password" required></label>
+      <div class="field"><span class="field-title" aria-hidden="true">&nbsp;</span><button class="secondary-button" type="submit">Check</button></div>
+    </div>
+  </form>
+  <form method="post" action="/certificates/{{ row.identifier }}/bmc/save" class="preview-form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+    {% if checked and sealed %}
+    <input type="hidden" name="address" value="{{ checked.address }}">
+    <input type="hidden" name="port" value="{{ checked.port }}">
+    <input type="hidden" name="fingerprint_sha256" value="{{ checked.served_sha256 }}">
+    <input type="hidden" name="key_id" value="{{ sealed[0] }}">
+    <input type="hidden" name="ciphertext_base64" value="{{ sealed[1] }}">
+    <div class="bmc-answer">
+      <strong>{{ checked.address }} answers with</strong>
+      <div class="registry-detail-grid">
+        <div><strong>Firmware</strong><span>{{ checked.firmware_line }}</span></div>
+        <div><strong>Serves</strong><span>{{ checked.served }}</span></div>
+        <div><strong>Account</strong><span{% if checked.may_upload is false %} class="warning-text"{% endif %}>{{ checked.account_line }}</span></div>
+        <div class="registry-detail-wide"><strong>SHA-256</strong><span class="certificate-fingerprint bmc-fingerprint">{{ served }}</span></div>
+      </div>
+      <label class="check"><input type="checkbox" name="confirmed" value="yes" required{% if checked.may_upload is false %} disabled{% endif %}> This is the BMC: the fingerprint matches the one its web page shows</label>
+    </div>
+    {% endif %}
+    <div class="editor-actions editor-submit">
+      <p class="table-note">Saving installs the certificate now: the BMC restarts and is away for about two minutes.</p>
+      <div class="form-buttons"><a class="secondary-button" href="{{ '/certificates/' ~ row.identifier ~ '/bmc' if bmc else back }}">Cancel</a><button class="secondary-button deploy-button" type="submit"{% if not (checked and sealed) or checked.may_upload is false %} disabled{% endif %}>Save and install</button></div>
+    </div>
+  </form>
+{% else %}
+  <div class="registry-detail-grid bmc-details">
+    <div><strong>Address</strong><span>{{ bmc.address }}{% if bmc.port != 443 %}, port {{ bmc.port }}{% endif %}</span></div>
+    <div><strong>Redfish user</strong><span>{{ bmc.username or '—' }}</span></div>
+    <div><strong>State</strong><span><span class="status-badge status-badge-{{ state_tone }}">{% if state_active %}<span class="badge-spinner" aria-hidden="true"></span>{% endif %}{{ state_label }}</span> {{ state_detail }}</span></div>
+    <div><strong>Last install</strong><span>{{ last_install or 'None yet' }}</span></div>
+    <div class="registry-detail-wide"><strong>Trusted SHA-256</strong><span class="certificate-fingerprint bmc-fingerprint">{{ pinned }}</span></div>
+  </div>
+  {% if mode == 'remove' %}
+  <ul class="removal-consequences">
+    <li>The manager stops installing this certificate on {{ bmc.address }}. The BMC keeps the certificate it serves now.</li>
+    <li>The account is removed from this manager; it stays on the BMC.</li>
+  </ul>
+  <form method="post" action="/certificates/{{ row.identifier }}/bmc/remove" class="editor-actions editor-submit">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <p class="table-note"></p>
+    <div class="form-buttons"><a class="secondary-button" href="/certificates/{{ row.identifier }}/bmc">Cancel</a><button class="danger-button" type="submit">Remove BMC</button></div>
+  </form>
+  {% else %}
+  <form method="post" action="/certificates/{{ row.identifier }}/bmc/install" class="editor-actions editor-submit">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+    <p class="table-note"></p>
+    <div class="form-buttons"><a class="danger-button" href="/certificates/{{ row.identifier }}/bmc?do=remove">Remove…</a><a class="secondary-button" href="/certificates/{{ row.identifier }}/bmc?do=change">Change…</a><button class="secondary-button" type="submit"{% if state_active %} disabled{% endif %}>Install now</button></div>
+  </form>
+  {% endif %}
+{% endif %}
+</section>
+{% endblock %}

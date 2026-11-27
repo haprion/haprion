@@ -155,6 +155,8 @@ def last_install(view: BmcView) -> str:
             parts.append(f"took {duration(view.attempt_seconds)}")
     elif view.attempt_outcome == "unreached":
         parts.append("the BMC did not answer; installs the next time it does")
+    elif view.unreadable:
+        parts.append(f"the BMC could not be read: {view.attempt_message or 'it did not say why'}")
     else:
         parts.append(f"failed: {view.attempt_message or 'the BMC did not say why'}")
     return " · ".join(parts)

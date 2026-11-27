@@ -67,7 +67,7 @@
           {% set bmc = certificate.bmc %}
           <div class="registry-detail-targets"><strong>Installed on</strong>
             <span>{{ bmc.address }} <span class="target-kind">BMC</span>{% if bmc.answered_at %} · {% if bmc.served_current %}serves this certificate{% else %}<span class="warning-text">serves another certificate</span>{% endif %} · {% if bmc.checked_at == bmc.answered_at %}checked {{ bmc.checked_at | shown_at }}{% else %}last answered {{ bmc.answered_at | shown_at }}{% endif %}{% else %} · {% if bmc.checked_at %}has not answered yet{% else %}not asked yet{% endif %}{% endif %}</span>
-            {% if bmc.status == 'failed' and bmc.attempt_message %}<span class="warning-text">Install failed{% if bmc.attempt_at %} {{ bmc.attempt_at | shown_at }}{% endif %}: {{ bmc.attempt_message }}</span>{% endif %}
+            {% if bmc.status == 'failed' and bmc.attempt_message %}<span class="warning-text">{{ 'Could not read the BMC' if bmc.unreadable else 'Install failed' }}{% if bmc.attempt_at %} {{ bmc.attempt_at | shown_at }}{% endif %}: {{ bmc.attempt_message }}</span>{% endif %}
           </div>
           {% endif %}
           {% if not certificate.exportable %}

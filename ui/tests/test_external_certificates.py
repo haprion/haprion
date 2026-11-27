@@ -329,6 +329,21 @@ class TheBmcRow(unittest.TestCase):
             self.row(with_bmc("failed", served_sha256=PINNED, attempt=failed)).state_detail,
         )
 
+    def test_a_bmc_that_could_not_be_read_is_not_said_as_an_install(self) -> None:
+        unread = {
+            "fingerprint_sha256": CURRENT,
+            "at": "2026-11-26T03:10:00Z",
+            "by": "timer",
+            "outcome": "failed",
+            "code": "reading_tls_failed",
+            "message": "bmc01.example.com:443 answered, but TLS failed",
+            "seconds": None,
+            "firmware": None,
+        }
+        row = self.row(with_bmc("failed", served_sha256=PINNED, attempt=unread))
+        self.assertEqual((row.state_label, row.state_tone), ("BMC not readable", "critical"))
+        self.assertIn("TLS failed", row.state_detail)
+
     def test_a_bmc_that_is_off_is_no_attention_however_long(self) -> None:
         for answered in ("2026-11-20T18:40:00Z", "2026-10-01T08:00:00Z", None):
             with self.subTest(answered=answered):

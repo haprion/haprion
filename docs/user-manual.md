@@ -3207,11 +3207,12 @@ certificate has been renewed, the next check installs it. The row's *State* says
 | *Waiting for the BMC* | The certificate is not installed yet, and nothing has failed. The BMC is off, or cannot be reached. It is installed the first time the BMC answers. |
 | *Installing* | An install is running. |
 | *Install failed* | The BMC answered but did not take the certificate. The BMC's own words are on the row. |
+| *BMC not readable* | The BMC answered, but what it serves could not be read, for example because it speaks no TLS 1.2. It clears when the BMC is read again. |
 | *Untrusted BMC* | The BMC serves a certificate nobody confirmed. Nothing is sent to it. |
 | *Not checked yet* | The timer has not asked the BMC yet. |
 
-A BMC that does not answer is never an error, however long it is off. *Install failed* and
-*Untrusted BMC* appear under *Needs attention*. A failed install is not tried again for the same
+A BMC that does not answer is never an error, however long it is off. *Install failed*, *BMC not
+readable* and *Untrusted BMC* appear under *Needs attention*. A failed install is not tried again for the same
 certificate. Fix the cause, then press *Install now*, on the BMC page or on the row under *Needs
 attention*.
 

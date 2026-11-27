@@ -128,6 +128,15 @@ class BmcView:
     pinned_sha256: str = ""
     attempt_by: str | None = None
     attempt_seconds: float | None = None
+    #
+    # The engine's code for the last attempt; `reading_…` is a fault in reading
+    # what the BMC serves, not an install (review 26-11-27).
+    #
+    attempt_code: str | None = None
+
+    @property
+    def unreadable(self) -> bool:
+        return (self.attempt_code or "").startswith("reading_")
 
 
 def bmc_view(entry: Mapping[str, Any]) -> BmcView | None:
@@ -151,6 +160,7 @@ def bmc_view(entry: Mapping[str, Any]) -> BmcView | None:
         username=_text(raw.get("username"), ""),
         pinned_sha256=_text(raw.get("fingerprint_sha256"), ""),
         attempt_by=_text(attempt.get("by"), "") or None,
+        attempt_code=_text(attempt.get("code"), "") or None,
         attempt_seconds=float(seconds)
         if isinstance(seconds := attempt.get("seconds"), int | float)
         and not isinstance(seconds, bool)
@@ -179,6 +189,8 @@ def bmc_state(view: BmcView) -> tuple[str, str, Tone]:
     if view.status == "failed":
         said = view.attempt_message or "the install failed"
         when = f" ({moments.moment(view.attempt_at)})" if view.attempt_at is not None else ""
+        if view.unreadable:
+            return "BMC not readable", f"{said}{when}", "critical"
         return "Install failed", f"{said}{when}", "critical"
     if view.status == "untrusted":
         return (

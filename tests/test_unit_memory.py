@@ -32,6 +32,12 @@ LIMITED = {
     "haprion-blocklist-check-helper@.service.example": ("256M", 90),
     # Two such lists in four clusters, before the deploy it starts (26-11-11).
     "haprion-blocklist-refresh.service.example": ("512M", 145),
+    # A BMC's Check against the test BMC (26-11-27, 31 MB), and an install with
+    # the fake BMC and the test around it (57 MB, an upper bound): the helpers
+    # and the timer's pass run the same code.
+    "haprion-bmc-helper@.service.example": ("256M", 31),
+    "haprion-bmc-install-helper@.service.example": ("256M", 57),
+    "haprion-bmc-sweep.service.example": ("256M", 57),
     **{
         f"haprion-{name}-helper@.service.example": ("256M", 84)
         for name in (

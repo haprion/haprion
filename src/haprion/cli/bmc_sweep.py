@@ -1,4 +1,7 @@
-"""`haprion-bmc-sweep` - the timer's pass over the BMCs (B526, B536).
+"""`haprion-bmc-sweep` - the timer's pass over the BMCs.
+
+usage: sudo haprion-bmc-sweep
+
 
 Asks every BMC the registry names what it serves, and installs the current
 certificate where one answers with anything else (`bmc_targets.sweep`). A BMC
@@ -17,6 +20,7 @@ from haprion import bmc_targets, exit_codes
 from haprion.bmc_targets import TargetError
 from haprion.cert_registry import RegistryError
 from haprion.cli.bmc_helper import root_side
+from haprion.cli.caller import help_asked
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError
 
 
@@ -30,6 +34,9 @@ def main(
     argv = sys.argv[1:] if argv is None else argv
     out: TextIO = output_stream or sys.stdout
     errors: TextIO = error_stream or sys.stderr
+    if help_asked(argv):
+        out.write(__doc__ or "")
+        return exit_codes.OK
     if argv:
         errors.write("usage: haprion-bmc-sweep (no arguments)\n")
         return exit_codes.USAGE

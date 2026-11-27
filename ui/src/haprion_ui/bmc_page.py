@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any
 
 from haprion.config import ConfigError, bmc_target
+from haprion.digits import is_digits
 
 from haprion_ui import moments
 from haprion_ui.certificates import BmcView
@@ -65,7 +66,7 @@ def port_of(value: str) -> int:
 
     if not value:
         return DEFAULT_PORT
-    if not value.isdigit() or not 1 <= int(value) <= 65535:
+    if not is_digits(value) or not 1 <= int(value) <= 65535:
         raise BmcProblem("The port was not read.")
     return int(value)
 

@@ -76,6 +76,7 @@ and HTTP-01.
 | manager | `location.ipfire.org` | once a day, for countries in access rules; without it the database ages but keeps working |
 | manager | `api.github.com` | once a day, only when *Update check* is on |
 | manager | your NDES server, identity provider and certificate receivers | when you use them |
+| manager | each BMC it installs a certificate on, HTTPS (443 unless the BMC uses another port) | when you use it ([user manual](user-manual.md#installing-on-a-supermicro-bmc)) |
 | nodes | your log receivers | when you send the traffic log or syslog on |
 
 Haprion itself reaches nothing else; the system's own DNS and time servers are not listed. Without the repositories, install from a release's files instead, as under

@@ -50,6 +50,7 @@ names used below, that is a bug in the software, not in this guide.
   - [Importing a certificate](#importing-a-certificate)
   - [Enrolling and renewing through NDES](#enrolling-and-renewing-through-ndes)
   - [Certificates installed by hand](#certificates-installed-by-hand)
+  - [Installing on a Supermicro BMC](#installing-on-a-supermicro-bmc)
   - [Registering a receiver](#registering-a-receiver)
 - [Nodes and clusters](#nodes-and-clusters)
   - [Adding and removing a node](#adding-and-removing-a-node)
@@ -3135,7 +3136,8 @@ The registry marks the entry `exportable: true`. The mark is set when the entry 
 changes. An exportable entry can never be given a target: *Publish to…* refuses it. So a certificate
 HAProxy or a receiver carries is never one whose key can be downloaded. Renewal works as for every
 other certificate from the same source - the renewal timer or the NDES renewal - and keeps the mark.
-Installing the renewed certificate on the device is up to you.
+Installing the renewed certificate on the device is up to you, except on a Supermicro BMC, where the
+manager can do it ([Installing on a Supermicro BMC](#installing-on-a-supermicro-bmc)).
 
 **Taking it out.** Tick the row and press *Export…*. It is an admin's, and wakes for one such row and
 no other. The page offers two zip files, one click each:
@@ -3166,6 +3168,90 @@ zip. Root at the terminal can ask the helper directly, with the same request doc
 
 Not every device can take a key at all. HPE iLO makes its own key and asks for its CSR to be signed;
 the manager does not sign an uploaded request - see [What it does not do](#what-it-does-not-do).
+
+### Installing on a Supermicro BMC
+
+A BMC's certificate is easy to forget. It is renewed on the manager, and the BMC goes on serving the old
+one until somebody uploads the new one by hand. For a Supermicro BMC the manager can do that itself: it
+installs the certificate after every renewal and checks what the BMC then serves. It uses Supermicro's
+own upload over Redfish, the BMC's management API.
+
+**What the BMC needs.**
+
+- **A Redfish account with the role Administrator.** Make a user on the BMC for the manager alone, with
+  the account type *Redfish*; no other type is needed. The role *Operator* may sign in but may not upload
+  a certificate or restart the BMC.
+- **Its HTTPS port open from the manager**, 443 unless the BMC uses another. A firewall in between is the
+  usual reason a BMC cannot be reached. *Check* shows it at once.
+- **An external certificate for it**, made as under
+  [Certificates installed by hand](#certificates-installed-by-hand). A certificate has at most one BMC.
+
+**Adding the BMC.** Tick the certificate in the registry and press *BMC…*. Enter the BMC's name or
+address, the Redfish user and its password, and press *Check*. The manager signs in and shows:
+
+- the firmware;
+- the certificate the BMC serves now, with its SHA-256 fingerprint;
+- whether the account may upload a certificate.
+
+Compare the fingerprint with the one your browser shows for the BMC's web page, in its certificate
+viewer. This is how you know the manager is talking to your BMC and not to something in between. If it
+matches, tick the box and press *Save and install*. The BMC restarts and is away for about two minutes.
+Meanwhile the row says *Installing*.
+
+**After that, it runs by itself.** A timer asks every BMC every 15 minutes what it serves. When the
+certificate has been renewed, the next check installs it. The row's *State* says how it stands:
+
+| State | Meaning |
+|---|---|
+| *Installed* | The BMC serves this certificate. If it is switched off, the row says when it last answered. |
+| *Waiting for the BMC* | The certificate is not installed yet, and nothing has failed. The BMC is off, or cannot be reached. It is installed the first time the BMC answers. |
+| *Installing* | An install is running. |
+| *Install failed* | The BMC answered but did not take the certificate. The BMC's own words are on the row. |
+| *Untrusted BMC* | The BMC serves a certificate nobody confirmed. Nothing is sent to it. |
+| *Not checked yet* | The timer has not asked the BMC yet. |
+
+A BMC that does not answer is never an error, however long it is off. *Install failed* and
+*Untrusted BMC* appear under *Needs attention*. A failed install is not tried again for the same
+certificate. Fix the cause, then press *Install now*, on the BMC page or on the row under *Needs
+attention*.
+
+**Which BMC the manager trusts.** It trusts the BMC only while it serves the certificate you confirmed,
+or one the manager installed itself. After each install it trusts the new certificate instead. A BMC
+that serves anything else is *Untrusted BMC*: somebody replaced its certificate, or the address now
+leads to another device. Check what happened, then confirm it again with *Change…*.
+
+**Changing or removing it.** On the BMC page, *Change…* takes a new address or account. You type the
+password again, and the BMC is checked and confirmed as when it was added. *Remove…* stops the
+installs. The BMC keeps the certificate it serves, and the account is removed from the manager.
+
+**How the account is kept.** The password is encrypted in the browser's request, against the
+installation's public key ([The DNS profile key pair](#the-dns-profile-key-pair)), and is never shown
+again. Only root can decrypt it. The web reaches the BMC through `haprion-bmc-helper` on
+`/run/haprion/bmc.sock`, because the web service itself has no network. The worker installs through
+`haprion-bmc-install-helper` on `/run/haprion/bmc-install.sock`, and `haprion-bmc-sweep.timer` runs the
+15-minute check. Each account is a root-only file in `/etc/haprion/bmc-accounts`. The timer keeps what
+it saw in `/var/lib/haprion/bmc/state.json`.
+
+**From the command line.** The same steps, as root. The password is read from standard input: typed at a
+prompt, or piped. It is never an argument.
+
+```bash
+sudo haprion-cert-bmc check <certificate> --address <bmc> --user <user>
+sudo haprion-cert-bmc save <certificate> --address <bmc> --user <user> --sha256 <fingerprint>
+sudo haprion-cert-bmc install <certificate>
+sudo haprion-cert-bmc remove <certificate>
+```
+
+`save` takes the fingerprint `check` printed, with or without colons, and installs at once as the page
+does. Add `--port` for a BMC that is not on 443, and `--json` for a script.
+
+**When something is wrong.** The row and *Needs attention* carry the BMC's own words. Behind them:
+
+```bash
+journalctl -u haprion-bmc-sweep.service              # the 15-minute check and its installs
+journalctl -u 'haprion-bmc-helper@*'                 # Check, Save and Remove from the web
+journalctl -u 'haprion-bmc-install-helper@*'         # Install now, and the install after Save
+```
 
 ### Registering a receiver
 
@@ -6162,6 +6248,9 @@ in the section linked.
 - **The update check does not go through a proxy.** A manager that reaches the internet only through one
   cannot use it; its row says GitHub has not answered
   ([Features and advanced configuration](#features-and-advanced-configuration)).
+- **Only a Supermicro BMC is installed on.** The manager uses Supermicro's own upload. Redfish's standard
+  way to replace a certificate is not used, so another maker's BMC gets its certificate by hand, through
+  [Export…](#certificates-installed-by-hand).
 - **A signing request made elsewhere is not signed here.** A device that makes its own key and takes only a
   certificate for its own CSR - HPE iLO, for one - gets it from the CA directly. For an internal name, the
   Microsoft CA's own web enrollment signs an uploaded CSR. Every other device takes an
@@ -7533,7 +7622,9 @@ the installed engine refuses a key it does not know.
    `ndes.profiles.private_keys` too if the `ndes` block lists keys of its own.
 2. Point `ui.toml` at the new public key, and restart the web service.
 3. Re-enter each profile, so it is encrypted with the new key. A profile encrypted with a key the policy no
-   longer lists cannot be used until it is re-entered.
+   longer lists cannot be used until it is re-entered. The same holds for each BMC's account: open the
+   BMC page, press *Change…* and enter the password again. Until then, the BMC's installs fail with
+   *Install failed*.
 4. Remove the old pair last.
 
 The private key file is part of the host's disaster-recovery material, like the SSH keys in
@@ -9596,6 +9687,7 @@ reaches a helper over a local socket instead:
 | `/run/haprion/resolve.sock` | a temporary account | looking up the names of DNS servers |
 | `/run/haprion/ndes-server.sock` | root | confirming an NDES server from its CA, and writing it into the runtime policy |
 | `/run/haprion/http01-check.sock` | root | *Check HTTP-01*: a test file written in the webroot, fetched over the name, removed again |
+| `/run/haprion/bmc.sock` | root | a certificate's BMC: *Check*, and saving or removing it with its sealed account |
 | `/run/haprion/blocklist-check.sock` | root | *Test* and *Check address* on *Blocklists*: a list fetched once and kept nowhere, or an address looked up in the kept lists |
 
 The probe shows why it works this way. A health check needs root, because the probe identity's key

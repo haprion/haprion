@@ -41,6 +41,7 @@ from haprion.cert_export import ExportError, material
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haprion.cert_lock import DEFAULT_LOCK_PATH
 from haprion.config import (
+    BMC_USERNAME_MAX,
     CERTIFICATE_ID,
     BmcTarget,
     Registry,
@@ -60,7 +61,10 @@ STATE_DIRECTORY = Path("/var/lib/haprion/bmc")
 STATE_FILE = "state.json"
 LOCK_FILE = "install.lock"
 SCHEMA_VERSION = 1
-USERNAME_MAX = 64
+#
+# The registry keeps the user in the clear for the page; one rule for both.
+#
+USERNAME_MAX = BMC_USERNAME_MAX
 PASSWORD_MAX = 256
 MAX_CIPHERTEXT = 4096
 MAX_FILE = 16384

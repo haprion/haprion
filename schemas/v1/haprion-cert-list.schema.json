@@ -171,13 +171,14 @@
           "const": true
         },
         "bmc": {
-          "description": "Additive (B526, B536): on an exportable entry the manager installs on a BMC itself. The address and port it reaches the BMC's HTTPS on, and the fingerprint the BMC served when the target was confirmed. What the BMC serves now is the install timer's reading, not this listing's.",
+          "description": "Additive (B526, B536): on an exportable entry the manager installs on a BMC itself. The address and port it reaches the BMC's HTTPS on, the Redfish user, and the fingerprint the BMC served when the target was confirmed. What the BMC serves now is the install timer's reading, not this listing's.",
           "type": "object",
-          "required": ["address", "port", "fingerprint_sha256"],
+          "required": ["address", "port", "fingerprint_sha256", "username"],
           "properties": {
             "address": { "type": "string", "minLength": 1, "maxLength": 253 },
             "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
             "fingerprint_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "username": { "description": "The Redfish account's user, for the page; the account itself is sealed in root's file.", "type": "string", "minLength": 1, "maxLength": 64 },
             "status": {
               "description": "The timer's reading (B536): installed; waiting - not seen serving it and nothing failed (off, behind a firewall, not reached yet), never a fault; failed; untrusted - it serves a certificate nobody confirmed; unknown - never asked.",
               "enum": ["installed", "waiting", "failed", "untrusted", "unknown"]

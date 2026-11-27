@@ -617,6 +617,7 @@ def registry_result(
                         "address": entry.bmc.address,
                         "port": entry.bmc.port,
                         "fingerprint_sha256": entry.bmc.fingerprint_sha256,
+                        "username": entry.bmc.username,
                     }
                 }
                 if entry.bmc is not None

@@ -554,15 +554,19 @@ class BmcTarget:
 
     `fingerprint_sha256` is the certificate the BMC served when the target was
     confirmed: the manager trusts the BMC when it serves that one or the
-    certificate the manager installed, and no other.
+    certificate the manager installed, and no other. `username` is the Redfish
+    account's user, kept in the clear for the page to say which account the
+    manager signs in with; the account itself is sealed, in root's file.
     """
 
     address: str
     fingerprint_sha256: str
+    username: str
     port: int = 443
 
 
 BMC_FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
+BMC_USERNAME_MAX = 64
 
 
 @dataclass(frozen=True, slots=True)
@@ -1666,7 +1670,7 @@ def bmc_target(value: Any, location: str) -> BmcTarget | None:
     if value is None:
         return None
     raw = _mapping(value, location)
-    _only_keys(raw, {"address", "port", "fingerprint_sha256"}, location)
+    _only_keys(raw, {"address", "port", "fingerprint_sha256", "username"}, location)
     address = _host(_required_string(raw, "address", location), f"{location}.address")
     port = raw.get("port", 443)
     if type(port) is not int or not 1 <= port <= 65535:
@@ -1676,7 +1680,18 @@ def bmc_target(value: Any, location: str) -> BmcTarget | None:
         raise ConfigError(
             f"{location}.fingerprint_sha256 must be 64 lowercase hexadecimal characters"
         )
-    return BmcTarget(address=address, fingerprint_sha256=fingerprint, port=port)
+    username = raw.get("username")
+    if (
+        not isinstance(username, str)
+        or not 1 <= len(username) <= BMC_USERNAME_MAX
+        or not username.isprintable()
+        or username != username.strip()
+    ):
+        raise ConfigError(
+            f"{location}.username must be 1-{BMC_USERNAME_MAX} printable characters "
+            "with no spaces at its ends"
+        )
+    return BmcTarget(address=address, fingerprint_sha256=fingerprint, username=username, port=port)
 
 
 def _one_of(

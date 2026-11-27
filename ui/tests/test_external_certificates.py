@@ -264,6 +264,7 @@ def with_bmc(status: str, **state: Any) -> dict[str, Any]:
             "address": DEVICE,
             "port": 443,
             "fingerprint_sha256": PINNED,
+            "username": "admin",
             "status": status,
             "checked_at": "2026-11-26T03:15:00Z",
             "answered_at": "2026-11-26T03:15:00Z",

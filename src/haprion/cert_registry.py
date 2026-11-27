@@ -517,6 +517,7 @@ def written_entry(
             "address": bmc.address,
             **({"port": bmc.port} if bmc.port != 443 else {}),
             "fingerprint_sha256": bmc.fingerprint_sha256,
+            "username": bmc.username,
         }
     return {"source": entry.pop("source"), **entry}
 

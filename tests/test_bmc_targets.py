@@ -58,7 +58,9 @@ class TargetCase(ExportableFixture):
         cert_registry.set_bmc(
             self.root / "certificates.yaml",
             certificate_id=DEVICE,
-            target=BmcTarget(address=LOCAL, port=self.bmc.port, fingerprint_sha256=pinned),
+            target=BmcTarget(
+                address=LOCAL, port=self.bmc.port, fingerprint_sha256=pinned, username="admin"
+            ),
             runtime=runtime,
             require_secure=False,
             lock_path=self.lock,

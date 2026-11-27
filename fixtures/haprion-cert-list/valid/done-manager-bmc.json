@@ -38,6 +38,7 @@
             "address": "bmc-01.example.net",
             "port": 443,
             "fingerprint_sha256": "abababababababababababababababababababababababababababababababab",
+            "username": "admin",
             "status": "failed",
             "checked_at": "2026-11-26T03:15:00Z",
             "answered_at": "2026-11-26T03:15:00Z",

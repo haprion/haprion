@@ -107,13 +107,14 @@
       "additionalProperties": false
     },
     "saved": {
-      "description": "save: the target in the registry with the fingerprint that was confirmed, and the account kept for root.",
+      "description": "save: the target in the registry with the fingerprint that was confirmed and the user root opened from the sealed account, and the account kept for root.",
       "type": "object",
       "required": [
         "id",
         "address",
         "port",
-        "fingerprint_sha256"
+        "fingerprint_sha256",
+        "username"
       ],
       "properties": {
         "id": {
@@ -133,6 +134,11 @@
         "fingerprint_sha256": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
+        },
+        "username": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
         }
       },
       "additionalProperties": false

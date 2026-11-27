@@ -125,8 +125,12 @@ def _certificate(parameters: dict[str, Any]) -> str:
     return certificate_id
 
 
-def _target(parameters: dict[str, Any], fingerprint: str) -> BmcTarget:
-    """The address and port as the registry holds them, checked by the registry's own reader."""
+def _target(parameters: dict[str, Any], fingerprint: str, username: str) -> BmcTarget:
+    """The address and port as the registry holds them, checked by the registry's own reader.
+
+    The user is the one root opened from the sealed account, never a field the
+    web sends beside it: what the page says is the account that signs in.
+    """
 
     try:
         target = bmc_target(
@@ -134,6 +138,7 @@ def _target(parameters: dict[str, Any], fingerprint: str) -> BmcTarget:
                 "address": parameters.get("address"),
                 "port": parameters.get("port", 443),
                 "fingerprint_sha256": fingerprint,
+                "username": username,
             },
             "parameters",
         )
@@ -196,7 +201,7 @@ def perform(parameters: dict[str, Any], root: Root) -> dict[str, Any]:
         return {"id": certificate_id, "removed": True}
 
     key_id, ciphertext = _account(parameters)
-    probe = _target(parameters, "0" * 64)
+    probe = _target(parameters, "0" * 64, "-")
     username, password = bmc_targets.open_account(
         root.private_keys, key_id, ciphertext, certificate_id=certificate_id, address=probe.address
     )
@@ -217,7 +222,7 @@ def perform(parameters: dict[str, Any], root: Root) -> dict[str, Any]:
     # CA is, review 2026-10-28, U02), and the account has to be let in.
     #
     confirmed = _string(parameters, "fingerprint_sha256")
-    target = _target(parameters, confirmed)
+    target = _target(parameters, confirmed, username)
     checked = bmc_redfish.check(target.address, target.port, username=username, password=password)
     if checked.served.fingerprint_sha256 != confirmed:
         raise TargetError(
@@ -240,6 +245,7 @@ def perform(parameters: dict[str, Any], root: Root) -> dict[str, Any]:
         "address": target.address,
         "port": target.port,
         "fingerprint_sha256": target.fingerprint_sha256,
+        "username": target.username,
     }
 
 

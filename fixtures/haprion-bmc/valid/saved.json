@@ -11,6 +11,7 @@
     "id": "bmc-01.example.net",
     "address": "192.0.2.7",
     "port": 443,
-    "fingerprint_sha256": "abababababababababababababababababababababababababababababababab"
+    "fingerprint_sha256": "abababababababababababababababababababababababababababababababab",
+    "username": "admin"
   }
 }

@@ -114,7 +114,7 @@ class TheRegistryHoldsTheMark(ExportableFixture):
 
 
 PINNED = "ab" * 32
-BMC = {"address": "bmc01.example", "fingerprint_sha256": PINNED}
+BMC = {"address": "bmc01.example", "fingerprint_sha256": PINNED, "username": "admin"}
 
 
 class ABmcTarget(ExportableFixture):
@@ -129,7 +129,8 @@ class ABmcTarget(ExportableFixture):
         self.assertIsNotNone(target)
         assert target is not None
         self.assertEqual(
-            (target.address, target.port, target.fingerprint_sha256), ("bmc01.example", 443, PINNED)
+            (target.address, target.port, target.fingerprint_sha256, target.username),
+            ("bmc01.example", 443, PINNED, "admin"),
         )
         self.write({"source": {"kind": "import"}, "exportable": True, "bmc": {**BMC, "port": 8443}})
         self.assertEqual(self.registry().certificates[DEVICE].bmc.port, 8443)
@@ -168,6 +169,22 @@ class ABmcTarget(ExportableFixture):
             (
                 {"source": {"kind": "import"}, "exportable": True, "bmc": {"address": "x.example"}},
                 "fingerprint_sha256",
+            ),
+            (
+                {
+                    "source": {"kind": "import"},
+                    "exportable": True,
+                    "bmc": {k: v for k, v in BMC.items() if k != "username"},
+                },
+                "username",
+            ),
+            (
+                {
+                    "source": {"kind": "import"},
+                    "exportable": True,
+                    "bmc": {**BMC, "username": " admin"},
+                },
+                "username",
             ),
         ):
             with self.subTest(entry=entry):
@@ -214,12 +231,23 @@ class ABmcTarget(ExportableFixture):
                 lock_path=self.lock,
             )
 
-        set_bmc(DEVICE, BmcTarget(address="bmc01.example", fingerprint_sha256=PINNED))
+        set_bmc(
+            DEVICE,
+            BmcTarget(address="bmc01.example", fingerprint_sha256=PINNED, username="admin"),
+        )
         self.assertEqual(self.registered()[DEVICE]["bmc"], BMC)
-        set_bmc(DEVICE, BmcTarget(address="192.0.2.7", fingerprint_sha256=PINNED, port=8443))
+        set_bmc(
+            DEVICE,
+            BmcTarget(address="192.0.2.7", fingerprint_sha256=PINNED, username="admin", port=8443),
+        )
         self.assertEqual(
             self.registered()[DEVICE]["bmc"],
-            {"address": "192.0.2.7", "port": 8443, "fingerprint_sha256": PINNED},
+            {
+                "address": "192.0.2.7",
+                "port": 8443,
+                "fingerprint_sha256": PINNED,
+                "username": "admin",
+            },
         )
         set_bmc(DEVICE, None)
         self.assertEqual(
@@ -235,7 +263,8 @@ class ABmcTarget(ExportableFixture):
                 self.assertRaises(cert_registry.RegistryError) as refused,
             ):
                 set_bmc(
-                    certificate_id, BmcTarget(address="bmc01.example", fingerprint_sha256=PINNED)
+                    certificate_id,
+                    BmcTarget(address="bmc01.example", fingerprint_sha256=PINNED, username="admin"),
                 )
             self.assertEqual(refused.exception.code, code)
 

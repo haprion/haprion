@@ -6,12 +6,14 @@ import base64
 import io
 import json
 import uuid
+from pathlib import Path
 from typing import Any
+from unittest import mock
 
-from haprion import bmc_targets, exit_codes
+from haprion import bmc_socket, bmc_targets, exit_codes, helper_socket
 from haprion.cli import bmc_helper
 from tests.contract_schema import assert_contract
-from tests.test_bmc_redfish import PASSWORD, WRONG
+from tests.test_bmc_redfish import PASSWORD, USER, WRONG
 from tests.test_bmc_targets import LOCAL, TargetCase
 from tests.test_cert_export import DEVICE
 
@@ -73,6 +75,11 @@ class TheWebsHelper(HelperCase):
         self.assertEqual(code, 0)
         self.assertEqual(answer["result"]["fingerprint_sha256"], self.old)
         self.assertEqual(self.pinned(), self.old)
+        #
+        # The user the page shows is the one root opened from the box.
+        #
+        self.assertEqual(answer["result"]["username"], USER)
+        self.assertEqual(self.registry().certificates[DEVICE].bmc.username, USER)
         self.assertEqual(
             bmc_targets.read_account(
                 DEVICE, directory=self.root / "accounts", require_secure=False
@@ -189,3 +196,92 @@ class TheWorkersHelper(HelperCase):
         code, answer, _journal = self.ask("bmc_install", {"id": DEVICE, "by": "timer"})
         self.assertNotEqual(code, 0)
         self.assertEqual(answer["error"]["code"], "bad_input")
+
+
+class TheWebsClient(HelperCase):
+    """`bmc_socket`: what the web sends over `bmc.sock`, and how it says what came back."""
+
+    def through_the_helper(self) -> Any:
+        """`helper_socket.ask` answered by the helper itself, as the socket unit would."""
+
+        def answer(request: dict[str, Any], **_options: Any) -> bytes:
+            out = io.StringIO()
+            bmc_helper.main(
+                [],
+                input_stream=io.BytesIO(json.dumps(request).encode()),
+                output_stream=out,
+                error_stream=io.StringIO(),
+                require_root=False,
+                require_secure=False,
+                root=self.root_side(),
+            )
+            return out.getvalue().encode()
+
+        return mock.patch.object(helper_socket, "ask", side_effect=answer)
+
+    def test_check_save_and_remove_as_the_web_asks_them(self) -> None:
+        box = self.sealed()
+        with self.through_the_helper():
+            bmc_socket.ask("remove", DEVICE)
+            checked = bmc_socket.ask(
+                "check",
+                DEVICE,
+                address=LOCAL,
+                port=self.bmc.port,
+                key_id=self.public.key_id,
+                ciphertext=box,
+            )
+            saved = bmc_socket.ask(
+                "save",
+                DEVICE,
+                address=LOCAL,
+                port=self.bmc.port,
+                fingerprint_sha256=checked["served_sha256"],
+                key_id=self.public.key_id,
+                ciphertext=box,
+            )
+            self.assertEqual((saved["fingerprint_sha256"], saved["username"]), (self.old, USER))
+            with self.assertRaises(bmc_socket.BmcAskError) as refused:
+                bmc_socket.ask(
+                    "save",
+                    DEVICE,
+                    address=LOCAL,
+                    port=self.bmc.port,
+                    fingerprint_sha256="0" * 64,
+                    key_id=self.public.key_id,
+                    ciphertext=box,
+                )
+            self.assertEqual(refused.exception.code, "expected_target_changed")
+            self.assertEqual(bmc_socket.ask("remove", DEVICE), {"id": DEVICE, "removed": True})
+
+    def test_a_service_asked_and_then_silent_is_told_from_one_never_asked(self) -> None:
+        for error, code in (
+            (helper_socket.HelperUnavailable("not running"), "unavailable"),
+            (helper_socket.HelperBusy("busy"), "unavailable"),
+            (helper_socket.HelperSilent("did not answer"), "unanswered"),
+        ):
+            with (
+                self.subTest(error=type(error).__name__),
+                mock.patch.object(helper_socket, "ask", side_effect=error),
+                self.assertRaises(bmc_socket.BmcAskError) as caught,
+            ):
+                bmc_socket.ask("remove", DEVICE)
+            self.assertEqual(caught.exception.code, code)
+
+    def test_an_answer_about_another_certificate_is_no_answer(self) -> None:
+        document = {"outcome": "done", "result": {"id": "other.example", "removed": True}}
+        with (
+            mock.patch.object(helper_socket, "ask", return_value=json.dumps(document).encode()),
+            self.assertRaises(bmc_socket.BmcAskError) as caught,
+        ):
+            bmc_socket.ask("remove", DEVICE)
+        self.assertEqual(caught.exception.code, "unavailable")
+
+    def test_systemd_ends_the_helper_before_the_web_stops_waiting(self) -> None:
+        unit = (
+            Path(__file__).resolve().parents[1]
+            / "install/platform/examples/haprion-bmc-helper@.service.example"
+        ).read_text()
+        self.assertIn("Type=exec", unit)
+        seconds = int(unit.split("\nRuntimeMaxSec=", 1)[1].split("\n", 1)[0])
+        self.assertLess(seconds, bmc_socket.TIMEOUT_SECONDS)

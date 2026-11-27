@@ -4820,6 +4820,32 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
             (3, 3, b"c" * 64),
         )
 
+    def test_a_bmc_install_is_queued_with_no_cluster(self) -> None:
+        """B526, B536, 0126: the web queues *Install now*; a BMC is the manager's, never a cluster's."""
+
+        def clear() -> None:
+            with self.connection.cursor() as cursor:
+                cursor.execute("delete from job")
+            self.connection.commit()
+
+        self.addCleanup(clear)
+        payload = {"id": "bmc-01.example.net", "by": "install_now"}
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as web:
+            job = db.queue_job(
+                web, operation="bmc_install", cluster=None, payload=payload, idempotency_key=uuid4()
+            )
+            web.commit()
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                db.queue_job(
+                    web,
+                    operation="bmc_install",
+                    cluster="alpha",
+                    payload=payload,
+                    idempotency_key=uuid4(),
+                )
+            web.rollback()
+        self.assertEqual((job.operation, job.cluster), ("bmc_install", None))
+
     def test_a_path_list_is_saved_by_the_web_and_removed_by_the_worker(self) -> None:
         """B532, 0125: insert, the next revision fenced on the one seen, the job, the worker's read and delete."""
 
@@ -12078,7 +12104,10 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
 
         shutil.rmtree(self.directory / "run", ignore_errors=True)
 
-    def restored_from(self, revision: str, *, grants_differ: str) -> None:
+    def restored_from(self, revision: str, *, grants_differ: str | None) -> None:
+        """`grants_differ` says why the revision's grants are not the head's; None for a
+        head that grants nothing new, whose test then proves what it does change."""
+
         self.alembic("upgrade", revision)
         with self.scratch() as connection:
             connection.execute(
@@ -12091,7 +12120,8 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
                 " values ('job', 'alpha', 'job 7', 'operator')"
             )
             connection.commit()
-        self.assertNotEqual(self.granted(), self.expected, grants_differ)
+        if grants_differ is not None:
+            self.assertNotEqual(self.granted(), self.expected, grants_differ)
         dump = self.directory / "before-the-head.dump"
         subprocess.run(  # noqa: S603 - this cluster's pg_dump, fixed arguments
             [f"{self.bindir}/pg_dump", "-h", self.socket, "-U", self.role, "-d", self.NAME,
@@ -12316,6 +12346,17 @@ class ADumpFromBeforeTheHead(unittest.TestCase):
 
     def test_a_dump_at_0124_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
         self.restored_from("0124", grants_differ="0124 has no path_list to grant on")
+
+    def test_a_dump_at_0125_restored_under_the_head_is_migrated_proved_and_held(self) -> None:
+        # 0126 grants nothing: it lets the queue take `bmc_install`, with no cluster.
+        self.restored_from("0125", grants_differ=None)
+        with self.scratch() as connection:
+            connection.execute(
+                "insert into job (operation, cluster, payload, idempotency_key)"
+                " values ('bmc_install', null, '{}', %s)",
+                (uuid4(),),
+            )
+            connection.rollback()
 
 
 class EveryRevisionADumpCanBeAtIsRestored(unittest.TestCase):

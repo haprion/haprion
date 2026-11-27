@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -57,6 +58,21 @@ PARAMETERS = frozenset(
 INSTALL_PARAMETERS = frozenset({"id", "by"})
 ACTIONS = ("check", "save", "remove")
 INSTALLED_BY = ("install_now", "save")
+
+
+def build_install_request(request_id: str, *, certificate_id: str, by: str) -> str:
+    """The exact bounded request the worker sends for an install. Null cluster, by contract."""
+
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "operation": INSTALL_OPERATION,
+            "cluster": None,
+            "request_id": request_id,
+            "parameters": {"id": certificate_id, "by": by},
+        },
+        separators=(",", ":"),
+    )
 
 
 def root_side(policy_path: Path, *, require_secure: bool = True) -> Root:

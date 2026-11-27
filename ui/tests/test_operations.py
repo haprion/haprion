@@ -34,6 +34,8 @@ from haprion.candidate_validation import CLIENT_SECONDS, RUNTIME_SECONDS
 from haprion.cli import (
     backup_job_ask,
     backup_job_helper,
+    bmc_helper,
+    bmc_install_ask,
     cert_publish,
     cert_receiver_ask,
     cert_receiver_helper,
@@ -985,6 +987,66 @@ class TheReceiverHelperIsNotReachedThroughSudo(unittest.TestCase):
         self.assertNotIn(cert_receiver_helper.HELPER, granted)
 
 
+class InstallingOnABmc(unittest.TestCase):
+    """B526, B536: *Install now* and a save's install go over the worker's socket."""
+
+    def prepared(self, **payload: object) -> operations.Prepared:
+        return operations.prepare(
+            operation="bmc_install", cluster=None, request_id=uuid4(), payload=payload
+        )
+
+    def test_the_certificate_and_who_asked_go_to_the_socket(self) -> None:
+        for by in ("install_now", "save"):
+            with self.subTest(by=by):
+                prepared = self.prepared(id="bmc-01.example.net", by=by)
+
+                self.assertEqual(prepared.argv, operations.BMC_CLIENT)
+                self.assertEqual(prepared.argv[1:], ("-m", "haprion.cli.bmc_install_ask"))
+                request = json.loads(prepared.request)
+                self.assertEqual(
+                    (request["operation"], request["cluster"], request["parameters"]),
+                    ("bmc_install", None, {"id": "bmc-01.example.net", "by": by}),
+                )
+                self.assertEqual(prepared.timeout_seconds, operations.BMC_TIMEOUT_SECONDS)
+
+    def test_anything_else_is_refused(self) -> None:
+        for payload in (
+            {"by": "install_now"},
+            {"id": "Not An ID", "by": "install_now"},
+            {"id": "bmc-01.example.net"},
+            {"id": "bmc-01.example.net", "by": "timer"},
+            {"id": "bmc-01.example.net", "by": "install_now", "address": "192.0.2.10"},
+        ):
+            with self.subTest(payload=payload), self.assertRaises(operations.BadPayload):
+                self.prepared(**payload)
+
+    def test_the_unit_ends_before_the_client_and_the_client_before_the_job(self) -> None:
+        """An install stopped by its unit is the client's sentence, never the worker's timeout."""
+
+        unit = (
+            Path(__file__).resolve().parents[2]
+            / "install/platform/examples/haprion-bmc-install-helper@.service.example"
+        ).read_text()
+        socket_unit = (
+            Path(__file__).resolve().parents[2]
+            / "install/platform/examples/haprion-bmc-install-helper.socket.example"
+        ).read_text()
+        found = re.search(r"^RuntimeMaxSec=(\d+)$", unit, re.MULTILINE)
+        if found is None:
+            self.fail("the unit has no RuntimeMaxSec")
+        self.assertLess(int(found[1]), bmc_install_ask.TIMEOUT_SECONDS)
+        self.assertLess(bmc_install_ask.TIMEOUT_SECONDS, operations.BMC_TIMEOUT_SECONDS)
+        self.assertIn(f"ListenStream={bmc_install_ask.SOCKET_PATH}\n", socket_unit)
+        self.assertIn("SocketGroup=WORKER_USER", socket_unit)
+        self.assertIn(f"{int(operations.BMC_TIMEOUT_SECONDS)} s", unit)
+
+    def test_its_answers_are_the_helpers(self) -> None:
+        self.assertEqual(bmc_helper.INSTALL_OPERATION, "bmc_install")
+        self.assertEqual(
+            worker._OPERATION_OUTCOMES["bmc_install"], frozenset({"done", "failed", "blocked"})
+        )
+
+
 class DefiningClusters(unittest.TestCase):
     """B211: a whole cluster created or removed through the node helper's socket."""
 
@@ -1488,6 +1550,7 @@ class ASocketClientAnswersBeforeTheWorkerStopsIt(unittest.TestCase):
             operations.NODE_CLIENT: node_ask.TIMEOUT_SECONDS,
             operations.RECEIVER_CLIENT: cert_receiver_ask.TIMEOUT_SECONDS,
             operations.BACKUP_CLIENT: backup_job_ask.TIMEOUT_SECONDS,
+            operations.BMC_CLIENT: bmc_install_ask.TIMEOUT_SECONDS,
             operations.RESTORE_CLIENT: node_restore_ask.TIMEOUT_SECONDS,
         }
         for argv, seconds in clients.items():

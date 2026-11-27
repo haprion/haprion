@@ -179,6 +179,12 @@ _OPERATION_OUTCOMES = {
     #
     "path_list_apply": frozenset({"done", "failed"}),
     #
+    # `bmc_install` (B526, B536) installs one certificate on its BMC or does not:
+    # `failed` in the BMC's words, `blocked` when another install held the lock
+    # and nothing was sent.
+    #
+    "bmc_install": frozenset({"done", "failed", "blocked"}),
+    #
     # `cert_scep` has a real half: the CA holding the request. That is
     # `partial` - the key is kept and the same request is resumed later.
     #

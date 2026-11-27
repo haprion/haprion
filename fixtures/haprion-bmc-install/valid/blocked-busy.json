@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "blocked",
+  "cluster": null,
+  "warnings": [],
+  "error": {
+    "code": "bmc_busy",
+    "message": "another install on a BMC is running; ask again when it has ended"
+  },
+  "operation": "bmc_install",
+  "request_id": "99999999-9999-4999-8999-999999999995",
+  "result": null
+}

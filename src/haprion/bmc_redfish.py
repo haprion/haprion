@@ -71,7 +71,7 @@ class BmcError(Exception):
     on its own. `untrusted` - the BMC served a certificate nobody confirmed,
     and was sent nothing. `login_refused` - the account was not let in.
     `refused` - the BMC answered a step with an error. `not_served` - it was
-    restarted and does not serve the installed certificate. `bmc_error` - an
+    restarted and does not serve the installed certificate. `bad_answer` - an
     answer that is not what a Redfish BMC answers.
     """
 
@@ -143,7 +143,7 @@ def served(address: str, port: int = 443, *, timeout: float = CONNECT_TIMEOUT) -
     except (OSError, ssl.SSLError) as exc:
         raise BmcError("unreachable", f"{address}:{port} did not answer: {_said(exc)}") from exc
     if not der:
-        raise BmcError("bmc_error", f"{address}:{port} presented no certificate")
+        raise BmcError("bad_answer", f"{address}:{port} presented no certificate")
     return Served(fingerprint(der), ssl.DER_cert_to_PEM_cert(der))
 
 
@@ -211,7 +211,8 @@ class Session:
         token = headers.get("x-auth-token")
         if not 200 <= status < 300 or not token:
             raise BmcError(
-                "bmc_error", f"{self.address} did not open a session (HTTP {status}): {_text(body)}"
+                "bad_answer",
+                f"{self.address} did not open a session (HTTP {status}): {_text(body)}",
             )
         self._token = token
         self._location = headers.get("location")
@@ -243,7 +244,7 @@ class Session:
         sent = dict(headers)
         if authenticated:
             if self._token is None:
-                raise BmcError("bmc_error", "no session")
+                raise BmcError("bad_answer", "no session")
             sent["X-Auth-Token"] = self._token
         connection = _Pinned(self.address, self.port, trusted=self.trusted, timeout=timeout)
         try:
@@ -251,7 +252,7 @@ class Session:
             response = connection.getresponse()
             answer = response.read(MAX_ANSWER_BYTES + 1)
             if len(answer) > MAX_ANSWER_BYTES:
-                raise BmcError("bmc_error", f"{self.address} answered {path} with too much")
+                raise BmcError("bad_answer", f"{self.address} answered {path} with too much")
             return (
                 response.status,
                 {name.lower(): value for name, value in response.getheaders()},
@@ -271,13 +272,13 @@ class Session:
         if status in (401, 403):
             raise BmcError("login_refused", f"{self.address} refused {path} to the account")
         if status != 200:
-            raise BmcError("bmc_error", f"{self.address} answered {path} with HTTP {status}")
+            raise BmcError("bad_answer", f"{self.address} answered {path} with HTTP {status}")
         try:
             document = json.loads(body)
         except ValueError as exc:
-            raise BmcError("bmc_error", f"{self.address} answered {path} with no JSON") from exc
+            raise BmcError("bad_answer", f"{self.address} answered {path} with no JSON") from exc
         if not isinstance(document, dict):
-            raise BmcError("bmc_error", f"{self.address} answered {path} with no object")
+            raise BmcError("bad_answer", f"{self.address} answered {path} with no object")
         return document
 
     def manager(self) -> str:
@@ -288,7 +289,7 @@ class Session:
             path = _path(members[0].get("@odata.id"))
             if path is not None:
                 return path
-        raise BmcError("bmc_error", f"{self.address} lists no manager")
+        raise BmcError("bad_answer", f"{self.address} lists no manager")
 
     def firmware(self, manager: str) -> Firmware:
         document = self._json(manager)

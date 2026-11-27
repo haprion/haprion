@@ -14,7 +14,7 @@ import stat
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from haprion import bmc_redfish, bmc_targets, cert_registry
+from haprion import bmc_redfish, bmc_targets, cert_registry, exit_codes
 from haprion.bmc_targets import Root, TargetError
 from haprion.config import BmcTarget, load_registry
 from haprion.dns_profile_keys import generate
@@ -180,6 +180,27 @@ class TheSweep(TargetCase):
 
         self.assertEqual(self.sweep(), {DEVICE: "untrusted"})
         self.assertEqual(self.bmc.requests, [])
+
+    def test_a_job_does_not_wait_behind_another_install(self) -> None:
+        """A job behind the timer's install of minutes would outlast its unit and say nothing."""
+
+        with (
+            bmc_targets.install_lock(self.root / "state"),
+            self.assertRaises(TargetError) as refused,
+        ):
+            bmc_targets.install(
+                self.root_side(),
+                DEVICE,
+                by="install_now",
+                now=self.now,
+                installer=functools.partial(bmc_redfish.install, wait=0.0, interval=0.0),
+            )
+        self.assertEqual(
+            (refused.exception.code, refused.exception.exit_code),
+            ("bmc_busy", exit_codes.BLOCKED),
+        )
+        self.assertEqual(self.bmc.requests, [])
+        self.assertEqual(bmc_targets.read_state(self.root / "state"), {})
 
     def test_a_bmc_that_keeps_the_old_certificate_failed(self) -> None:
         self.bmc.keep_old_after_reset = True

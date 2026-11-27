@@ -1374,7 +1374,7 @@ def check_bmc_install_semantics(document: dict[str, object], path: Path) -> None
     if document["outcome"] == "done" and result is None:
         raise AssertionError(f"{path}: a done bmc_install carries no attempt")
     if document["outcome"] != "done" and result is not None:
-        raise AssertionError(f"{path}: a failed bmc_install carries an attempt")
+        raise AssertionError(f"{path}: a {document['outcome']} bmc_install carries an attempt")
 
 
 def check_oidc_semantics(document: dict[str, object], path: Path) -> None:

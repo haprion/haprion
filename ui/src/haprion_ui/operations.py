@@ -40,6 +40,8 @@ from haprion.cert_receiver import SECRET_HASH
 from haprion.cli import (
     backup_job_ask,
     backup_job_helper,
+    bmc_helper,
+    bmc_install_ask,
     cert_delete_helper,
     cert_deploy,
     cert_issue_helper,
@@ -124,6 +126,13 @@ DEFINITION_FIELDS = (
     "address_interface",
 )
 BACKUP_CLIENT = (sys.executable, "-m", backup_job_ask.__name__)
+BMC_CLIENT = (sys.executable, "-m", bmc_install_ask.__name__)
+#
+# A BMC install: its client waits 610 s for the helper's unit, which ends at
+# 600 s; the job's bound is the longest of the three, so what the job records
+# is the client's sentence and never the worker's own timeout.
+#
+BMC_TIMEOUT_SECONDS = bmc_install_ask.TIMEOUT_SECONDS + 10.0
 RESTORE_CLIENT = (sys.executable, "-m", node_restore_ask.__name__)
 
 
@@ -262,6 +271,7 @@ OPERATIONS = frozenset(
         "backup_run",
         "backup_schedule",
         "blocklist_apply",
+        "bmc_install",
         "cert_delete",
         "cert_deploy",
         "cert_import",
@@ -292,6 +302,7 @@ OPERATIONS = frozenset(
 CERTIFICATE_OPERATIONS = frozenset(
     {
         "blocklist_apply",
+        "bmc_install",
         "path_list_apply",
         "cert_issue",
         "cert_publish",
@@ -738,6 +749,30 @@ def _certificate_operation(
         return Prepared(
             argv=(dns_profiles.SUDO, *SUDO_FLAGS, blocklist_store.HELPER),
             request=request,
+        )
+
+    if operation == "bmc_install":
+        #
+        # A certificate installed on its BMC now (B526, B536): *Install now*,
+        # or the install that saving a target starts. The certificate's ID and
+        # who asked, and nothing else; whether it is exportable and names a
+        # BMC is the helper's to read from the registry. Over the worker's
+        # socket, since the helper opens the account with root's key and
+        # reaches the BMC over the network.
+        #
+        _only(payload, "id", "by")
+        certificate_id = payload.get("id")
+        by = payload.get("by")
+        if not isinstance(certificate_id, str) or not CERTIFICATE_ID.fullmatch(certificate_id):
+            raise BadPayload("bmc_install needs a certificate ID")
+        if by not in bmc_helper.INSTALLED_BY:
+            raise BadPayload("by must be one of: " + ", ".join(bmc_helper.INSTALLED_BY))
+        return Prepared(
+            argv=BMC_CLIENT,
+            request=bmc_helper.build_install_request(
+                str(request_id), certificate_id=certificate_id, by=by
+            ),
+            timeout_seconds=BMC_TIMEOUT_SECONDS,
         )
 
     if operation == "path_list_apply":

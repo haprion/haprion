@@ -705,6 +705,8 @@ def with_deletion_states(
         #
         if state.target_action == "publish":
             return not entry.needs_publish
+        if state.target_action == "bmc_install":
+            return entry.bmc is not None and entry.bmc.status == "installed"
         if state.target_action not in {"add", "remove"} or not state.target_names:
             return False
         current = {target.name for target in entry.targets}

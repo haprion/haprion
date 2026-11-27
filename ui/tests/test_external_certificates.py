@@ -12,15 +12,15 @@ from __future__ import annotations
 import io
 import unittest
 import zipfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest import mock
 
 from haprion.cert_export import Export, ExportError
 from haprion.certificates import CERTIFICATE_OPENING, DELIMITER
 
-from haprion_ui import attention, auth, certificate_form, operations
-from haprion_ui.certificates import build_certificate_overview
+from haprion_ui import attention, auth, certificate_activity, certificate_form, operations
+from haprion_ui.certificates import build_certificate_overview, with_deletion_states
 from haprion_ui.db import TakenOut
 from tests.registry_fixture import manager_of
 from tests.test_certificate_form import CHOICES, KEY, CertificateFormRouteTestCase, form
@@ -32,6 +32,7 @@ from tests.test_certificates import (
     with_registry,
 )
 from tests.test_certificates import reading as certificate_reading
+from tests.test_queue_route import queued
 
 #
 # Assembled, so the secret scanner does not take a test bundle's password for one.
@@ -347,6 +348,75 @@ class TheBmcRow(unittest.TestCase):
         row = self.row(external())
         self.assertIsNone(row.bmc)
         self.assertEqual(row.state_label, "Installed by hand")
+
+
+def install_job(state: str, *, seconds: int = 5, result: dict[str, Any] | None = None) -> Any:
+    return queued(
+        operation="bmc_install",
+        cluster=None,
+        state=state,
+        payload={"id": DEVICE, "by": "install_now"},
+        result=result,
+        finished_at=None if state in {"pending", "running"} else NOW - timedelta(seconds=seconds),
+    )
+
+
+class TheInstallJobOnTheRow(unittest.TestCase):
+    """*Install now*: the row says it is installing, and gives way once the listing has caught up."""
+
+    def drawn(self, entry: dict[str, Any], job: Any) -> Any:
+        reading = with_registry(certificate_reading(), entry)
+        view = build_certificate_overview(
+            ("alpha",),
+            (reading,),
+            now=NOW,
+            stale_after=STALE_AFTER,
+            manager=manager_of((reading,)),
+            taken_out={},
+        )
+        states = certificate_activity.deletion_states([job], now=NOW, writes=True)
+        return registry_of(with_deletion_states(view, states)).certificates[0]
+
+    def test_a_running_install_is_said_with_a_spinner(self) -> None:
+        row = self.drawn(with_bmc("waiting", served_sha256=PINNED), install_job("running"))
+        self.assertEqual(
+            (row.state_label, row.state_tone, row.state_active), ("Installing", "info", True)
+        )
+
+    def test_a_done_install_stays_until_the_listing_shows_it_served(self) -> None:
+        before = self.drawn(with_bmc("waiting", served_sha256=PINNED), install_job("done"))
+        self.assertEqual((before.state_label, before.state_active), ("Installed", True))
+
+        after = self.drawn(with_bmc("installed"), install_job("done"))
+        self.assertEqual(
+            (after.state_label, after.state_detail, after.state_active),
+            ("Installed", "The BMC serves this certificate", False),
+        )
+
+    def test_an_install_behind_another_is_refused_in_its_own_words(self) -> None:
+        said = "another install on a BMC is running; ask again when it has ended"
+        row = self.drawn(
+            with_bmc("waiting", served_sha256=PINNED),
+            install_job("blocked", result={"error": {"code": "bmc_busy", "message": said}}),
+        )
+        self.assertEqual(
+            (row.state_label, row.state_detail, row.state_tone),
+            ("Install refused", said, "warning"),
+        )
+
+    def test_a_failed_install_is_said_for_an_hour_and_then_left_to_the_row(self) -> None:
+        said = "bmc01.example.com refused the certificate: SSL certificate validation failed."
+        failed = {"error": {"code": "bmc_refused", "message": said}}
+        row = self.drawn(
+            with_bmc("waiting", served_sha256=PINNED), install_job("failed", result=failed)
+        )
+        self.assertEqual((row.state_label, row.state_detail), ("Install failed", said))
+
+        later = self.drawn(
+            with_bmc("waiting", served_sha256=PINNED),
+            install_job("failed", seconds=2 * 3600, result=failed),
+        )
+        self.assertEqual(later.state_label, "Waiting for the BMC")
 
 
 class TheBmcOnThePage(CertificateFormRouteTestCase):

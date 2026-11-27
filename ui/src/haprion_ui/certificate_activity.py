@@ -192,6 +192,11 @@ def deletion_states(
                 if isinstance(identifier, str):
                     consider(identifier, _publish_state_of(job, identifier, moment, writes=writes))
             continue
+        if job.operation == "bmc_install":
+            identifier = job.payload.get("id")
+            if isinstance(identifier, str):
+                consider(identifier, _bmc_install_state_of(job, moment, writes=writes))
+            continue
         if job.operation != "cert_delete":
             continue
         named = job.payload.get("certificates")
@@ -605,6 +610,37 @@ def _publish_state_of(
             False,
         )
     return _verdict(job, "Publish", "The publish job failed")
+
+
+def _bmc_install_state_of(job: Job, now: datetime, *, writes: bool) -> DeletionState | None:
+    """*Install now*, or a save's install, on the certificate's row (B526, B536).
+
+    The row's own BMC state is the timer's file as the poller last listed it,
+    so a finished install is said until that listing shows the BMC serving the
+    certificate (`target_action`). A failure is said in the BMC's words for an
+    hour, as the row will say it too once the listing is read again.
+    """
+
+    if job.state in {"pending", "running"}:
+        return _in_flight(
+            job, now, "Installing", "The certificate is being installed on its BMC", writes=writes
+        )
+    if job.finished_at is None:
+        return None
+    age = now - job.finished_at
+    if age > VERDICT_LIFETIME:
+        return None
+    if job.state == "done":
+        if age > FOLLOW_UP:
+            return None
+        return DeletionState(
+            "Installed",
+            "The BMC serves this certificate; the listing follows at the next poll",
+            "info",
+            True,
+            target_action="bmc_install",
+        )
+    return _verdict(job, "Install", "The install job failed")
 
 
 def _target_state_of(

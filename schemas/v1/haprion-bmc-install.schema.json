@@ -17,7 +17,8 @@
         "outcome": {
           "enum": [
             "done",
-            "failed"
+            "failed",
+            "blocked"
           ]
         },
         "result": {
@@ -36,7 +37,7 @@
   "additionalProperties": true,
   "$defs": {
     "attempt": {
-      "description": "The install that was made (B526, B536): done only when the BMC serves the certificate after its restart. A failed install, or a BMC that did not answer before anything was sent, is a failed answer with the BMC's words in the error (code bmc_<what>); the attempt is kept in the state file either way.",
+      "description": "The install that was made (B526, B536): done only when the BMC serves the certificate after its restart. A failed install, or a BMC that did not answer before anything was sent, is a failed answer with the BMC's words in the error (code bmc_<what>); the attempt is kept in the state file either way. Blocked (bmc_busy) is another install holding the lock: nothing was read or sent.",
       "type": "object",
       "required": [
         "id",

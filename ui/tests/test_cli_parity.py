@@ -476,6 +476,7 @@ HELPER_ENDS = frozenset(
         "haprion-blocklist-apply-helper",
         "haprion-blocklist-check-helper",
         "haprion-bmc-helper",
+        "haprion-bmc-install-ask",
         "haprion-bmc-install-helper",
         "haprion-cert-delete-helper",
         "haprion-cert-deploy-helper",

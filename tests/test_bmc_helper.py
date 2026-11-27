@@ -8,7 +8,7 @@ import json
 import uuid
 from typing import Any
 
-from haprion import bmc_targets
+from haprion import bmc_targets, exit_codes
 from haprion.cli import bmc_helper
 from tests.contract_schema import assert_contract
 from tests.test_bmc_redfish import PASSWORD, WRONG
@@ -156,6 +156,34 @@ class TheWorkersHelper(HelperCase):
         self.assertEqual(answer["error"]["code"], "bmc_refused")
         self.assertIn("SSL certificate validation failed.", answer["error"]["message"])
         self.assertEqual(self.state().attempt.outcome, "failed")  # type: ignore[union-attr]
+
+    def test_an_install_behind_another_is_blocked_before_anything_is_sent(self) -> None:
+        with bmc_targets.install_lock(self.root / "state"):
+            code, answer, _journal = self.ask("bmc_install", {"id": DEVICE, "by": "install_now"})
+
+        self.assertEqual(code, exit_codes.BLOCKED)
+        self.assertEqual((answer["outcome"], answer["error"]["code"]), ("blocked", "bmc_busy"))
+        self.assertEqual(self.bmc.requests, [])
+
+    def test_the_request_the_worker_builds_is_the_one_the_helper_takes(self) -> None:
+        request = bmc_helper.build_install_request(
+            str(uuid.uuid4()), certificate_id=DEVICE, by="save"
+        )
+        out = io.StringIO()
+        code = bmc_helper.install_main(
+            [],
+            input_stream=io.BytesIO(request.encode()),
+            output_stream=out,
+            error_stream=io.StringIO(),
+            require_root=False,
+            require_secure=False,
+            root=self.root_side(),
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            assert_contract("haprion-bmc-install", out.getvalue())["result"]["by"], "save"
+        )
 
     def test_the_timer_is_the_only_installer_that_is_not_asked(self) -> None:
         code, answer, _journal = self.ask("bmc_install", {"id": DEVICE, "by": "timer"})

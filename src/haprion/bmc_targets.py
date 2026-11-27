@@ -306,13 +306,25 @@ def write_state(states: Mapping[str, TargetState], directory: Path = STATE_DIREC
 
 
 @contextlib.contextmanager
-def install_lock(directory: Path = STATE_DIRECTORY) -> Iterator[None]:
-    """One install at a time, from the timer, *Install now* or a save."""
+def install_lock(directory: Path = STATE_DIRECTORY, *, wait: bool = True) -> Iterator[None]:
+    """One install at a time, from the timer, *Install now* or a save.
+
+    The timer waits its turn. A job does not (`wait` False): behind an install
+    of minutes it would outlast its unit and end with no answer, so it is told
+    the lock is held, before anything is read or sent.
+    """
 
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     descriptor = os.open(directory / LOCK_FILE, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise TargetError(
+                "bmc_busy",
+                "another install on a BMC is running; ask again when it has ended",
+                exit_codes.BLOCKED,
+            ) from None
         yield
     finally:
         os.close(descriptor)
@@ -392,7 +404,7 @@ def install(
 
     if by not in BY:
         raise TargetError("bad_input", f"by is one of: {', '.join(BY)}")
-    with install_lock(root.state):
+    with install_lock(root.state, wait=by == "timer"):
         registry = _registry(root)
         target = _target(registry, certificate_id)
         try:

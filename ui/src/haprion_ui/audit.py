@@ -48,6 +48,7 @@ OPERATION_NAMES: Mapping[str, str] = {
     "cert_request": "a signing request",
     "dns_profile_apply": "a DNS profile change",
     "blocklist_apply": "a blocklist change",
+    "bmc_install": "a certificate install on a BMC",
     "path_list_apply": "a path list change",
     "ndes_profile_apply": "an NDES profile change",
     "cert_scep": "an NDES enrollment",

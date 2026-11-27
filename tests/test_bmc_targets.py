@@ -229,8 +229,13 @@ class TheSweep(TargetCase):
         self.assertEqual(said, {DEVICE: "failed"})
         attempt = self.state().attempt
         assert attempt is not None
-        self.assertEqual((attempt.outcome, attempt.code), ("failed", "tls_failed"))
+        self.assertEqual((attempt.outcome, attempt.code), ("failed", "reading_tls_failed"))
         self.assertEqual(self.uploads(), 0)
+        #
+        # Read again: the fault is over, and the install it held back is made.
+        #
+        self.assertEqual(self.sweep(), {DEVICE: "installed"})
+        self.assertEqual(self.uploads(), 1)
 
     def test_an_upload_cut_off_is_a_failed_install_that_waits_for_install_now(self) -> None:
         """Review 26-11-27, BX01: it read as a BMC that was off, and was tried again for ever."""

@@ -61,6 +61,11 @@ STATE_DIRECTORY = Path("/var/lib/haprion/bmc")
 STATE_FILE = "state.json"
 LOCK_FILE = "install.lock"
 STATE_LOCK_FILE = "state.lock"
+#
+# The code of a fault in reading what a BMC serves, as opposed to an install:
+# `reading_tls_failed`, `reading_bad_answer`. Cleared by the next reading.
+#
+READING_FAULT = "reading_"
 SCHEMA_VERSION = 1
 #
 # The registry keeps the user in the clear for the page; one rule for both.
@@ -581,7 +586,7 @@ def sweep(
                         at=_iso(moment),
                         by="timer",
                         outcome="failed",
-                        code=exc.code,
+                        code=READING_FAULT + exc.code,
                         message=str(exc),
                     ),
                     None,
@@ -593,6 +598,7 @@ def sweep(
             )
             continue
         _record(root, certificate_id, target, None, served, now())
+        _clear_reading_fault(root, certificate_id)
         if current is not None and served == current and target.fingerprint_sha256 != current:
             _trust_served(root, certificate_id, target, current)
         states = read_state(root.state)
@@ -642,6 +648,27 @@ def sweep(
             )
         said[certificate_id] = word
     return said
+
+
+def _clear_reading_fault(root: Root, certificate_id: str) -> None:
+    """A BMC read again after a reading fault: the fault is over, and installs go on.
+
+    A reading fault is no install - nothing was sent - so it must not hold the
+    next install back until *Install now*, as a failed install does (review
+    26-11-27, om-vända).
+    """
+
+    with _state_lock(root.state):
+        states = read_state(root.state)
+        known = states.get(certificate_id)
+        if (
+            known is None
+            or known.attempt is None
+            or not (known.attempt.code or "").startswith(READING_FAULT)
+        ):
+            return
+        states[certificate_id] = replace(known, attempt=None)
+        write_state(states, root.state)
 
 
 def _trust_served(root: Root, certificate_id: str, seen: BmcTarget, current: str) -> None:

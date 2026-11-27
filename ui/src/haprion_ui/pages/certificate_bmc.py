@@ -227,7 +227,7 @@ def build_router(config: Config) -> APIRouter:
                         str(refused),
                         address=target_address,
                         port=target_port,
-                        action="check",
+                        asked="check",
                     )
                 ) from None
             checked = bmc_page.checked(answer)
@@ -333,7 +333,7 @@ def build_router(config: Config) -> APIRouter:
                     str(refused),
                     address=target_address,
                     port=target_port,
-                    action="save",
+                    asked="save",
                 ),
             )
         _audit(
@@ -427,7 +427,7 @@ def build_router(config: Config) -> APIRouter:
                     str(refused),
                     address=row.bmc.address if row.bmc else "",
                     port=row.bmc.port if row.bmc else bmc_page.DEFAULT_PORT,
-                    action="remove",
+                    asked="remove",
                 ),
                 status_code=409,
             )

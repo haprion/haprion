@@ -587,9 +587,30 @@ def sweep(
                 # Removed since the registry was read: nothing to install, and
                 # no reason to stop the sweep of the others.
                 #
-                if exc.code != "no_bmc":
-                    raise
-                continue
+                if exc.code == "no_bmc":
+                    continue
+                #
+                # Nothing sent: the account cannot be opened (a key replaced
+                # without the account entered again) or the material cannot be
+                # read. This BMC's install failed, in those words, and the
+                # sweep goes on to the others.
+                #
+                moment = now()
+                _record(
+                    root,
+                    certificate_id,
+                    target,
+                    Attempt(
+                        fingerprint_sha256=current,
+                        at=_iso(moment),
+                        by="timer",
+                        outcome="failed",
+                        code=exc.code,
+                        message=str(exc),
+                    ),
+                    None,
+                    moment,
+                )
             states = read_state(root.state)
             word = status(
                 states.get(certificate_id),

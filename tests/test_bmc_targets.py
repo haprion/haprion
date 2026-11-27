@@ -206,6 +206,18 @@ class TheSweep(TargetCase):
         self.assertEqual(self.bmc.requests, [])
         self.assertEqual(bmc_targets.read_state(self.root / "state"), {})
 
+    def test_an_account_that_cannot_be_opened_fails_that_bmc_and_no_other(self) -> None:
+        """A key replaced without the account entered again: said on the row, the sweep goes on."""
+
+        bmc_targets.write_account(DEVICE, "0" * 16, self.sealed(), directory=self.root / "accounts")
+
+        self.assertEqual(self.sweep(), {DEVICE: "failed"})
+
+        attempt = self.state().attempt
+        assert attempt is not None
+        self.assertEqual((attempt.outcome, attempt.code), ("failed", "account_unreadable"))
+        self.assertEqual(self.uploads(), 0)
+
     def test_a_target_removed_during_the_sweep_is_passed_over(self) -> None:
         def removed_while_asked(address: str, port: int) -> bmc_redfish.Served:
             served = bmc_redfish.served(address, port)

@@ -188,16 +188,21 @@ def perform(parameters: dict[str, Any], root: Root) -> dict[str, Any]:
             f"{certificate_id} is not exportable; only an exportable certificate has a BMC",
         )
     if action == "remove":
-        cert_registry.set_bmc(
-            root.registry_path,
-            certificate_id=certificate_id,
-            target=None,
-            runtime=root.runtime,
-            require_secure=root.require_secure,
-            lock_path=root.lock_path,
-        )
-        bmc_targets.remove_account(certificate_id, directory=root.accounts)
-        bmc_targets.forget(certificate_id, directory=root.state)
+        #
+        # Not under an install: its last step writes the target it installed
+        # on back into the registry, and would bring a removed one back.
+        #
+        with bmc_targets.install_lock(root.state, wait=False):
+            cert_registry.set_bmc(
+                root.registry_path,
+                certificate_id=certificate_id,
+                target=None,
+                runtime=root.runtime,
+                require_secure=root.require_secure,
+                lock_path=root.lock_path,
+            )
+            bmc_targets.remove_account(certificate_id, directory=root.accounts)
+            bmc_targets.forget(certificate_id, directory=root.state)
         return {"id": certificate_id, "removed": True}
 
     key_id, ciphertext = _account(parameters)
@@ -215,6 +220,7 @@ def perform(parameters: dict[str, Any], root: Root) -> dict[str, Any]:
             **_served_facts(checked.served),
             "model": checked.firmware.model,
             "firmware": checked.firmware.version,
+            "may_upload": checked.may_upload,
         }
     #
     # `save`: what the administrator confirmed is what is written, so the BMC is
@@ -223,23 +229,30 @@ def perform(parameters: dict[str, Any], root: Root) -> dict[str, Any]:
     #
     confirmed = _string(parameters, "fingerprint_sha256")
     target = _target(parameters, confirmed, username)
-    checked = bmc_redfish.check(target.address, target.port, username=username, password=password)
-    if checked.served.fingerprint_sha256 != confirmed:
-        raise TargetError(
-            "expected_target_changed",
-            f"{target.address} now serves {checked.served.fingerprint_sha256}, not the certificate "
-            "that was confirmed; check it again",
+    #
+    # Not under an install either, for the same reason as `remove`: an install
+    # ending after the save would write its own target over the new one.
+    #
+    with bmc_targets.install_lock(root.state, wait=False):
+        checked = bmc_redfish.check(
+            target.address, target.port, username=username, password=password
         )
-    bmc_targets.write_account(certificate_id, key_id, ciphertext, directory=root.accounts)
-    cert_registry.set_bmc(
-        root.registry_path,
-        certificate_id=certificate_id,
-        target=target,
-        runtime=root.runtime,
-        require_secure=root.require_secure,
-        lock_path=root.lock_path,
-    )
-    bmc_targets.forget(certificate_id, directory=root.state)
+        if checked.served.fingerprint_sha256 != confirmed:
+            raise TargetError(
+                "expected_target_changed",
+                f"{target.address} now serves {checked.served.fingerprint_sha256}, not the "
+                "certificate that was confirmed; check it again",
+            )
+        bmc_targets.write_account(certificate_id, key_id, ciphertext, directory=root.accounts)
+        cert_registry.set_bmc(
+            root.registry_path,
+            certificate_id=certificate_id,
+            target=target,
+            runtime=root.runtime,
+            require_secure=root.require_secure,
+            lock_path=root.lock_path,
+        )
+        bmc_targets.forget(certificate_id, directory=root.state)
     return {
         "id": certificate_id,
         "address": target.address,

@@ -61,6 +61,7 @@ class TheWebsHelper(HelperCase):
         result = answer["result"]
         self.assertEqual(result["served_sha256"], self.old)
         self.assertEqual((result["model"], result["firmware"]), ("X13SCL-IF", "01.09.06"))
+        self.assertIs(result["may_upload"], True)
         self.assertEqual(result["subject"], "bmc-old.example")
         self.assertIsNone(self.registry().certificates[DEVICE].bmc)
         self.assertNotIn(PASSWORD, json.dumps(answer) + journal)
@@ -131,6 +132,24 @@ class TheWebsHelper(HelperCase):
         )
         self.assertNotEqual(code, 0)
         self.assertEqual(answer["error"]["code"], "bmc_login_refused")
+
+    def test_save_and_remove_wait_for_no_install_and_change_nothing_under_one(self) -> None:
+        """An install ends by writing its target back: under it, a save or a removal would be undone."""
+
+        before = self.registry().certificates[DEVICE].bmc
+        with bmc_targets.install_lock(self.root / "state"):
+            for parameters in (
+                {"action": "remove", "id": DEVICE},
+                {"action": "save", "fingerprint_sha256": self.old, **self.target()},
+            ):
+                with self.subTest(action=parameters["action"]):
+                    code, answer, _journal = self.ask("bmc", parameters)
+                    self.assertEqual(code, exit_codes.BLOCKED)
+                    self.assertEqual(
+                        (answer["outcome"], answer["error"]["code"]), ("blocked", "bmc_busy")
+                    )
+        self.assertEqual(self.registry().certificates[DEVICE].bmc, before)
+        self.assertEqual(self.bmc.requests, [])
 
     def test_the_web_cannot_ask_for_an_install(self) -> None:
         code, answer, _journal = self.ask("bmc", {"action": "install", "id": DEVICE})

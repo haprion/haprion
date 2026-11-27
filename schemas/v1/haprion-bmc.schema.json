@@ -17,7 +17,8 @@
         "outcome": {
           "enum": [
             "done",
-            "failed"
+            "failed",
+            "blocked"
           ]
         },
         "result": {
@@ -53,7 +54,8 @@
         "issuer",
         "not_after",
         "model",
-        "firmware"
+        "firmware",
+        "may_upload"
       ],
       "properties": {
         "id": {
@@ -102,6 +104,13 @@
         "firmware": {
           "type": "string",
           "maxLength": 256
+        },
+        "may_upload": {
+          "description": "Whether the account may upload a certificate, asked with an upload that holds no file; null when the BMC's answer does not tell.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "additionalProperties": false

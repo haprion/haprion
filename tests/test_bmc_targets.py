@@ -8,9 +8,11 @@ exportable one is installed on it.
 
 from __future__ import annotations
 
+import fcntl
 import functools
 import os
 import stat
+import threading
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -203,6 +205,46 @@ class TheSweep(TargetCase):
         )
         self.assertEqual(self.bmc.requests, [])
         self.assertEqual(bmc_targets.read_state(self.root / "state"), {})
+
+    def test_a_target_removed_during_the_sweep_is_passed_over(self) -> None:
+        def removed_while_asked(address: str, port: int) -> bmc_redfish.Served:
+            served = bmc_redfish.served(address, port)
+            _policy, runtime = self.runtime()
+            cert_registry.set_bmc(
+                self.root / "certificates.yaml",
+                certificate_id=DEVICE,
+                target=None,
+                runtime=runtime,
+                require_secure=False,
+                lock_path=self.lock,
+            )
+            return served
+
+        said = bmc_targets.sweep(self.root_side(), now=self.now, reader=removed_while_asked)
+
+        self.assertNotIn(DEVICE, said)
+        self.assertEqual(self.uploads(), 0)
+
+    def test_the_state_file_is_read_and_written_one_writer_at_a_time(self) -> None:
+        """The timer's reading outside the install lock and a job's attempt inside it."""
+
+        self.sweep()
+        state = self.root / "state"
+        descriptor = os.open(state / bmc_targets.STATE_LOCK_FILE, os.O_RDWR)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            writer = threading.Thread(
+                target=bmc_targets.forget, args=(DEVICE,), kwargs={"directory": state}
+            )
+            writer.start()
+            writer.join(0.5)
+            self.assertTrue(writer.is_alive())
+            self.assertIn(DEVICE, bmc_targets.read_state(state))
+        finally:
+            os.close(descriptor)
+        writer.join(5)
+        self.assertFalse(writer.is_alive())
+        self.assertNotIn(DEVICE, bmc_targets.read_state(state))
 
     def test_a_bmc_that_keeps_the_old_certificate_failed(self) -> None:
         self.bmc.keep_old_after_reset = True

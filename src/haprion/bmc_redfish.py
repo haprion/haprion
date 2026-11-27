@@ -298,6 +298,28 @@ class Session:
             version=str(document.get("FirmwareVersion") or ""),
         )
 
+    def may_upload(self) -> bool | None:
+        """Whether the account may upload a certificate, asked with an upload that holds no file.
+
+        Measured on X13 firmware 01.09.06 (26-11-26): an account with
+        `ConfigureManager` is answered 400 `SMC.1.0.OemSslcertMissingItem`, one
+        without it 403 `Base.1.10.InsufficientPrivilege`, and nothing changes.
+        None when the BMC answers anything else: then it cannot be told here.
+        """
+
+        boundary = secrets.token_hex(16)
+        status, _headers, answer = self._call(
+            "POST",
+            UPLOAD,
+            f"--{boundary}--\r\n".encode(),
+            {"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        if status in (401, 403):
+            return False
+        if status == 400 and b"OemSslcertMissingItem" in answer:
+            return True
+        return None
+
     def upload(self, leaf_pem: str, key_pem: str) -> str:
         """Hand the BMC the certificate and key; what it said, when it took them."""
 
@@ -431,11 +453,13 @@ def install(
 class Checked:
     served: Served
     firmware: Firmware
+    may_upload: bool | None = None
 
 
 def check(address: str, port: int, *, username: str, password: str) -> Checked:
-    """What the BMC serves, and that the account is let in: for the administrator to confirm.
+    """What the BMC serves, that the account is let in, and whether it may upload.
 
+    For the administrator to confirm.
     The session is pinned to what the BMC served a moment before, so the
     account goes to the certificate that is then shown, and to no other.
     """
@@ -445,7 +469,8 @@ def check(address: str, port: int, *, username: str, password: str) -> Checked:
         address, port, trusted={now.fingerprint_sha256}, username=username, password=password
     ) as session:
         firmware = session.firmware(session.manager())
-    return Checked(now, firmware)
+        may_upload = session.may_upload()
+    return Checked(now, firmware, may_upload)
 
 
 __all__ = [

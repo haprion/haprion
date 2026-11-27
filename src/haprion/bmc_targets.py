@@ -60,6 +60,7 @@ ACCOUNTS = Path("/etc/haprion/bmc-accounts")
 STATE_DIRECTORY = Path("/var/lib/haprion/bmc")
 STATE_FILE = "state.json"
 LOCK_FILE = "install.lock"
+STATE_LOCK_FILE = "state.lock"
 SCHEMA_VERSION = 1
 #
 # The registry keeps the user in the clear for the page; one rule for both.
@@ -479,7 +480,37 @@ def install(
         return attempt
 
 
+@contextlib.contextmanager
+def _state_lock(directory: Path) -> Iterator[None]:
+    """One read-and-write of the state file at a time.
+
+    The timer records what a BMC served outside the install lock, and a job
+    records its attempt inside it: without this, one could write over the
+    other's change, and a failed *Install now* would read as waiting.
+    """
+
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    descriptor = os.open(directory / STATE_LOCK_FILE, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
+
+
 def _record(
+    root: Root,
+    certificate_id: str,
+    target: BmcTarget,
+    attempt: Attempt | None,
+    served: str | None,
+    moment: datetime,
+) -> None:
+    with _state_lock(root.state):
+        _record_unlocked(root, certificate_id, target, attempt, served, moment)
+
+
+def _record_unlocked(
     root: Root,
     certificate_id: str,
     target: BmcTarget,
@@ -549,7 +580,16 @@ def sweep(
         # `failed` for that, and the next install is the one somebody asks for.
         #
         if word == "waiting" and current is not None and served != current:
-            install(root, certificate_id, by="timer", now=now, installer=installer)
+            try:
+                install(root, certificate_id, by="timer", now=now, installer=installer)
+            except TargetError as exc:
+                #
+                # Removed since the registry was read: nothing to install, and
+                # no reason to stop the sweep of the others.
+                #
+                if exc.code != "no_bmc":
+                    raise
+                continue
             states = read_state(root.state)
             word = status(
                 states.get(certificate_id),
@@ -563,9 +603,10 @@ def sweep(
 def forget(certificate_id: str, *, directory: Path = STATE_DIRECTORY) -> None:
     """Take a target that is gone out of the state file."""
 
-    states = read_state(directory)
-    if states.pop(certificate_id, None) is not None:
-        write_state(states, directory)
+    with _state_lock(directory):
+        states = read_state(directory)
+        if states.pop(certificate_id, None) is not None:
+            write_state(states, directory)
 
 
 def row_state(

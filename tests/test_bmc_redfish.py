@@ -70,6 +70,7 @@ class FakeBmc:
             {"Success": {"Message": "SSL certificate and private key were successfully uploaded"}},
         )
         self.keep_old_after_reset = False
+        self.may_upload: bool | None = True
         self.away_after_reset = 0
         self.away = 0
         self.reset_body: dict[str, Any] | None = None
@@ -119,6 +120,16 @@ class FakeBmc:
                     )
                 elif not self._authorised():
                     return
+                elif self.path == bmc_redfish.UPLOAD and b"filename=" not in body:
+                    #
+                    # An upload with no file, as measured on X13 (26-11-26).
+                    #
+                    if bmc.may_upload is None:
+                        self._answer(500, {"error": {"code": "Base.1.10.InternalError"}})
+                    elif bmc.may_upload:
+                        self._answer(400, {"error": {"code": "SMC.1.0.OemSslcertMissingItem"}})
+                    else:
+                        self._answer(403, {"error": {"code": "Base.1.10.InsufficientPrivilege"}})
                 elif self.path == bmc_redfish.UPLOAD:
                     bmc.uploaded = parts(self.headers["Content-Type"], body)
                     status, document = bmc.upload_answer
@@ -322,10 +333,24 @@ class Reading(BmcCase):
         checked = bmc_redfish.check("127.0.0.1", self.bmc.port, username=USER, password=PASSWORD)
         self.assertEqual(checked.served.fingerprint_sha256, self.old)
         self.assertEqual(checked.firmware.version, "01.09.06")
+        self.assertIs(checked.may_upload, True)
         self.assertEqual(self.bmc.deleted, ["token-0"])
+        self.assertEqual(self.bmc.uploaded, {})
         with self.assertRaises(BmcError) as failed:
             bmc_redfish.check("127.0.0.1", self.bmc.port, username=USER, password=WRONG)
         self.assertEqual(failed.exception.code, "login_refused")
+
+    def test_check_says_an_account_that_may_not_upload_before_anything_is_saved(self) -> None:
+        """26-11-26: an Operator signs in, and is refused the upload with 403."""
+
+        for allowed, said in ((False, False), (None, None)):
+            with self.subTest(allowed=allowed):
+                self.bmc.may_upload = allowed
+                checked = bmc_redfish.check(
+                    "127.0.0.1", self.bmc.port, username=USER, password=PASSWORD
+                )
+                self.assertIs(checked.may_upload, said)
+        self.assertEqual(self.bmc.uploaded, {})
 
     def test_a_path_the_bmc_names_is_held_to_its_own_tree(self) -> None:
         for value, held in (

@@ -16,6 +16,7 @@
     "issuer": "CN=Example Issuing CA",
     "not_after": "2026-12-20T08:09:00Z",
     "model": "AST2600",
-    "firmware": "01.09.06"
+    "firmware": "01.09.06",
+    "may_upload": true
   }
 }

@@ -284,8 +284,8 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
     ),
     "/certificates/receivers/key": Command("haprion-cert-receiver key", "haprion-cert-receiver"),
     #
-    # A certificate's BMC (B526, B536). The page saves and then installs; the
-    # terminal says the install as a command of its own, each with its contract.
+    # A certificate's BMC (B526, B536). Both save and then install at once;
+    # `install` is *Install now*.
     #
     "/certificates/bmc": NotASetting("opens the BMC page of the row ticked"),
     "/certificates/{certificate_id}/bmc/check": Command("haprion-cert-bmc check", "haprion-bmc"),

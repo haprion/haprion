@@ -9,10 +9,11 @@ What the certificate's BMC page does, through the same code as its helpers.
 The password is read from standard input, never from the command line: typed
 at a prompt, or piped. `check` signs in and says what the BMC serves; compare
 its SHA-256 with the BMC's own web page, then `save` with it. `save` writes
-the target and keeps the account; `install` then installs the certificate now
-(the BMC restarts and is away for about two minutes), or the timer does within
-15 minutes. `remove` takes the target and its account away; the BMC keeps the
-certificate it serves. `--json` answers with the helper's document.
+the target, keeps the account and installs the certificate at once, as the
+page's *Save and install* does: the BMC restarts and is away for about two
+minutes. `install` installs it again now. `remove` takes the target and its
+account away; the BMC keeps the certificate it serves. `--json` answers with
+the helper's document; `save`'s carries the install under `install`.
 """
 
 from __future__ import annotations
@@ -109,9 +110,8 @@ def _text(action: str, result: dict[str, Any], out: TextIO) -> None:
         )
     elif action == "save":
         out.write(
-            f"Saved {result['address']} for {result['id']}. Install it now with\n"
-            f"  sudo haprion-cert-bmc install {result['id']}\n"
-            "or the timer installs it within 15 minutes.\n"
+            f"Saved {result['address']} for {result['id']} and installed the certificate: "
+            f"{result['install'].get('message') or 'done'}\n"
         )
     elif action == "install":
         out.write(f"Installed {result['id']} on its BMC: {result.get('message') or 'done'}\n")
@@ -135,7 +135,9 @@ def main(
     operation = bmc_helper.INSTALL_OPERATION if action == "install" else bmc_helper.OPERATION
     request_id = str(uuid.uuid4())
 
-    def refuse(code: str, message: str, exit_code: int) -> int:
+    def refuse(
+        code: str, message: str, exit_code: int, details: dict[str, Any] | None = None
+    ) -> int:
         if arguments.json:
             return write_document(
                 out,
@@ -146,6 +148,7 @@ def main(
                     code=code,
                     message=message,
                     exit_code=exit_code,
+                    details=details,
                 ),
                 exit_code,
             )
@@ -211,6 +214,23 @@ def main(
         return refuse(f"bmc_{exc.code}", str(exc), exit_codes.REFUSED)
     except ConfigError as exc:
         return refuse(config_error_code(exc.exit_code), str(exc), exc.exit_code)
+    if action == "save":
+        #
+        # Installed at once, as the page's save starts its job: the target is
+        # saved whatever the install says, and a failed install says so.
+        #
+        try:
+            attempt = bmc_helper.perform_install({"id": arguments.id, "by": "save"}, side)
+        except (TargetError, BmcError) as exc:
+            code = exc.code if isinstance(exc, TargetError) else f"bmc_{exc.code}"
+            exit_code = exc.exit_code if isinstance(exc, TargetError) else exit_codes.REFUSED
+            return refuse(
+                code,
+                f"saved {arguments.address} for {arguments.id}, but the install failed: {exc}",
+                exit_code,
+                {"saved": result},
+            )
+        result = {**result, "install": attempt}
     if arguments.json:
         return write_document(
             out,

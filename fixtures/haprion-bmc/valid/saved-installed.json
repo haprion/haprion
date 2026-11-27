@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "cluster": null,
+  "warnings": [],
+  "error": null,
+  "operation": "bmc",
+  "request_id": "99999999-9999-4999-8999-999999999996",
+  "result": {
+    "id": "bmc-01.example.net",
+    "address": "192.0.2.7",
+    "port": 443,
+    "fingerprint_sha256": "abababababababababababababababababababababababababababababababab",
+    "username": "admin",
+    "install": {
+      "id": "bmc-01.example.net",
+      "fingerprint_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "at": "2026-11-26T03:12:00Z",
+      "by": "save",
+      "outcome": "done",
+      "code": null,
+      "message": "SSL certificate and private key were successfully uploaded",
+      "seconds": 130.0,
+      "firmware": "X13SCL-IF 01.09.06"
+    }
+  }
+}

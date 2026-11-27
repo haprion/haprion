@@ -43,23 +43,49 @@ class TheCommand(HelperCase):
         self.assertNotIn(PASSWORD, out)
         self.assertIsNone(self.registry().certificates[DEVICE].bmc)
 
-    def test_save_takes_the_fingerprint_as_shown_and_install_then_installs(self) -> None:
+    def test_save_takes_the_fingerprint_as_shown_and_installs_as_the_page_does(self) -> None:
         self.cert_bmc("remove", DEVICE)
         colons = ":".join(self.old[index : index + 2] for index in range(0, 64, 2)).upper()
 
-        code, out, _err = self.cert_bmc("save", DEVICE, *self.where(), "--sha256", colons)
+        code, out, _err = self.cert_bmc("save", DEVICE, *self.where(), "--sha256", colons, "--json")
 
         self.assertEqual(code, 0, out + _err)
-        self.assertIn(f"sudo haprion-cert-bmc install {DEVICE}", out)
+        result = assert_contract("haprion-bmc", out)["result"]
+        self.assertEqual((result["install"]["outcome"], result["install"]["by"]), ("done", "save"))
         target = self.registry().certificates[DEVICE].bmc
         assert target is not None
-        self.assertEqual((target.fingerprint_sha256, target.username), (self.old, USER))
+        #
+        # Pinned to what it serves now: the certificate just installed.
+        #
+        self.assertEqual((target.fingerprint_sha256, target.username), (self.current, USER))
 
         code, out, _err = self.cert_bmc("install", DEVICE, "--json")
 
         self.assertEqual(code, 0)
         result = assert_contract("haprion-bmc-install", out)["result"]
         self.assertEqual((result["outcome"], result["by"]), ("done", "install_now"))
+
+    def test_a_save_whose_install_failed_says_the_target_stands(self) -> None:
+        self.cert_bmc("remove", DEVICE)
+        self.bmc.upload_answer = (
+            400,
+            {
+                "error": {
+                    "@Message.ExtendedInfo": [{"Message": "SSL certificate validation failed."}]
+                }
+            },
+        )
+
+        code, out, _err = self.cert_bmc(
+            "save", DEVICE, *self.where(), "--sha256", self.old, "--json"
+        )
+
+        self.assertNotEqual(code, 0)
+        document = assert_contract("haprion-bmc", out)
+        self.assertEqual(document["error"]["code"], "bmc_refused")
+        self.assertIn("saved", document["error"]["message"])
+        self.assertEqual(document["error"]["details"]["saved"]["fingerprint_sha256"], self.old)
+        self.assertIsNotNone(self.registry().certificates[DEVICE].bmc)
 
     def test_each_answer_is_the_helpers_document(self) -> None:
         code, out, _err = self.cert_bmc("check", DEVICE, *self.where(), "--json")

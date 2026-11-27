@@ -148,6 +148,10 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 64
+        },
+        "install": {
+          "description": "haprion-cert-bmc save only: the install the save starts, as the page's save starts it. A save whose install failed is a failed answer with the install's code, and the saved target in error.details.saved.",
+          "$ref": "haprion-bmc-install.schema.json#/$defs/attempt"
         }
       },
       "additionalProperties": false

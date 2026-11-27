@@ -218,6 +218,46 @@ class TheSweep(TargetCase):
         self.assertEqual((attempt.outcome, attempt.code), ("failed", "account_unreadable"))
         self.assertEqual(self.uploads(), 0)
 
+    def test_a_bmc_that_answers_and_cannot_be_read_fails_that_bmc_and_no_other(self) -> None:
+        """Review 26-11-27, BX02: a reading fault other than silence stopped the whole sweep."""
+
+        def no_tls(address: str, port: int) -> bmc_redfish.Served:
+            raise bmc_redfish.BmcError("tls_failed", f"{address}:{port} answered, but TLS failed")
+
+        said = bmc_targets.sweep(self.root_side(), now=self.now, reader=no_tls)
+
+        self.assertEqual(said, {DEVICE: "failed"})
+        attempt = self.state().attempt
+        assert attempt is not None
+        self.assertEqual((attempt.outcome, attempt.code), ("failed", "tls_failed"))
+        self.assertEqual(self.uploads(), 0)
+
+    def test_an_upload_cut_off_is_a_failed_install_that_waits_for_install_now(self) -> None:
+        """Review 26-11-27, BX01: it read as a BMC that was off, and was tried again for ever."""
+
+        self.bmc.drop_upload = True
+        self.assertEqual(self.sweep(), {DEVICE: "failed"})
+        attempt = self.state().attempt
+        assert attempt is not None
+        self.assertEqual(attempt.code, "interrupted")
+        self.bmc.drop_upload = False
+        self.assertEqual(self.sweep(), {DEVICE: "failed"})
+        self.assertEqual(self.uploads(), 1)
+
+    def test_a_bmc_seen_serving_the_current_certificate_is_trusted_with_it(self) -> None:
+        """Review 26-11-27, BX04: an install whose wait ran out kept the old pin, and the
+        next renewal read as an untrusted BMC."""
+
+        self.bmc.context = self.bmc._context(
+            self.device.leaf.read_text(), self.device.leaf_key.read_text()
+        )
+        self.assertEqual(self.pinned(), self.old)
+
+        self.assertEqual(self.sweep(), {DEVICE: "installed"})
+
+        self.assertEqual(self.pinned(), self.current)
+        self.assertEqual(self.uploads(), 0)
+
     def test_a_target_removed_during_the_sweep_is_passed_over(self) -> None:
         def removed_while_asked(address: str, port: int) -> bmc_redfish.Served:
             served = bmc_redfish.served(address, port)

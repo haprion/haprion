@@ -308,6 +308,15 @@ class AnExternalCertificateWithABmc(BmcPageTestCase):
         self.assertEqual([action for action, *_ in self.asked], ["remove"])
         self.assertIn("bmc_target_removed", self.audit)
 
+    def test_a_check_that_was_not_answered_says_nothing_changed(self) -> None:
+        """Review 26-11-27, BX05: it said the change might have been made."""
+
+        self.answers["check"] = BmcAskError("unanswered", "the BMC helper did not answer")
+        page = self.check(self.writing_client()).text
+
+        self.assertIn("Nothing was changed; check again.", page)
+        self.assertNotIn("may have made the change", page)
+
     def test_a_removal_under_an_install_is_said_in_its_own_words(self) -> None:
         self.answers["remove"] = BmcAskError(
             "bmc_busy", "another install on a BMC is running; ask again when it has ended"
@@ -339,3 +348,15 @@ class AFailedInstallOnTheDashboard(BmcPageTestCase):
 
         self.assertIn(DEVICE, page)
         self.assertNotIn(f"/certificates/{DEVICE}/bmc", page)
+
+
+class AnUntrustedBmc(BmcPageTestCase):
+    entry = with_bmc("untrusted", served_sha256="cd" * 32)
+
+    def test_install_now_is_not_offered_where_nothing_would_be_sent(self) -> None:
+        """Review 26-11-27, BX06: the page offered it; *Change…* is the way."""
+
+        page = self.writing_client().get(f"/certificates/{DEVICE}/bmc").text
+
+        self.assertIn("Change…", page)
+        self.assertNotIn(">Install now</button>", page)

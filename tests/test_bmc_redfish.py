@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 import ssl
 import subprocess
 import tempfile
@@ -70,6 +71,12 @@ class FakeBmc:
             {"Success": {"Message": "SSL certificate and private key were successfully uploaded"}},
         )
         self.keep_old_after_reset = False
+        #
+        # Cut the connection instead of answering: the upload, or the restart
+        # as the BMC goes down (review 26-11-27, BX01).
+        #
+        self.drop_upload = False
+        self.drop_reset = False
         self.may_upload: bool | None = True
         self.away_after_reset = 0
         self.away = 0
@@ -132,10 +139,19 @@ class FakeBmc:
                         self._answer(403, {"error": {"code": "Base.1.10.InsufficientPrivilege"}})
                 elif self.path == bmc_redfish.UPLOAD:
                     bmc.uploaded = parts(self.headers["Content-Type"], body)
+                    if bmc.drop_upload:
+                        self.close_connection = True
+                        self.request.close()
+                        return
                     status, document = bmc.upload_answer
                     self._answer(status, document)
                 elif self.path == "/redfish/v1/Managers/1/Actions/Manager.Reset":
                     bmc.reset_body = json.loads(body)
+                    if bmc.drop_reset:
+                        bmc.restart()
+                        self.close_connection = True
+                        self.request.close()
+                        return
                     self._answer(200, {})
                     bmc.restart()
                 else:
@@ -270,6 +286,42 @@ class Installing(BmcCase):
             bmc_redfish.served("127.0.0.1", self.bmc.port).fingerprint_sha256, self.new
         )
         self.assertEqual(self.bmc.deleted, [], "the restart ends the session")
+
+    def test_an_upload_cut_off_is_an_install_that_failed_not_a_bmc_that_was_off(self) -> None:
+        self.bmc.drop_upload = True
+        with self.assertRaises(BmcError) as failed:
+            self.install()
+        self.assertEqual(failed.exception.code, "interrupted")
+
+    def test_a_restart_cut_off_as_the_bmc_goes_down_is_waited_out(self) -> None:
+        self.bmc.drop_reset = True
+        installed = self.install()
+        self.assertEqual(installed.fingerprint_sha256, self.new)
+
+    def test_a_bmc_that_answers_without_tls_is_said_and_not_taken_for_off(self) -> None:
+        with socket.create_server(("127.0.0.1", 0)) as plain:
+            port = plain.getsockname()[1]
+
+            def answer() -> None:
+                connection, _ = plain.accept()
+                with connection:
+                    connection.recv(1024)
+                    connection.sendall(b"HTTP/1.1 400 Bad Request\r\n\r\n")
+
+            thread = threading.Thread(target=answer, daemon=True)
+            thread.start()
+            with self.assertRaises(BmcError) as failed:
+                bmc_redfish.served("127.0.0.1", port)
+            thread.join(5)
+        self.assertEqual(failed.exception.code, "tls_failed")
+
+    def test_check_fits_inside_the_web_helpers_unit(self) -> None:
+        unit = (
+            Path(__file__).resolve().parents[1]
+            / "install/platform/examples/haprion-bmc-helper@.service.example"
+        ).read_text()
+        lives = int(unit.split("\nRuntimeMaxSec=", 1)[1].split("\n", 1)[0])
+        self.assertLess(bmc_redfish.CONNECT_TIMEOUT + 4 * bmc_redfish.CHECK_TIMEOUT, lives)
 
     def test_a_bmc_away_while_it_restarts_is_asked_again(self) -> None:
         self.bmc.away_after_reset = 2

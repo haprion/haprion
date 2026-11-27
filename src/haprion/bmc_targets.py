@@ -559,19 +559,42 @@ def sweep(
         try:
             served = reader(target.address, target.port).fingerprint_sha256
         except BmcError as exc:
-            if exc.code != "unreachable":
-                raise
-            #
-            # Switched off, or a firewall in the way: asked, and nothing more
-            # (B536). What it served when it last answered stays.
-            #
-            _record(root, certificate_id, target, None, None, now())
+            if exc.code == "unreachable":
+                #
+                # Switched off, or a firewall in the way: asked, and nothing
+                # more (B536). What it served when it last answered stays.
+                #
+                _record(root, certificate_id, target, None, None, now())
+            else:
+                #
+                # It answered and could not be read - no certificate, no TLS it
+                # will agree to: this BMC's fault, said on its row, and the
+                # sweep goes on to the others.
+                #
+                moment = now()
+                _record(
+                    root,
+                    certificate_id,
+                    target,
+                    Attempt(
+                        fingerprint_sha256=current or target.fingerprint_sha256,
+                        at=_iso(moment),
+                        by="timer",
+                        outcome="failed",
+                        code=exc.code,
+                        message=str(exc),
+                    ),
+                    None,
+                    moment,
+                )
             states = read_state(root.state)
             said[certificate_id] = status(
                 states.get(certificate_id), current=current, pinned=target.fingerprint_sha256
             )
             continue
         _record(root, certificate_id, target, None, served, now())
+        if current is not None and served == current and target.fingerprint_sha256 != current:
+            _trust_served(root, certificate_id, target, current)
         states = read_state(root.state)
         state = states[certificate_id]
         word = status(state, current=current, pinned=target.fingerprint_sha256)
@@ -619,6 +642,37 @@ def sweep(
             )
         said[certificate_id] = word
     return said
+
+
+def _trust_served(root: Root, certificate_id: str, seen: BmcTarget, current: str) -> None:
+    """Pin the certificate the BMC serves when it is the one the manager holds.
+
+    An install pins what it installed only when its wait succeeds. A BMC slower
+    to come back than the wait serves it a little later, and kept the old pin:
+    at the next renewal it served neither the pin nor the new certificate and
+    read as untrusted (review 26-11-27, BX04). It serves our own certificate, the
+    key is here, so it is the one to trust. Under the install lock, against the
+    registry as it is now: a save or a removal since the sweep read it stands.
+    """
+
+    with install_lock(root.state):
+        registry = _registry(root)
+        entry = registry.certificates.get(certificate_id) if registry is not None else None
+        target = entry.bmc if entry is not None else None
+        if (
+            target is None
+            or (target.address, target.port) != (seen.address, seen.port)
+            or target.fingerprint_sha256 == current
+        ):
+            return
+        cert_registry.set_bmc(
+            root.registry_path,
+            certificate_id=certificate_id,
+            target=replace(target, fingerprint_sha256=current),
+            runtime=root.runtime,
+            require_secure=root.require_secure,
+            lock_path=root.lock_path,
+        )
 
 
 def forget(certificate_id: str, *, directory: Path = STATE_DIRECTORY) -> None:

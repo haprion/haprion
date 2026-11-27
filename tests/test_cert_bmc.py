@@ -41,6 +41,10 @@ class TheCommand(HelperCase):
         self.assertIn(f"SHA-256   {colons}", out)
         self.assertIn("may upload certificates", out)
         self.assertNotIn(PASSWORD, out)
+        #
+        # Review 26-11-27, BX08: the next command names the user just given.
+        #
+        self.assertIn(f"--user {USER} --sha256 {self.old}", out)
         self.assertIsNone(self.registry().certificates[DEVICE].bmc)
 
     def test_save_takes_the_fingerprint_as_shown_and_installs_as_the_page_does(self) -> None:

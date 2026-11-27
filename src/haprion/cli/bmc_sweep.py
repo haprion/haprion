@@ -15,6 +15,7 @@ from typing import TextIO
 
 from haprion import bmc_targets, exit_codes
 from haprion.bmc_targets import TargetError
+from haprion.cert_registry import RegistryError
 from haprion.cli.bmc_helper import root_side
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError
 
@@ -34,7 +35,7 @@ def main(
         return exit_codes.USAGE
     try:
         said = bmc_targets.sweep(root_side(policy_path))
-    except (TargetError, ConfigError) as exc:
+    except (TargetError, ConfigError, RegistryError) as exc:
         errors.write(f"ERROR: {exc}\n")
         return getattr(exc, "exit_code", exit_codes.CONFIG)
     for certificate_id, status in said.items():

@@ -53,6 +53,12 @@ UPLOAD = "/redfish/v1/UpdateService/Oem/Supermicro/SSLCert/Actions/SmcSSLCert.Up
 CONNECT_TIMEOUT = 5.0
 REQUEST_TIMEOUT = 30.0
 #
+# *Check* and *Save* run in the web's helper, whose unit lives 90 s: the
+# handshake and four calls (sign-in, manager, firmware, the upload question)
+# fit inside it at this bound, so a slow BMC is said, not cut off.
+#
+CHECK_TIMEOUT = 15.0
+#
 # The upload has been seen to take well over 30 s on X12/H12 firmware.
 #
 UPLOAD_TIMEOUT = 180.0
@@ -68,7 +74,8 @@ class BmcError(Exception):
     """A step that did not happen, with the code it is reported under.
 
     `unreachable` - nothing answered (switched off, a firewall): never a fault
-    on its own. `untrusted` - the BMC served a certificate nobody confirmed,
+    on its own. `tls_failed` - it answered, and no TLS 1.2 or later was agreed.
+    `interrupted` - the upload was cut off after it began. `untrusted` - the BMC served a certificate nobody confirmed,
     and was sent nothing. `login_refused` - the account was not let in.
     `refused` - the BMC answered a step with an error. `not_served` - it was
     restarted and does not serve the installed certificate. `bad_answer` - an
@@ -135,12 +142,26 @@ def served(address: str, port: int = 443, *, timeout: float = CONNECT_TIMEOUT) -
     """What the BMC presents now. Sends nothing; `unreachable` when nothing answers."""
 
     try:
-        with (
-            socket.create_connection((address, port), timeout=timeout) as raw,
-            _context().wrap_socket(raw, server_hostname=address) as secure,
-        ):
+        raw = socket.create_connection((address, port), timeout=timeout)
+    except OSError as exc:
+        raise BmcError("unreachable", f"{address}:{port} did not answer: {_said(exc)}") from exc
+    try:
+        with raw, _context().wrap_socket(raw, server_hostname=address) as secure:
             der = secure.getpeercert(binary_form=True)
-    except (OSError, ssl.SSLError) as exc:
+    except (ssl.SSLEOFError, ssl.SSLZeroReturnError) as exc:
+        #
+        # Closed in the handshake: a BMC going down or coming up. Transient.
+        #
+        raise BmcError("unreachable", f"{address}:{port} closed the connection") from exc
+    except ssl.SSLError as exc:
+        #
+        # It answered, and no TLS this client speaks (1.2 or later) was agreed:
+        # a fault to be said, not a BMC that is off.
+        #
+        raise BmcError(
+            "tls_failed", f"{address}:{port} answered, but TLS failed: {_said(exc)}"
+        ) from exc
+    except OSError as exc:
         raise BmcError("unreachable", f"{address}:{port} did not answer: {_said(exc)}") from exc
     if not der:
         raise BmcError("bad_answer", f"{address}:{port} presented no certificate")
@@ -189,10 +210,12 @@ class Session:
         trusted: Collection[str],
         username: str,
         password: str,
+        timeout: float = REQUEST_TIMEOUT,
     ) -> None:
         self.address = address
         self.port = port
         self.trusted = frozenset(trusted)
+        self._timeout = timeout
         self._username = username
         self._password = password
         self._token: str | None = None
@@ -239,8 +262,9 @@ class Session:
         headers: dict[str, str],
         *,
         authenticated: bool = True,
-        timeout: float = REQUEST_TIMEOUT,
+        timeout: float | None = None,
     ) -> tuple[int, dict[str, str], bytes]:
+        timeout = self._timeout if timeout is None else timeout
         sent = dict(headers)
         if authenticated:
             if self._token is None:
@@ -354,12 +378,22 @@ class Session:
         return said
 
     def restart(self, manager: str) -> None:
-        status, _headers, answer = self._call(
-            "POST",
-            f"{manager}/Actions/Manager.Reset",
-            json.dumps({"ResetType": "GracefulRestart"}).encode(),
-            {"Content-Type": "application/json"},
-        )
+        try:
+            status, _headers, answer = self._call(
+                "POST",
+                f"{manager}/Actions/Manager.Reset",
+                json.dumps({"ResetType": "GracefulRestart"}).encode(),
+                {"Content-Type": "application/json"},
+            )
+        except BmcError as exc:
+            if exc.code != "unreachable":
+                raise
+            #
+            # Cut off as it went down: the restart has begun. What it serves
+            # when it is back decides, as after any restart.
+            #
+            self._token = None
+            return
         if status in (401, 403):
             raise BmcError("login_refused", f"{self.address} did not let the account restart it")
         if not 200 <= status < 300:
@@ -426,7 +460,16 @@ def install(
     with Session(address, port, trusted=trusted, username=username, password=password) as session:
         manager = session.manager()
         firmware = session.firmware(manager)
-        said = session.upload(leaf, key_pem)
+        try:
+            said = session.upload(leaf, key_pem)
+        except BmcError as exc:
+            if exc.code != "unreachable":
+                raise
+            #
+            # The certificate and key were on their way: whatever the BMC did
+            # with them, this is an install that failed, not a BMC that was off.
+            #
+            raise BmcError("interrupted", f"the upload was cut off: {exc}") from exc
         session.restart(manager)
     deadline = clock() + wait
     last = "nothing"
@@ -437,7 +480,11 @@ def install(
                 return Installed(expected, firmware, said, clock() - started)
             last = now.fingerprint_sha256
         except BmcError as exc:
-            if exc.code != "unreachable":
+            #
+            # Coming up: closed, refused or not yet speaking TLS, all part of a
+            # restart until the wait runs out.
+            #
+            if exc.code not in {"unreachable", "tls_failed"}:
                 raise
             last = "nothing (restarting)"
         if clock() >= deadline:
@@ -466,7 +513,12 @@ def check(address: str, port: int, *, username: str, password: str) -> Checked:
 
     now = served(address, port)
     with Session(
-        address, port, trusted={now.fingerprint_sha256}, username=username, password=password
+        address,
+        port,
+        trusted={now.fingerprint_sha256},
+        username=username,
+        password=password,
+        timeout=CHECK_TIMEOUT,
     ) as session:
         firmware = session.firmware(session.manager())
         may_upload = session.may_upload()
@@ -474,6 +526,7 @@ def check(address: str, port: int, *, username: str, password: str) -> Checked:
 
 
 __all__ = [
+    "CHECK_TIMEOUT",
     "CONNECT_TIMEOUT",
     "RESTART_INTERVAL",
     "RESTART_WAIT",

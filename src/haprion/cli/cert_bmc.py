@@ -86,7 +86,7 @@ def _sealing_key(root: Root) -> DnsProfilePublicKey:
     return DnsProfilePublicKey(key_id=key_id_of(private.key.public_key), key=private.key.public_key)
 
 
-def _text(action: str, result: dict[str, Any], out: TextIO) -> None:
+def _text(action: str, result: dict[str, Any], out: TextIO, user: str) -> None:
     if action == "check":
         served = ":".join(
             result["served_sha256"][index : index + 2] for index in range(0, 64, 2)
@@ -106,7 +106,7 @@ def _text(action: str, result: dict[str, Any], out: TextIO) -> None:
             "Nothing was changed. Compare the SHA-256 with the BMC's own web page, then:\n"
             f"  sudo haprion-cert-bmc save {result['id']} --address {result['address']}"
             f"{'' if result['port'] == 443 else ' --port ' + str(result['port'])}"
-            f" --user <user> --sha256 {result['served_sha256']}\n"
+            f" --user {user} --sha256 {result['served_sha256']}\n"
         )
     elif action == "save":
         out.write(
@@ -243,7 +243,7 @@ def main(
             ),
             exit_codes.OK,
         )
-    _text(action, result, out)
+    _text(action, result, out, getattr(arguments, "user", ""))
     return exit_codes.OK
 
 

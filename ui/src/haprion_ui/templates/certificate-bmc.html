@@ -80,7 +80,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
     <p class="table-note"></p>
-    <div class="form-buttons"><a class="danger-button" href="/certificates/{{ row.identifier }}/bmc?do=remove">Remove…</a><a class="secondary-button" href="/certificates/{{ row.identifier }}/bmc?do=change">Change…</a><button class="secondary-button" type="submit"{% if state_active %} disabled{% endif %}>Install now</button></div>
+    <div class="form-buttons"><a class="danger-button" href="/certificates/{{ row.identifier }}/bmc?do=remove">Remove…</a><a class="secondary-button" href="/certificates/{{ row.identifier }}/bmc?do=change">Change…</a>{% if bmc.status != 'untrusted' %}<button class="secondary-button" type="submit"{% if state_active %} disabled{% endif %}>Install now</button>{% endif %}</div>
   </form>
   {% endif %}
 {% endif %}

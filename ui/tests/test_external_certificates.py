@@ -453,7 +453,11 @@ class TheBmcOnThePage(CertificateFormRouteTestCase):
         ):
             client = self.writing_client()
             page = client.get(f"/certificates?view=registry&open={DEVICE}").text
-        self.assertIn('<span class="target-kind">BMC</span>', page)
+        #
+        # The mark before the address, so a long address shortened in the cell
+        # never takes it away (review 26-11-27, BX07).
+        #
+        self.assertIn(f'<span class="target-kind">BMC</span> {DEVICE}</span>', page)
         self.assertIn("Installed on", page)
         self.assertIn("serves this certificate · last answered", page)
         self.assertNotIn('<span class="target-kind">external</span>', page)

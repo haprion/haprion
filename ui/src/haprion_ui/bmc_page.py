@@ -160,8 +160,8 @@ def last_install(view: BmcView) -> str:
     return " · ".join(parts)
 
 
-def refusal(code: str, message: str, *, address: str, port: int) -> str:
-    """What the page says when the BMC service or the BMC said no."""
+def refusal(code: str, message: str, *, address: str, port: int, action: str) -> str:
+    """What the page says when the BMC service or the BMC said no; `action` is check, save or remove."""
 
     if code == "bmc_unreachable":
         return (
@@ -176,6 +176,8 @@ def refusal(code: str, message: str, *, address: str, port: int) -> str:
     if code == "expected_target_changed":
         return "The BMC now serves another certificate than the one shown. Check it again."
     if code == "unanswered":
+        if action == "check":
+            return "The BMC service did not answer in time. Nothing was changed; check again."
         return (
             "The BMC service did not answer in time, and may have made the change. "
             "Open the certificate again to see what it holds."

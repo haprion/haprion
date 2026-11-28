@@ -82,6 +82,14 @@ from typing import Any, ClassVar, TypeVar
 T = TypeVar("T")
 PODMAN = "podman"
 REPO_DIR = "/srv/haprion-repo"
+TREE = Path(__file__).resolve().parents[1]
+#
+# The warning `ensure_haproxy` gives when the maintainer's newest HAProxy
+# cannot be installed and an older one of the branch is.
+#
+HAPROXY_FALLBACK = re.compile(
+    r"^WARNING: HAProxy \S+ from \S+ cannot be installed here, so \S+ is: "
+)
 SITE_KEY = "haprion-archive-keyring.asc"
 #
 # A site built here is signed with a key of the test's own, not the
@@ -543,14 +551,57 @@ class Run:
             self.key_belongs_to_the_package(role)
         return block.group(1)
 
-    def joined_quietly(self) -> None:
-        """Step 4, run by the join, warned of nothing on an empty node."""
+    def joined_quietly(self) -> str:
+        """Step 4, run by the join, warned of nothing on an empty node.
 
+        Save that the maintainer's newest HAProxy could not be installed, so an
+        older one of the branch was (26-11-28): that warning is about the
+        repository as it is today, not about the join, and is said instead.
+        """
+
+        noted = []
         for role in NODES:
             _, log = self.on(role, "cat /var/log/haprion-node/join.log")
             warnings = [line for line in log.splitlines() if line.startswith("WARNING")]
+            noted += [f"{role}: {line}" for line in warnings if HAPROXY_FALLBACK.match(line)]
+            warnings = [line for line in warnings if not HAPROXY_FALLBACK.match(line)]
             if warnings:
                 raise Failed(f"{role}: the join warned on an empty node:\n" + "\n".join(warnings))
+        return "\n".join(noted)
+
+    def haproxy_already_there(self) -> str:
+        """HAProxy 3.4 on every machine before an older release is installed.
+
+        A machine an older release runs on already holds HAProxy, and its steps
+        leave a 3.4 as it is. An older release cannot install the newest by
+        itself when the maintainer has published a build the distribution cannot
+        take (26-11-28), so this tree's own step installs it: the newest that
+        can be.
+        """
+
+        said = []
+        for role in ("mgr", *NODES):
+            self.on(
+                role, "rm -rf /root/install/haproxy-step && mkdir -p /root/install/haproxy-step"
+            )
+            for path in (TREE / "install/node-lib.sh", TREE / "install/accounts.sh"):
+                self.podman("cp", str(path), f"{self.container(role)}:/root/install/haproxy-step/")
+            self.podman(
+                "cp",
+                str(TREE / "src/haprion/apt-keys"),
+                f"{self.container(role)}:/root/install/haproxy-step/apt-keys",
+            )
+            _, output = self.on(
+                role,
+                "export DEBIAN_FRONTEND=noninteractive; apt-get update -q >/dev/null"
+                " && apt-get install -y -q --no-install-recommends ca-certificates >/dev/null"
+                " && cd /root/install/haproxy-step"
+                " && bash -c 'source ./node-lib.sh; ensure_haproxy' 2>&1",
+            )
+            said += [
+                f"{role}: {line}" for line in output.splitlines() if HAPROXY_FALLBACK.match(line)
+            ]
+        return "\n".join(said)
 
     def create_cluster(self, block: str) -> None:
         """The cluster with its first node: its first version is published with it (B318)."""
@@ -1563,7 +1614,9 @@ def run_one(
             f"haprion-node add {NODES[1]}: joined, version 2 published",
             lambda: run.add_node(NODES[1], blocks[1]),
         )
-        step("the joins warned of nothing", run.joined_quietly)
+        noted = step("the joins warned of nothing", run.joined_quietly)
+        if noted:
+            print(f"      noted: {noted}")
         step(
             "still one rsyslogd on each node after the joins turned the traffic log on",
             run.one_rsyslogd_per_node,
@@ -4345,6 +4398,12 @@ def run_upgrade(
     try:
         image = step("an empty server image", run.image)
         step("a manager and two nodes booted", lambda: run.start(image))
+        noted = step(
+            f"HAProxy 3.4 on every machine, as {before}'s machines hold it",
+            run.haproxy_already_there,
+        )
+        if noted:
+            print(f"      noted: {noted}")
         step(
             f"the manager: {before}'s packages, haprion-setup",
             lambda: run.install_manager(old_manager),

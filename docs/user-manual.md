@@ -3176,6 +3176,10 @@ one until somebody uploads the new one by hand. For a Supermicro BMC the manager
 installs the certificate after every renewal and checks what the BMC then serves. It uses Supermicro's
 own upload over Redfish, the BMC's management API.
 
+A BMC is a receiver, listed under *Receivers* beside the hosts that fetch. The difference is the
+direction: a receiver fetches from the manager, and the manager installs on a BMC. A BMC carries one
+certificate.
+
 **What the BMC needs.**
 
 - **A Redfish account with the role Administrator.** Make a user on the BMC for the manager alone, with
@@ -3183,23 +3187,27 @@ own upload over Redfish, the BMC's management API.
   a certificate or restart the BMC.
 - **Its HTTPS port open from the manager**, 443 unless the BMC uses another. A firewall in between is the
   usual reason a BMC cannot be reached. *Check* shows it at once.
-- **An external certificate for it**, made as under
-  [Certificates installed by hand](#certificates-installed-by-hand). A certificate has at most one BMC.
+- **A certificate for it.** An external certificate is the usual one, made as under
+  [Certificates installed by hand](#certificates-installed-by-hand). Any certificate in the registry can be
+  chosen, except the interface's own and a CA's. A certificate has at most one BMC.
 
-**Adding the BMC.** Tick the certificate in the registry and press *BMC…*. Enter the BMC's name or
-address, the Redfish user and its password, and press *Check*. The manager signs in and shows:
+**Adding the BMC.** On *Certificates*, open *Receivers* and press *Add a BMC*. Enter the BMC's name or
+IPv4 address, the Redfish user and its password, choose the certificate, and press *Check*. The
+manager signs in and shows:
 
 - the firmware;
 - the certificate the BMC serves now, with its SHA-256 fingerprint;
-- whether the account may upload a certificate.
+- whether the account may upload a certificate, read from the account's role. Nothing is sent to find
+  out.
 
 Compare the fingerprint with the one your browser shows for the BMC's web page, in its certificate
 viewer. This is how you know the manager is talking to your BMC and not to something in between. If it
 matches, tick the box and press *Save and install*. The BMC restarts and is away for about two minutes.
-Meanwhile the row says *Installing*.
+Meanwhile the certificate's row says *Installing*.
 
 **After that, it runs by itself.** A timer asks every BMC every 15 minutes what it serves. When the
-certificate has been renewed, the next check installs it. The row's *State* says how it stands:
+certificate has been renewed, the next check installs it. The BMC's row under *Receivers* and the
+certificate's row say how it stands:
 
 | State | Meaning |
 |---|---|
@@ -3221,9 +3229,12 @@ or one the manager installed itself. After each install it trusts the new certif
 that serves anything else is *Untrusted BMC*: somebody replaced its certificate, or the address now
 leads to another device. Check what happened, then confirm it again with *Change…*.
 
-**Changing or removing it.** On the BMC page, *Change…* takes a new address or account. You type the
-password again, and the BMC is checked and confirmed as when it was added. *Remove…* stops the
-installs. The BMC keeps the certificate it serves, and the account is removed from the manager.
+**Changing or removing it.** Click the BMC's row under *Receivers*. *Save certificate* chooses another
+certificate for it, without the account; the timer installs it within 15 minutes, or press *Install
+now*. *Change…* takes a new account or port. You type the password again, and the BMC is checked and
+confirmed as when it was added. To move it to a new address, remove it and add it again. *Remove…*
+stops the installs. The BMC keeps the certificate it serves, and the account is removed from the
+manager.
 
 **How the account is kept.** The password is encrypted in the browser's request, against the
 installation's public key ([The DNS profile key pair](#the-dns-profile-key-pair)), and is never shown
@@ -3237,14 +3248,17 @@ it saw in `/var/lib/haprion/bmc/state.json`.
 prompt, or piped. It is never an argument.
 
 ```bash
-sudo haprion-cert-bmc check <certificate> --address <bmc> --user <user>
-sudo haprion-cert-bmc save <certificate> --address <bmc> --user <user> --sha256 <fingerprint>
-sudo haprion-cert-bmc install <certificate>
-sudo haprion-cert-bmc remove <certificate>
+sudo haprion-cert-bmc check <bmc> --user <user>
+sudo haprion-cert-bmc save <bmc> --user <user> --sha256 <fingerprint> --certificate <certificate>
+sudo haprion-cert-bmc assign <bmc> --certificate <certificate>
+sudo haprion-cert-bmc install <bmc>
+sudo haprion-cert-bmc remove <bmc>
 ```
 
-`save` takes the fingerprint `check` printed, with or without colons, and installs at once as the page
-does. Add `--port` for a BMC that is not on 443, and `--json` for a script.
+`<bmc>` is the BMC's name or address. `save` takes the fingerprint `check` printed, with or without
+colons, and installs at once as the page does. `assign` chooses another certificate, or none with
+`--none`, and asks for no password. Add `--port` for a BMC that is not on 443, and `--json` for a
+script.
 
 **When something is wrong.** The row and *Needs attention* carry the BMC's own words. Behind them:
 
@@ -3260,7 +3274,9 @@ A receiver is a host outside the clusters that fetches certificates from the man
 schedule, each with its own account, directory and key. Receivers are behind the
 **Certificates for other hosts** switch ([Features and advanced configuration](#features-and-advanced-configuration)).
 With the switch on, *Receivers* on the *Certificates* page lists them, with *Receiver*, *Transport*,
-*Account* and what each *Holds*. An admin registers, changes and removes them there.
+*Account* and what each *Holds*. An admin registers, changes and removes them there. The BMCs the
+manager installs on are listed on the same page, under *BMCs*
+([Installing on a Supermicro BMC](#installing-on-a-supermicro-bmc)).
 
 *Register a receiver* opens the form:
 

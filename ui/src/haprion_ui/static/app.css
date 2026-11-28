@@ -622,7 +622,8 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
    badge of 155. */
 .proxy-table { table-layout: fixed; }
 /* A row with an address opens it anywhere on the row (proxy-rows.js). */
-.proxy-table tr[data-href], .users-table tr[data-href], .settings-cluster-table tr[data-href], .pending-table tr[data-href] { cursor: pointer; }
+.proxy-table tr[data-href], .bmc-table tr[data-href], .users-table tr[data-href], .settings-cluster-table tr[data-href], .pending-table tr[data-href] { cursor: pointer; }
+.bmc-table tbody tr[data-href]:hover { background: var(--row-hover); }
 /* Settings -> Users: the name takes what is left and is cut, never pushed into Role. */
 .users-table { table-layout: fixed; }
 .users-table th:nth-child(2), .users-table td:nth-child(2) { width: 110px; }

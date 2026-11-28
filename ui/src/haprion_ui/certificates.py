@@ -102,7 +102,7 @@ class CertificateClusterView:
 
 @dataclass(frozen=True, slots=True)
 class BmcView:
-    """An exportable certificate's BMC, as the BMC timer last saw it (B526, B536).
+    """A certificate's BMC receiver, as the BMC timer last saw it (B526, B536, B538).
 
     `status` is the engine's word: installed, waiting (not seen serving it and
     nothing failed - switched off, behind a firewall or not reached yet, never a
@@ -169,6 +169,57 @@ def bmc_view(entry: Mapping[str, Any]) -> BmcView | None:
 
 
 BMC_STATUSES = frozenset({"installed", "waiting", "failed", "untrusted", "unknown"})
+
+
+@dataclass(frozen=True, slots=True)
+class BmcReceiverRow:
+    """A BMC receiver (B538): where it is, who signs in, and the certificate it carries.
+
+    `view` is what the timer last saw, from the row of the certificate it
+    carries; None when it carries none.
+    """
+
+    identifier: str
+    port: int
+    username: str
+    pinned_sha256: str
+    certificate: str | None
+    view: BmcView | None = None
+
+    @property
+    def state(self) -> tuple[str, str, Tone]:
+        """The row's word, what it rests on, and its tone; a BMC with no certificate is idle."""
+
+        if self.view is None:
+            return "No certificate", "Choose the certificate it carries", "info"
+        return bmc_state(self.view)
+
+
+def parse_bmc_rows(
+    block: Mapping[str, Any], certificates: Sequence[RegistryCertificateView]
+) -> tuple[BmcReceiverRow, ...]:
+    """The BMC receivers of the listing, sorted; empty from an engine older than B538."""
+
+    carried = {entry.identifier: entry.bmc for entry in certificates}
+    records = block.get("bmc_records")
+    rows: list[BmcReceiverRow] = []
+    for value in records if isinstance(records, list) else []:
+        record = _mapping(value)
+        identifier = _text(record.get("id"), "")
+        if not identifier:
+            continue
+        certificate = record.get("certificate")
+        rows.append(
+            BmcReceiverRow(
+                identifier=identifier,
+                port=port if isinstance(port := record.get("port"), int) else 443,
+                username=_text(record.get("username"), ""),
+                pinned_sha256=_text(record.get("fingerprint_sha256"), ""),
+                certificate=certificate if isinstance(certificate, str) else None,
+                view=carried.get(certificate) if isinstance(certificate, str) else None,
+            )
+        )
+    return tuple(sorted(rows, key=lambda row: row.identifier))
 
 
 def bmc_state(view: BmcView) -> tuple[str, str, Tone]:
@@ -472,6 +523,11 @@ class RegistryView:
     #
     receiver_rows: tuple[certificate_receivers.ReceiverRow, ...] = ()
     manager: str | None = None
+    #
+    # The BMC receivers (B538), shown on the receivers page beside the ones
+    # that fetch. Empty from an engine older than B538.
+    #
+    bmc_rows: tuple[BmcReceiverRow, ...] = ()
     #
     # The registry's entry for the interface's own certificate, kept out of
     # `certificates` - the list, its counts and its checkboxes - and what
@@ -1636,7 +1692,7 @@ def _registry_certificate(
         and pending_request.get("kind") != "csr",
         interface=entry.get("interface") is True,
         exportable=entry.get("exportable") is True,
-        bmc=bmc_view(entry) if entry.get("exportable") is True else None,
+        bmc=bmc_view(entry),
         fullchain_pem=_chain(entry.get("fullchain_pem"))
         if entry.get("exportable") is True
         else None,
@@ -1810,6 +1866,7 @@ def _registry_view(
         attention_count=attention_count,
         receiver_rows=receiver_rows,
         manager=manager,
+        bmc_rows=parse_bmc_rows(block, parsed),
         interface=marked[0] if marked else None,
         served=_served_view(block.get("interface_served"), now=now),
         interface_request=waiting[0] if waiting else None,

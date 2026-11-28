@@ -193,7 +193,11 @@ def deletion_states(
                     consider(identifier, _publish_state_of(job, identifier, moment, writes=writes))
             continue
         if job.operation == "bmc_install":
-            identifier = job.payload.get("id")
+            #
+            # On the row of the certificate the BMC carries (B538); a job
+            # queued before B538 named the certificate as its `id`.
+            #
+            identifier = job.payload.get("certificate", job.payload.get("id"))
             if isinstance(identifier, str):
                 consider(identifier, _bmc_install_state_of(job, moment, writes=writes))
             continue

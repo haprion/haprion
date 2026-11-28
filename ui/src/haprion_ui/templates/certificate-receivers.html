@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 {% from "_back.html" import back_button %}
 {% block title %}Receivers — Haprion{% endblock %}
-{% block head_extra %}{% if certificate_job and certificate_job.working %}<meta name="haproxy-live" content="3">{% if request.method == 'GET' %}<noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endif %}<script defer src="{{ url_for('static', path='/copy-command.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/receiver-page.js') }}?v={{ asset_token }}"></script>{% endblock %}
+{% block head_extra %}{% if certificate_job and certificate_job.working %}<meta name="haproxy-live" content="3">{% if request.method == 'GET' %}<noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endif %}<script defer src="{{ url_for('static', path='/copy-command.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/receiver-page.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/proxy-rows.js') }}?v={{ asset_token }}"></script>{% endblock %}
 {% block content %}
 {% set can_change = management_writes and role == 'admin' %}
 {#
@@ -14,7 +14,7 @@
 #}
 <section class="page-heading">
   <div class="heading-title">{{ back_button('/certificates', 'Certificates') }}<h1>Receivers</h1><p class="page-lede">Hosts outside the clusters that fetch certificates from this manager, each with its own account, directory and key.</p></div>
-  <div class="heading-badges">{% if can_change and registry_present %}<a class="secondary-button" href="/certificates/receivers/new">Register a receiver</a>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
+  <div class="heading-badges">{% if can_change and registry_present %}<a class="secondary-button" href="/certificates/receivers/new">Register a receiver</a>{% if feature_on('cert_receivers') %}<a class="secondary-button" href="/certificates/receivers/bmc/new">Add a BMC</a>{% endif %}{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 
 {% if problem %}
@@ -88,6 +88,33 @@
   </table></div>
   {% if can_change %}<p class="table-note">A receiver in use is removed from the certificate first (<em>Remove from…</em> in the registry); that is the step that says what stops being fetched.</p>{% endif %}
   {% endif %}
+</section>
+
+{#
+  BMCs (B538): receivers the manager installs on over Redfish, instead of ones
+  that fetch. A BMC carries one certificate; the whole row opens its page.
+#}
+{% if registry_present and (bmc_rows or can_change) %}
+<section class="cluster-card">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>BMCs</h3><p>{{ bmc_rows | length }} BMC{{ '' if bmc_rows | length == 1 else 's' }} the manager installs a certificate on.</p></div></div></header>
+  <div class="table-scroll"><table class="node-table receiver-table bmc-table">
+    <thead><tr><th scope="col">BMC</th><th scope="col">Certificate</th><th scope="col">State</th><th scope="col">Redfish user</th></tr></thead>
+    <tbody>
+    {% for bmc in bmc_rows %}{% set state = bmc.state %}
+    <tr class="receiver-row"{% if can_change %} data-href="/certificates/receivers/bmc/{{ bmc.identifier }}"{% endif %}>
+      <td data-label="BMC">{% if can_change %}<a href="/certificates/receivers/bmc/{{ bmc.identifier }}"><strong>{{ bmc.identifier }}</strong></a>{% else %}<strong>{{ bmc.identifier }}</strong>{% endif %}{% if bmc.port != 443 %} <span class="optional">· port {{ bmc.port }}</span>{% endif %}</td>
+      <td data-label="Certificate">{{ bmc.certificate or '' }}{% if not bmc.certificate %}<span class="optional">none</span>{% endif %}</td>
+      <td data-label="State"><span class="status-badge status-badge-{{ state[2] }}" title="{{ state[1] }}">{{ state[0] }}</span></td>
+      <td data-label="Redfish user"><code>{{ bmc.username }}</code></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4"><span class="optional">No BMC is added.{% if can_change %} <a href="/certificates/receivers/bmc/new">Add one</a> to have its certificate installed on it after every renewal.{% endif %}</span></td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endif %}
+<section class="cluster-card">
   <div class="editor-actions editor-submit list-actions"><div class="form-buttons"><a class="secondary-button" href="/certificates?view=registry">Back to certificates</a></div></div>
 </section>
 {% endblock %}

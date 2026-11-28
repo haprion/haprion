@@ -1528,6 +1528,7 @@ def build_router(config: Config) -> APIRouter:
                 "manager": manager,
                 "on_rows": on_rows,
                 "ghosts": ghosts,
+                "bmc_rows": registry.bmc_rows if registry else (),
                 "problem": problem,
             },
         )

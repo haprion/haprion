@@ -122,18 +122,19 @@ REFUSED_CALLS: dict[str, list[str]] = {
     "haprion-backup-schedule": [*BAD_CLUSTER, "--time", "03:00"],
     "haprion-cert-delete": ["Bad ID!"],
     "haprion-cert-deploy": [*BAD_CLUSTER],
-    "haprion-cert-bmc check": ["check", "Bad ID!", "--address", "192.0.2.7", "--user", "admin"],
+    "haprion-cert-bmc check": ["check", "Bad ID!", "--user", "admin"],
+    "haprion-cert-bmc assign": ["assign", "Bad ID!", "--none"],
     "haprion-cert-bmc install": ["install", "Bad ID!"],
     "haprion-cert-bmc remove": ["remove", "Bad ID!"],
     "haprion-cert-bmc save": [
         "save",
         "Bad ID!",
-        "--address",
-        "192.0.2.7",
         "--user",
         "admin",
         "--sha256",
         "ab" * 32,
+        "--certificate",
+        "bmc01.example.com",
     ],
     "haprion-cert-renew": ["--ndes-now", "no-such-certificate"],
     "haprion-cert-request": ["--id", "Bad ID!", "--domain", "Bad Name!"],
@@ -287,13 +288,15 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
     # A certificate's BMC (B526, B536). Both save and then install at once;
     # `install` is *Install now*.
     #
-    "/certificates/bmc": NotASetting("opens the BMC page of the row ticked"),
-    "/certificates/{certificate_id}/bmc/check": Command("haprion-cert-bmc check", "haprion-bmc"),
-    "/certificates/{certificate_id}/bmc/save": Command("haprion-cert-bmc save", "haprion-bmc"),
-    "/certificates/{certificate_id}/bmc/install": Command(
+    "/certificates/receivers/bmc/check": Command("haprion-cert-bmc check", "haprion-bmc"),
+    "/certificates/receivers/bmc/save": Command("haprion-cert-bmc save", "haprion-bmc"),
+    "/certificates/receivers/bmc/{bmc_id}/assign": Command(
+        "haprion-cert-bmc assign", "haprion-bmc"
+    ),
+    "/certificates/receivers/bmc/{bmc_id}/install": Command(
         "haprion-cert-bmc install", "haprion-bmc-install"
     ),
-    "/certificates/{certificate_id}/bmc/remove": Command("haprion-cert-bmc remove", "haprion-bmc"),
+    "/certificates/receivers/bmc/{bmc_id}/remove": Command("haprion-cert-bmc remove", "haprion-bmc"),
     "/settings/blocklists/new": Command("haprion-blocklists apply", "haprion-blocklists-apply"),
     "/settings/blocklists/{name}/edit": Command(
         "haprion-blocklists apply", "haprion-blocklists-apply"

@@ -633,6 +633,26 @@ def _catalogue(
         "receivers": [row["id"] for row in receivers],
         "manager": "manager.demo.example",
         "receiver_records": receivers,
+        #
+        # The BMC receivers (B538): the one above carrying its certificate,
+        # and one added but given none yet.
+        #
+        "bmc_records": [
+            {
+                "id": "bmc-01.demo.example",
+                "port": 443,
+                "username": "admin",
+                "fingerprint_sha256": device["fingerprint_sha256"],
+                "certificate": "bmc-01.demo.example",
+            },
+            {
+                "id": "bmc-02.demo.example",
+                "port": 443,
+                "username": "admin",
+                "fingerprint_sha256": "ab" * 32,
+                "certificate": None,
+            },
+        ],
     }
     rows = (
         ClusterCertificates(

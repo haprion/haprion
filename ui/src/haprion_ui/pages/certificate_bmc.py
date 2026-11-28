@@ -1,7 +1,8 @@
-"""A certificate's BMC (B526, B536): Check, Save and install, Install now, Change… and Remove….
+"""A BMC receiver (B526, B536, B538): Add a BMC, Check, Save and install, Install now, Change… and Remove….
 
-An external certificate can name the BMC it is installed on. The manager then
-installs it there after every renewal and checks what the BMC serves. The web
+A BMC is a receiver the manager installs on instead of one that fetches: it is
+listed under Receivers and carries one certificate. The manager installs that
+certificate there after every renewal and checks what the BMC serves. The web
 has no network of its own: every question to the BMC goes through root over
 `bmc.sock` (`haprion.bmc_socket`), and the account is sealed here, in the
 request that typed it, against the installation's public key - only root opens
@@ -12,7 +13,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-from collections.abc import Sequence
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -21,62 +21,79 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from haprion import bmc_socket
 from haprion.bmc_socket import BmcAskError
 from haprion.bmc_targets import TargetError, seal_account
-from haprion.config import CERTIFICATE_ID
+from haprion.config import CERTIFICATE_ID, RECEIVER_ID, receiver_id_names_a_host
 
 from haprion_ui import auth, bmc_page, certificates, db, features, operations, refusals
 from haprion_ui.access import admin_write_gate, forbidden_page
 from haprion_ui.bmc_page import BmcProblem, Checked
-from haprion_ui.certificate_reading import registry_views
 from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.refusals import refusal_page
 from haprion_ui.templates import TEMPLATES
-from haprion_ui.views import read_dns_public_key
+from haprion_ui.views import read_dns_public_key, registry_overview
 
-Row = certificates.RegistryCertificateView
+Row = certificates.BmcReceiverRow
+BACK = "/certificates/receivers"
+
+
+def is_bmc_id(value: str) -> bool:
+    """A BMC receiver's ID as the registry takes it: its name or address."""
+
+    return bool(RECEIVER_ID.fullmatch(value)) and receiver_id_names_a_host(value)
 
 
 def build_router(config: Config) -> APIRouter:
     router = APIRouter()
 
-    def back_to(certificate_id: str) -> str:
-        return "/certificates?view=registry&open=" + certificate_id
+    def page_of(bmc_id: str) -> str:
+        return "/certificates/receivers/bmc/" + bmc_id
 
-    def _gate(
-        request: Request, certificate_id: str, csrf_token: str | None = None
-    ) -> tuple[AuthenticatedSession, Row] | Response:
-        """An admin where writes are on, the form's token, and an external certificate's row."""
+    def _gate(request: Request, csrf_token: str | None = None) -> AuthenticatedSession | Response:
+        """An admin where writes are on, and the form's token."""
 
         session = admin_write_gate(config, request)
         if not isinstance(session, AuthenticatedSession):
             return session
-        if not features.is_on(features.CERT_RECEIVERS) or not CERTIFICATE_ID.fullmatch(
-            certificate_id
-        ):
+        if not features.is_on(features.CERT_RECEIVERS):
             return PlainTextResponse("Not found", status_code=404)
         if csrf_token is not None and not auth.csrf_token_is_valid(
             request.cookies.get(auth.SESSION_COOKIE, ""), csrf_token
         ):
             return forbidden_page(request, config)
-        row = registry_views(request, config).get(certificate_id)
-        if row is None or not row.exportable:
-            return refusal_page(
-                request,
-                config,
-                f"{certificate_id} is not an external certificate.",
-                back="/certificates?view=registry",
-            )
-        return session, row
+        return session
+
+    def _registry(request: Request) -> certificates.RegistryView | None:
+        return registry_overview(config, request)
+
+    def _row(registry: certificates.RegistryView | None, bmc_id: str) -> Row | None:
+        if registry is None or not is_bmc_id(bmc_id):
+            return None
+        return next((row for row in registry.bmc_rows if row.identifier == bmc_id), None)
+
+    def _choices(registry: certificates.RegistryView | None, bmc_id: str | None) -> tuple[str, ...]:
+        """The certificates a BMC may carry: not the interface's, not an authority, no other BMC's."""
+
+        if registry is None:
+            return ()
+        return tuple(
+            entry.identifier
+            for entry in registry.certificates
+            if not entry.interface
+            and entry.source_kind != "authority"
+            and (entry.bmc is None or entry.bmc.address == bmc_id)
+        )
 
     def _page(
         request: Request,
         session: AuthenticatedSession,
-        row: Row,
+        row: Row | None,
         *,
         mode: str,
+        registry: certificates.RegistryView | None = None,
         address: str = "",
         bmc_username: str = "",
         port: int = bmc_page.DEFAULT_PORT,
+        certificate: str = "",
         checked: Checked | None = None,
         sealed: tuple[str, str] | None = None,
         problem: str = "",
@@ -84,8 +101,9 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """`mode`: `form` (add, or change, and the answer to Check), `show` or `remove`."""
 
-        bmc = row.bmc
-        state = certificates.bmc_state(bmc) if bmc is not None else None
+        registry = registry if registry is not None else _registry(request)
+        view = row.view if row is not None else None
+        state = certificates.bmc_state(view) if view is not None else None
         return TEMPLATES.TemplateResponse(
             request,
             "certificate-bmc.html",
@@ -94,24 +112,25 @@ def build_router(config: Config) -> APIRouter:
                 "role": session.role,
                 "csrf_token": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
                 "row": row,
-                "bmc": bmc,
+                "view": view,
                 "mode": mode,
-                "state_label": row.state_label if bmc is not None else "",
-                "state_tone": row.state_tone if bmc is not None else "",
-                "state_active": row.state_active,
+                "state_label": state[0] if state is not None else "",
+                "state_tone": state[2] if state is not None else "",
                 "state_detail": state[1] if state is not None else "",
-                "last_install": bmc_page.last_install(bmc) if bmc is not None else "",
-                "pinned": bmc_page.fingerprint(bmc.pinned_sha256) if bmc is not None else "",
+                "last_install": bmc_page.last_install(view) if view is not None else "",
+                "pinned": bmc_page.fingerprint(row.pinned_sha256) if row is not None else "",
+                "choices": _choices(registry, row.identifier if row is not None else None),
                 "values": {
                     "address": address,
                     "bmc_username": bmc_username,
                     "port": port,
+                    "certificate": certificate,
                 },
                 "checked": checked,
                 "served": bmc_page.fingerprint(checked.served_sha256) if checked else "",
                 "sealed": sealed,
                 "public_key": read_dns_public_key(config),
-                "back": back_to(row.identifier),
+                "back": page_of(row.identifier) if row is not None else BACK,
                 "problem": problem[:600],
                 "section": "certificates",
                 "management_writes": config.management_writes,
@@ -121,12 +140,14 @@ def build_router(config: Config) -> APIRouter:
         )
 
     def _form_from(row: Row) -> dict[str, Any]:
-        """Change…: the form filled in from the saved target; the password is typed again."""
+        """Change…: the form filled in from the saved BMC; the password is typed again."""
 
-        bmc = row.bmc
-        if bmc is None:
-            return {}
-        return {"address": bmc.address, "bmc_username": bmc.username, "port": bmc.port}
+        return {
+            "address": row.identifier,
+            "bmc_username": row.username,
+            "port": row.port,
+            "certificate": row.certificate or "",
+        }
 
     def _shown_port(port: str) -> int:
         """The port drawn back into a form that was refused: the one typed, if it is one."""
@@ -136,86 +157,73 @@ def build_router(config: Config) -> APIRouter:
         except BmcProblem:
             return bmc_page.DEFAULT_PORT
 
-    # - the page ------------------------------------------------------------------
+    def _chosen(certificate: str, choices: tuple[str, ...]) -> str:
+        if not CERTIFICATE_ID.fullmatch(certificate) or certificate not in choices:
+            raise BmcProblem("Choose the certificate the BMC carries.")
+        return certificate
 
-    @router.post("/certificates/bmc", response_class=HTMLResponse)
-    def certificate_bmc_from_selection(
-        request: Request,
-        certificate: Sequence[str] = Form(default=()),
-        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
-    ) -> Response:
-        """*BMC…* in the registry's button row: one external certificate, to its own page."""
+    # - the pages -------------------------------------------------------------------
 
-        chosen = tuple(certificate)
-        if len(chosen) != 1 or not CERTIFICATE_ID.fullmatch(chosen[0]):
-            session = admin_write_gate(config, request)
-            if not isinstance(session, AuthenticatedSession):
-                return session
-            return refusal_page(
-                request,
-                config,
-                "Choose one external certificate.",
-                back="/certificates?view=registry",
-            )
-        gate = _gate(request, chosen[0], csrf_token)
-        if not isinstance(gate, tuple):
-            return gate
-        return RedirectResponse("/certificates/" + chosen[0] + "/bmc", status_code=303)
+    @router.get("/certificates/receivers/bmc/new", response_class=HTMLResponse)
+    def bmc_new(request: Request) -> Response:
+        session = _gate(request)
+        if not isinstance(session, AuthenticatedSession):
+            return session
+        return _page(request, session, None, mode="form")
 
-    @router.get("/certificates/{certificate_id}/bmc", response_class=HTMLResponse)
-    def certificate_bmc_page(request: Request, certificate_id: str) -> Response:
-        gate = _gate(request, certificate_id)
-        if not isinstance(gate, tuple):
-            return gate
-        session, row = gate
-        if row.bmc is None:
-            return _page(request, session, row, mode="form")
+    @router.get("/certificates/receivers/bmc/{bmc_id}", response_class=HTMLResponse)
+    def bmc_receiver_page(request: Request, bmc_id: str) -> Response:
+        session = _gate(request)
+        if not isinstance(session, AuthenticatedSession):
+            return session
+        registry = _registry(request)
+        row = _row(registry, bmc_id)
+        if row is None:
+            return refusal_page(request, config, f"{bmc_id} is not a BMC here.", back=BACK)
         asked = request.query_params.get("do")
         if asked == "change":
-            return _page(request, session, row, mode="form", **_form_from(row))
+            return _page(request, session, row, mode="form", registry=registry, **_form_from(row))
         if asked == "remove":
-            return _page(request, session, row, mode="remove")
-        return _page(request, session, row, mode="show")
+            return _page(request, session, row, mode="remove", registry=registry)
+        return _page(request, session, row, mode="show", registry=registry)
 
-    # - Check ---------------------------------------------------------------------
+    # - Check -----------------------------------------------------------------------
 
-    @router.post("/certificates/{certificate_id}/bmc/check", response_class=HTMLResponse)
-    def certificate_bmc_check(
+    @router.post("/certificates/receivers/bmc/check", response_class=HTMLResponse)
+    def bmc_check(
         request: Request,
-        certificate_id: str,
         address: str = Form(default="", max_length=253),
         bmc_username: str = Form(default="", max_length=256),
         password: str = Form(default="", max_length=1024),
         port: str = Form(default="", max_length=5),
+        certificate: str = Form(default="", max_length=253),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
         """Seal the account, ask the BMC through root, and show what it serves; nothing is saved."""
 
-        gate = _gate(request, certificate_id, csrf_token)
-        if not isinstance(gate, tuple):
-            return gate
-        session, row = gate
+        session = _gate(request, csrf_token)
+        if not isinstance(session, AuthenticatedSession):
+            return session
+        registry = _registry(request)
+        row = _row(registry, address.strip().lower())
         try:
             target_port = bmc_page.port_of(port)
-            target_address = bmc_page.address_of(address)
+            bmc_id = bmc_page.address_of(address).lower()
+            if not is_bmc_id(bmc_id):
+                raise BmcProblem(f"{bmc_id} is not a name or IPv4 address a receiver can have.")
             public_key = read_dns_public_key(config)
             if public_key is None:
                 raise BmcProblem("This installation has no key to seal the account with.")
             try:
                 box = seal_account(
-                    public_key,
-                    certificate_id=certificate_id,
-                    address=target_address,
-                    username=bmc_username,
-                    password=password,
+                    public_key, receiver_id=bmc_id, username=bmc_username, password=password
                 )
             except TargetError as refused:
                 raise BmcProblem(f"{str(refused)[:1].upper()}{str(refused)[1:]}.") from None
             try:
                 answer = bmc_socket.ask(
                     "check",
-                    certificate_id,
-                    address=target_address,
+                    bmc_id,
                     port=target_port,
                     key_id=public_key.key_id,
                     ciphertext=box,
@@ -223,11 +231,7 @@ def build_router(config: Config) -> APIRouter:
             except BmcAskError as refused:
                 raise BmcProblem(
                     bmc_page.refusal(
-                        refused.code,
-                        str(refused),
-                        address=target_address,
-                        port=target_port,
-                        asked="check",
+                        refused.code, str(refused), address=bmc_id, port=target_port, asked="check"
                     )
                 ) from None
             checked = bmc_page.checked(answer)
@@ -237,31 +241,35 @@ def build_router(config: Config) -> APIRouter:
                 session,
                 row,
                 mode="form",
+                registry=registry,
                 port=_shown_port(port),
                 problem=str(problem),
                 address=address.strip(),
                 bmc_username=bmc_username,
+                certificate=certificate,
             )
         return _page(
             request,
             session,
             row,
             mode="form",
+            registry=registry,
             port=target_port,
             checked=checked,
             sealed=(public_key.key_id, base64.b64encode(box).decode("ascii")),
-            address=address.strip(),
+            address=bmc_id,
             bmc_username=bmc_username,
+            certificate=certificate,
         )
 
     # - Save and install ------------------------------------------------------------
 
-    @router.post("/certificates/{certificate_id}/bmc/save", response_class=HTMLResponse)
-    def certificate_bmc_save(
+    @router.post("/certificates/receivers/bmc/save", response_class=HTMLResponse)
+    def bmc_save(
         request: Request,
-        certificate_id: str,
         address: str = Form(default="", max_length=253),
         port: str = Form(default="", max_length=5),
+        certificate: str = Form(default="", max_length=253),
         fingerprint_sha256: str = Form(default="", max_length=64),
         key_id: str = Form(default="", max_length=128),
         ciphertext_base64: str = Form(default="", max_length=8192),
@@ -269,19 +277,23 @@ def build_router(config: Config) -> APIRouter:
         idempotency_key: str = Form(default="", max_length=64),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
-        """Write the confirmed target through root, then start its install as a job."""
+        """Register or change the confirmed BMC through root, then start its install as a job."""
 
-        gate = _gate(request, certificate_id, csrf_token)
-        if not isinstance(gate, tuple):
-            return gate
-        session, row = gate
+        session = _gate(request, csrf_token)
+        if not isinstance(session, AuthenticatedSession):
+            return session
         try:
             key = UUID(idempotency_key)
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
+        registry = _registry(request)
+        row = _row(registry, address.strip().lower())
         try:
             target_port = bmc_page.port_of(port)
-            target_address = bmc_page.address_of(address)
+            bmc_id = bmc_page.address_of(address).lower()
+            if not is_bmc_id(bmc_id):
+                raise BmcProblem(f"{bmc_id} is not a name or IPv4 address a receiver can have.")
+            chosen = _chosen(certificate, _choices(registry, bmc_id))
             if confirmed != "yes":
                 raise BmcProblem(
                     "Confirm that the fingerprint is the one the BMC's own web page shows, "
@@ -299,24 +311,26 @@ def build_router(config: Config) -> APIRouter:
                 session,
                 row,
                 mode="form",
+                registry=registry,
                 address=address.strip(),
+                certificate=certificate,
                 problem=str(problem),
             )
         try:
             saved = bmc_socket.ask(
                 "save",
-                certificate_id,
-                address=target_address,
+                bmc_id,
                 port=target_port,
+                certificate=chosen,
                 fingerprint_sha256=fingerprint_sha256,
                 key_id=key_id,
                 ciphertext=box,
             )
         except BmcAskError as refused:
             detail = {
-                "certificate": certificate_id,
-                "address": target_address,
+                "bmc": bmc_id,
                 "port": target_port,
+                "certificate": chosen,
                 "fingerprint_sha256": fingerprint_sha256,
             }
             if refused.code == "unanswered":
@@ -326,14 +340,12 @@ def build_router(config: Config) -> APIRouter:
                 session,
                 row,
                 mode="form",
-                address=target_address,
+                registry=registry,
+                address=bmc_id,
                 port=target_port,
+                certificate=chosen,
                 problem=bmc_page.refusal(
-                    refused.code,
-                    str(refused),
-                    address=target_address,
-                    port=target_port,
-                    asked="save",
+                    refused.code, str(refused), address=bmc_id, port=target_port, asked="save"
                 ),
             )
         _audit(
@@ -341,9 +353,9 @@ def build_router(config: Config) -> APIRouter:
             session,
             "bmc_target_saved",
             {
-                "certificate": certificate_id,
-                "address": target_address,
+                "bmc": bmc_id,
                 "port": target_port,
+                "certificate": chosen,
                 "fingerprint_sha256": fingerprint_sha256,
                 "user": saved.get("username"),
             },
@@ -351,83 +363,129 @@ def build_router(config: Config) -> APIRouter:
         #
         # Saved: the install the save starts. A certificate job already
         # running holds it back, and the timer installs it within its interval
-        # instead (B536): the target is saved either way, and the page says so.
+        # instead (B536): the BMC is saved either way, and the page says so.
         #
-        refusal = _queue_install(request, session, certificate_id, "save", key)
+        refusal = _queue_install(request, session, bmc_id, chosen, "save", key)
         if refusal is not None:
             return refusal_page(
                 request,
                 config,
                 f"The BMC was saved, but its install was not started: {refusal} "
                 "It installs automatically within 15 minutes, or use Install now.",
-                back=back_to(certificate_id),
+                back=page_of(bmc_id),
             )
-        return RedirectResponse(back_to(certificate_id), status_code=303)
+        return RedirectResponse(page_of(bmc_id), status_code=303)
 
-    # - Install now -------------------------------------------------------------------
+    # - the certificate it carries ----------------------------------------------------
 
-    @router.post("/certificates/{certificate_id}/bmc/install", response_class=HTMLResponse)
-    def certificate_bmc_install(
+    @router.post("/certificates/receivers/bmc/{bmc_id}/assign", response_class=HTMLResponse)
+    def bmc_assign(
         request: Request,
-        certificate_id: str,
+        bmc_id: str,
+        certificate: str = Form(default="", max_length=253),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Another certificate, without the account; the timer installs it within its interval."""
+
+        session = _gate(request, csrf_token)
+        if not isinstance(session, AuthenticatedSession):
+            return session
+        registry = _registry(request)
+        row = _row(registry, bmc_id)
+        if row is None:
+            return refusal_page(request, config, f"{bmc_id} is not a BMC here.", back=BACK)
+        try:
+            chosen = _chosen(certificate, _choices(registry, bmc_id))
+            try:
+                bmc_socket.ask("assign", bmc_id, certificate=chosen)
+            except BmcAskError as refused:
+                raise BmcProblem(
+                    bmc_page.refusal(
+                        refused.code, str(refused), address=bmc_id, port=row.port, asked="assign"
+                    )
+                ) from None
+        except BmcProblem as problem:
+            return _page(
+                request,
+                session,
+                row,
+                mode="show",
+                registry=registry,
+                problem=str(problem),
+                status_code=409,
+            )
+        _audit(request, session, "bmc_assigned", {"bmc": bmc_id, "certificate": chosen})
+        return RedirectResponse(page_of(bmc_id), status_code=303)
+
+    # - Install now -----------------------------------------------------------------
+
+    @router.post("/certificates/receivers/bmc/{bmc_id}/install", response_class=HTMLResponse)
+    def bmc_install(
+        request: Request,
+        bmc_id: str,
         idempotency_key: str = Form(default="", max_length=64),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
-        gate = _gate(request, certificate_id, csrf_token)
-        if not isinstance(gate, tuple):
-            return gate
-        session, row = gate
+        session = _gate(request, csrf_token)
+        if not isinstance(session, AuthenticatedSession):
+            return session
         try:
             key = UUID(idempotency_key)
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
-        if row.bmc is None:
+        registry = _registry(request)
+        row = _row(registry, bmc_id)
+        if row is None:
+            return refusal_page(request, config, f"{bmc_id} is not a BMC here.", back=BACK)
+        if row.certificate is None:
             return refusal_page(
-                request,
-                config,
-                f"{certificate_id} names no BMC.",
-                back=back_to(certificate_id),
+                request, config, f"{bmc_id} carries no certificate.", back=page_of(bmc_id)
             )
-        refusal = _queue_install(request, session, certificate_id, "install_now", key)
+        refusal = _queue_install(request, session, bmc_id, row.certificate, "install_now", key)
         if refusal is not None:
-            return _page(request, session, row, mode="show", problem=refusal, status_code=409)
-        return RedirectResponse(back_to(certificate_id), status_code=303)
+            return _page(
+                request,
+                session,
+                row,
+                mode="show",
+                registry=registry,
+                problem=refusal,
+                status_code=409,
+            )
+        return RedirectResponse(page_of(bmc_id), status_code=303)
 
-    # - Remove… -----------------------------------------------------------------------
+    # - Remove… ---------------------------------------------------------------------
 
-    @router.post("/certificates/{certificate_id}/bmc/remove", response_class=HTMLResponse)
-    def certificate_bmc_remove(
+    @router.post("/certificates/receivers/bmc/{bmc_id}/remove", response_class=HTMLResponse)
+    def bmc_remove(
         request: Request,
-        certificate_id: str,
+        bmc_id: str,
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
-        """Take the target and its account away; the certificate stays external."""
+        """Take the BMC and its account away; the certificate stays as it is."""
 
-        gate = _gate(request, certificate_id, csrf_token)
-        if not isinstance(gate, tuple):
-            return gate
-        session, row = gate
+        session = _gate(request, csrf_token)
+        if not isinstance(session, AuthenticatedSession):
+            return session
+        registry = _registry(request)
+        row = _row(registry, bmc_id)
+        if row is None:
+            return refusal_page(request, config, f"{bmc_id} is not a BMC here.", back=BACK)
         try:
-            bmc_socket.ask("remove", certificate_id)
+            bmc_socket.ask("remove", bmc_id)
         except BmcAskError as refused:
             if refused.code == "unanswered":
                 _audit(
-                    request,
-                    session,
-                    "bmc_target_removed",
-                    {"certificate": certificate_id, "outcome": "unknown"},
+                    request, session, "bmc_target_removed", {"bmc": bmc_id, "outcome": "unknown"}
                 )
             return _page(
                 request,
                 session,
                 row,
                 mode="remove",
+                registry=registry,
                 problem=bmc_page.refusal(
-                    refused.code,
-                    str(refused),
-                    address=row.bmc.address if row.bmc else "",
-                    port=row.bmc.port if row.bmc else bmc_page.DEFAULT_PORT,
-                    asked="remove",
+                    refused.code, str(refused), address=bmc_id, port=row.port, asked="remove"
                 ),
                 status_code=409,
             )
@@ -435,11 +493,11 @@ def build_router(config: Config) -> APIRouter:
             request,
             session,
             "bmc_target_removed",
-            {"certificate": certificate_id, "address": row.bmc.address if row.bmc else None},
+            {"bmc": bmc_id, "certificate": row.certificate},
         )
-        return RedirectResponse(back_to(certificate_id), status_code=303)
+        return RedirectResponse(BACK, status_code=303)
 
-    # - shared ------------------------------------------------------------------------
+    # - shared ----------------------------------------------------------------------
 
     def _audit(
         request: Request,
@@ -447,7 +505,7 @@ def build_router(config: Config) -> APIRouter:
         action: str,
         detail: dict[str, object],
     ) -> None:
-        """The row, and the poller told: the listing it caches holds the target."""
+        """The row, and the poller told: the listing it caches holds the BMC."""
 
         with request.app.state.pool.connection() as connection:
             db.record_audit_event(connection, actor=session.username, action=action, detail=detail)
@@ -457,13 +515,18 @@ def build_router(config: Config) -> APIRouter:
     def _queue_install(
         request: Request,
         session: AuthenticatedSession,
-        certificate_id: str,
+        bmc_id: str,
+        certificate: str,
         by: str,
         key: UUID,
     ) -> str | None:
-        """Queue the `bmc_install` job; the sentence that refused it, or None."""
+        """Queue the `bmc_install` job; the sentence that refused it, or None.
 
-        payload = {"id": certificate_id, "by": by}
+        `certificate` rides along for the rows that say the install is running;
+        the helper reads which certificate the BMC carries from the registry.
+        """
+
+        payload = {"id": bmc_id, "certificate": certificate, "by": by}
         operations.prepare(
             operation="bmc_install", cluster=None, request_id=uuid4(), payload=payload
         )
@@ -488,7 +551,8 @@ def build_router(config: Config) -> APIRouter:
                 detail={
                     "operation": "bmc_install",
                     "job": job.id,
-                    "certificate": certificate_id,
+                    "bmc": bmc_id,
+                    "certificate": certificate,
                     "by": by,
                 },
             )

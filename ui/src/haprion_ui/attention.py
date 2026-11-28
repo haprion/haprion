@@ -102,7 +102,7 @@ class Item:
         #
         if self.link.startswith("/jobs"):
             return "Events"
-        if self.link.endswith("/bmc"):
+        if self.link.startswith(BMC_PAGE):
             return "BMC"
         return PAGES[self.kind]
 
@@ -126,9 +126,9 @@ class Item:
         if self.link == "/settings/api-tokens":
             return False
         #
-        # A certificate's BMC page is an admin's with writes on, as Settings is.
+        # A BMC's page is an admin's with writes on, as Settings is.
         #
-        if self.link.startswith("/certificates/") and self.link.endswith("/bmc"):
+        if self.link.startswith(BMC_PAGE):
             return True
         return self.link == "/settings" or self.link.startswith(
             ("/settings/", "/settings#", "/settings?")
@@ -224,6 +224,11 @@ class Attention:
 # raised that the dashboard has no word for (26-10-12: the template held its
 # own copy, and a new kind would have failed the page).
 #
+#
+# A BMC receiver's own page (B538), where a failed install is tried again.
+#
+BMC_PAGE = "/certificates/receivers/bmc/"
+
 PAGES = {
     "certificate": "Certificates",
     "job": "Events",
@@ -621,8 +626,8 @@ def from_certificates(
                     f"{row.state_label}: {row.state_detail}" if on_bmc else row.state_label
                 )
             link = "/settings" if row.interface else "/certificates?view=registry"
-            if on_bmc:
-                link = f"/certificates/{row.identifier}/bmc"
+            if on_bmc and bmc is not None:
+                link = BMC_PAGE + bmc.address
             items.append(
                 Item(
                     kind="certificate",

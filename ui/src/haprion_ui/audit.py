@@ -67,6 +67,16 @@ OPERATION_NAMES: Mapping[str, str] = {
 SERVER_STATES: Mapping[str, str] = {"drain": "drain", "maint": "maintenance", "ready": "ready"}
 
 
+def _bmc(detail: Mapping[str, Any]) -> str:
+    """The BMC a row names: its receiver ID, or before B538 the address or the certificate's."""
+
+    for key in ("bmc", "address"):
+        value = detail.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return f"of {_text(detail, 'certificate', '?')}"
+
+
 def _text(detail: Mapping[str, Any], key: str, fallback: str = "") -> str:
     value = detail.get(key)
     return value if isinstance(value, str) and value else fallback
@@ -224,15 +234,21 @@ ACTIVITY_PHRASES: Mapping[str, Callable[[Mapping[str, Any]], str]] = {
         if detail.get("outcome") == "unknown"
         else f"Removed the NDES server {_text(detail, 'endpoint', '?')}"
     ),
+    #
+    # `bmc` since B538 (the BMC receiver); `address` in rows written before it.
+    #
     "bmc_target_saved": lambda detail: (
-        f"Asked to save the BMC {_text(detail, 'address', '?')} for {_text(detail, 'certificate', '?')}; the service did not answer"
+        f"Asked to save the BMC {_bmc(detail)} carrying {_text(detail, 'certificate', '?')}; the service did not answer"
         if detail.get("outcome") == "unknown"
-        else f"Saved the BMC {_text(detail, 'address', '?')} for {_text(detail, 'certificate', '?')}"
+        else f"Saved the BMC {_bmc(detail)} carrying {_text(detail, 'certificate', '?')}"
     ),
     "bmc_target_removed": lambda detail: (
-        f"Asked to remove the BMC of {_text(detail, 'certificate', '?')}; the service did not answer"
+        f"Asked to remove the BMC {_bmc(detail)}; the service did not answer"
         if detail.get("outcome") == "unknown"
-        else f"Removed the BMC of {_text(detail, 'certificate', '?')}"
+        else f"Removed the BMC {_bmc(detail)}"
+    ),
+    "bmc_assigned": lambda detail: (
+        f"The BMC {_bmc(detail)} carries {_text(detail, 'certificate', '?')}"
     ),
     "certificate_download": lambda detail: (
         f"Downloaded {_text(detail, 'certificate', 'a certificate')} without its key"

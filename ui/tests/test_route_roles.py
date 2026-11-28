@@ -67,8 +67,9 @@ REFUSED_ITS_OWN_WAY = {"/logout": 200, "/proxies/{cluster}/{name}/remove": 400}
 READER_REFUSED_PAGES = {
     "/backups/restore/new",
     "/certificates/import",
-    "/certificates/{certificate_id}/bmc",
     "/certificates/new",
+    "/certificates/receivers/bmc/new",
+    "/certificates/receivers/bmc/{bmc_id}",
     "/certificates/receivers/key",
     "/certificates/receivers/new",
     "/dns-profiles/new",

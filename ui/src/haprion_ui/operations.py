@@ -60,7 +60,13 @@ from haprion.cli import (
     revert,
     server_state_helper,
 )
-from haprion.config import CERTIFICATE_ID, RECEIVER_FORMATS, RECEIVER_ID, RECEIVER_TRANSPORTS
+from haprion.config import (
+    CERTIFICATE_ID,
+    RECEIVER_FORMATS,
+    RECEIVER_ID,
+    RECEIVER_TRANSPORTS,
+    receiver_id_names_a_host,
+)
 from haprion.proxy_model import NAME, PATH_LIST_NAME
 from haprion.server_state import MAX_ADDRESSES, MAX_SERVERS, STATES, UNBLOCK_OPERATION
 from haprion.version_history import UnfitName, trailer_name
@@ -753,24 +759,34 @@ def _certificate_operation(
 
     if operation == "bmc_install":
         #
-        # A certificate installed on its BMC now (B526, B536): *Install now*,
-        # or the install that saving a target starts. The certificate's ID and
-        # who asked, and nothing else; whether it is exportable and names a
-        # BMC is the helper's to read from the registry. Over the worker's
-        # socket, since the helper opens the account with root's key and
-        # reaches the BMC over the network.
+        # The certificate a BMC receiver carries installed on it now (B526,
+        # B536, B538): *Install now*, or the install that saving a BMC starts.
+        # The BMC's ID and who asked go to the helper, which reads the
+        # certificate from the registry; `certificate` is for the rows that
+        # say the install runs, and is not sent. Over the worker's socket,
+        # since the helper opens the account with root's key and reaches the
+        # BMC over the network.
         #
-        _only(payload, "id", "by")
-        certificate_id = payload.get("id")
+        _only(payload, "id", "certificate", "by")
+        receiver_id = payload.get("id")
+        certificate_id = payload.get("certificate")
         by = payload.get("by")
-        if not isinstance(certificate_id, str) or not CERTIFICATE_ID.fullmatch(certificate_id):
-            raise BadPayload("bmc_install needs a certificate ID")
+        if (
+            not isinstance(receiver_id, str)
+            or not RECEIVER_ID.fullmatch(receiver_id)
+            or not receiver_id_names_a_host(receiver_id)
+        ):
+            raise BadPayload("bmc_install needs a BMC's name or address")
+        if certificate_id is not None and (
+            not isinstance(certificate_id, str) or not CERTIFICATE_ID.fullmatch(certificate_id)
+        ):
+            raise BadPayload("certificate must be a certificate ID")
         if by not in bmc_helper.INSTALLED_BY:
             raise BadPayload("by must be one of: " + ", ".join(bmc_helper.INSTALLED_BY))
         return Prepared(
             argv=BMC_CLIENT,
             request=bmc_helper.build_install_request(
-                str(request_id), certificate_id=certificate_id, by=by
+                str(request_id), receiver_id=receiver_id, by=by
             ),
             timeout_seconds=BMC_TIMEOUT_SECONDS,
         )

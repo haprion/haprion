@@ -366,8 +366,10 @@ class TheBmcRow(unittest.TestCase):
         (failed,) = attention.from_certificates(
             self.registry(with_bmc("failed", served_sha256=PINNED)), ()
         )
-        self.assertEqual((failed.link, failed.page), (f"/certificates/{DEVICE}/bmc", "BMC"))
-        self.assertEqual(failed.install, f"/certificates/{DEVICE}/bmc/install")
+        self.assertEqual(
+            (failed.link, failed.page), (f"/certificates/receivers/bmc/{DEVICE}", "BMC")
+        )
+        self.assertEqual(failed.install, f"/certificates/receivers/bmc/{DEVICE}/install")
         self.assertTrue(failed.message.startswith("Install failed: "))
         #
         # An admin's page with writes on: a reader is not sent to a refusal.
@@ -376,7 +378,9 @@ class TheBmcRow(unittest.TestCase):
         (untrusted,) = attention.from_certificates(
             self.registry(with_bmc("untrusted", served_sha256="cd" * 32)), ()
         )
-        self.assertEqual((untrusted.link, untrusted.install), (f"/certificates/{DEVICE}/bmc", ""))
+        self.assertEqual(
+            (untrusted.link, untrusted.install), (f"/certificates/receivers/bmc/{DEVICE}", "")
+        )
 
     def test_one_installed_by_hand_reads_as_it_always_did(self) -> None:
         row = self.row(external())
@@ -472,7 +476,7 @@ class TheBmcOnThePage(CertificateFormRouteTestCase):
         # The mark before the address, so a long address shortened in the cell
         # never takes it away (review 26-11-27, BX07).
         #
-        self.assertIn(f'<span class="target-kind">BMC</span> {DEVICE}</span>', page)
+        self.assertIn(f'{DEVICE} <span class="target-kind">BMC</span></span>', page)
         self.assertIn("Installed on", page)
         self.assertIn("serves this certificate · last answered", page)
         self.assertNotIn('<span class="target-kind">external</span>', page)

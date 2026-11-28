@@ -1139,7 +1139,7 @@ UNKNOWN_NEXT: dict[str, str] = {
     "cert_receiver": "It may have taken effect. Check the receiver under Certificates before trying again.",
     "dns_profile_apply": "Check the profile under Certificates → DNS profiles before applying it again.",
     "blocklist_apply": "Check the list under Settings → Blocklists before saving it again.",
-    "bmc_install": "It may have been installed. Check the certificate's BMC under Certificates before installing again.",
+    "bmc_install": "It may have been installed. Check the BMC under Receivers before installing again.",
     "path_list_apply": "Check the list under Settings → Path lists before saving it again.",
     "ndes_profile_apply": "Check the profile under Certificates → NDES profiles before applying it again.",
     "node_restore_prepare": _RESTORE,

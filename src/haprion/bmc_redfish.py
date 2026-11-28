@@ -32,6 +32,7 @@ import contextlib
 import hashlib
 import http.client
 import json
+import re
 import secrets
 import socket
 import ssl
@@ -44,6 +45,12 @@ from haprion.certificates import CERTIFICATE_BLOCK, CertificateError
 
 SESSIONS = "/redfish/v1/SessionService/Sessions"
 MANAGERS = "/redfish/v1/Managers"
+ACCOUNTS = "/redfish/v1/AccountService/Accounts"
+ROLES = "/redfish/v1/AccountService/Roles"
+#
+# A role ID as it is put into a path: letters, digits, `_` and `-`.
+#
+ROLE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 UPLOAD = "/redfish/v1/UpdateService/Oem/Supermicro/SSLCert/Actions/SmcSSLCert.Upload"
 #
 # A BMC that is switched off or behind a firewall answers nothing; a reading
@@ -323,26 +330,37 @@ class Session:
         )
 
     def may_upload(self) -> bool | None:
-        """Whether the account may upload a certificate, asked with an upload that holds no file.
+        """Whether the account may upload a certificate, read from its role; nothing is sent.
 
-        Measured on X13 firmware 01.09.06 (26-11-26): an account with
-        `ConfigureManager` is answered 400 `SMC.1.0.OemSslcertMissingItem`, one
-        without it 403 `Base.1.10.InsufficientPrivilege`, and nothing changes.
-        None when the BMC answers anything else: then it cannot be told here.
+        Measured on X13 firmware 01.09.06 (26-11-28): the account is listed
+        under `AccountService/Accounts` with its `RoleId`, and the role under
+        `AccountService/Roles/<RoleId>` with its `AssignedPrivileges`; uploading
+        a certificate and restarting the BMC take `ConfigureManager`, which
+        Administrator has and Operator and ReadOnly have not. None when the
+        BMC does not say: then it cannot be told here. The upload with no file
+        that asked before is logged by the BMC as a failed certificate
+        validation, so it is not sent (26-11-28).
         """
 
-        boundary = secrets.token_hex(16)
-        status, _headers, answer = self._call(
-            "POST",
-            UPLOAD,
-            f"--{boundary}--\r\n".encode(),
-            {"Content-Type": f"multipart/form-data; boundary={boundary}"},
-        )
-        if status in (401, 403):
-            return False
-        if status == 400 and b"OemSslcertMissingItem" in answer:
-            return True
-        return None
+        try:
+            listing = self._json(ACCOUNTS)
+            role: str | None = None
+            for member in listing.get("Members") or ():
+                path = _path(member.get("@odata.id")) if isinstance(member, dict) else None
+                if path is None:
+                    continue
+                account = self._json(path)
+                if account.get("UserName") == self._username:
+                    role = account.get("RoleId") if isinstance(account.get("RoleId"), str) else None
+                    break
+            if role is None or not ROLE_ID.fullmatch(role):
+                return None
+            privileges = self._json(f"{ROLES}/{role}").get("AssignedPrivileges")
+        except BmcError:
+            return None
+        if not isinstance(privileges, list):
+            return None
+        return "ConfigureManager" in privileges
 
     def upload(self, leaf_pem: str, key_pem: str) -> str:
         """Hand the BMC the certificate and key; what it said, when it took them."""
@@ -503,8 +521,10 @@ class Checked:
     may_upload: bool | None = None
 
 
-def check(address: str, port: int, *, username: str, password: str) -> Checked:
-    """What the BMC serves, that the account is let in, and whether it may upload.
+def check(
+    address: str, port: int, *, username: str, password: str, ask_upload: bool = True
+) -> Checked:
+    """What the BMC serves, that the account is let in, and (`ask_upload`) whether it may upload.
 
     For the administrator to confirm.
     The session is pinned to what the BMC served a moment before, so the
@@ -521,7 +541,7 @@ def check(address: str, port: int, *, username: str, password: str) -> Checked:
         timeout=CHECK_TIMEOUT,
     ) as session:
         firmware = session.firmware(session.manager())
-        may_upload = session.may_upload()
+        may_upload = session.may_upload() if ask_upload else None
     return Checked(now, firmware, may_upload)
 
 

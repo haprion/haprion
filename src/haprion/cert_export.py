@@ -39,7 +39,7 @@ from haprion.cert_inventory import (
 )
 from haprion.cert_publish import _memfd, _openssl, key_matches
 from haprion.certificates import MAX_CERTIFICATE_BYTES, CertificateError, leaf_fingerprint
-from haprion.config import Registry
+from haprion.config import RegisteredCertificate, Registry
 
 FORMATS = ("pem-key", "pfx", "pfx-compatible")
 MIN_PASSWORD = 8
@@ -114,7 +114,7 @@ def material(
     live: Path = LETSENCRYPT_LIVE,
     store: Path = IMPORT_STORE,
 ) -> Material:
-    """The one read of an exportable entry's key: for a download, and for its BMC (B536)."""
+    """The one read of an exportable entry's key, for a download."""
 
     entry = registry.certificates.get(certificate_id) if registry is not None else None
     if entry is None:
@@ -125,6 +125,33 @@ def material(
             f"{certificate_id} is not exportable; only a certificate made exportable, with no "
             "targets, gives its key out",
         )
+    return _read_material(entry, live=live, store=store)
+
+
+def bmc_material(
+    registry: Registry | None,
+    certificate_id: str,
+    *,
+    live: Path = LETSENCRYPT_LIVE,
+    store: Path = IMPORT_STORE,
+) -> Material:
+    """The chain and key of a certificate for the BMC it names (B538): its receiver, like any.
+
+    No `exportable` here: a BMC receives the key as a fetching receiver does.
+    """
+
+    entry = registry.certificates.get(certificate_id) if registry is not None else None
+    if entry is None:
+        raise ExportError("not_registered", f"{certificate_id} is not in the registry")
+    if entry.bmc is None:
+        raise ExportError("no_bmc", f"{certificate_id} names no BMC")
+    return _read_material(entry, live=live, store=store)
+
+
+def _read_material(entry: RegisteredCertificate, *, live: Path, store: Path) -> Material:
+    """The chain and key on file for an entry, checked to belong together."""
+
+    certificate_id = entry.certificate_id
     directory = source_directory(entry, live=live, store=store)
     try:
         fullchain = _read(directory / FULLCHAIN)

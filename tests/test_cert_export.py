@@ -117,86 +117,125 @@ PINNED = "ab" * 32
 BMC = {"address": "bmc01.example", "fingerprint_sha256": PINNED, "username": "admin"}
 
 
-class ABmcTarget(ExportableFixture):
-    """B526, B536: an exportable certificate's one BMC, held in the registry."""
+REDFISH = {"transport": "redfish", "fingerprint_sha256": PINNED, "username": "admin"}
 
-    def write(self, entry: dict[str, Any]) -> Path:
+
+class ABmcReceiver(ExportableFixture):
+    """B538: a BMC is a receiver, `transport: redfish`, kept apart from the fetching ones."""
+
+    def write(self, entry: dict[str, Any], **bmcs: dict[str, Any]) -> Path:
+        self.extra_receivers = {name.replace("_", "."): fields for name, fields in bmcs.items()}
         return self.write_config({**KEEPERS, DEVICE: entry})
 
-    def test_an_exportable_entry_takes_one_bmc_on_443_unless_said(self) -> None:
-        self.write({"source": {"kind": "import"}, "exportable": True, "bmc": BMC})
-        target = self.registry().certificates[DEVICE].bmc
-        self.assertIsNotNone(target)
-        assert target is not None
+    def test_a_certificate_names_its_bmc_among_its_receivers_on_443_unless_said(self) -> None:
+        self.write(
+            {"source": {"kind": "import"}, "exportable": True, "receivers": ["bmc01.example"]},
+            bmc01_example=REDFISH,
+        )
+        registry = self.registry()
+        entry = registry.certificates[DEVICE]
+        self.assertEqual(entry.receivers, ())
+        assert entry.bmc is not None
         self.assertEqual(
-            (target.address, target.port, target.fingerprint_sha256, target.username),
+            (entry.bmc.address, entry.bmc.port, entry.bmc.fingerprint_sha256, entry.bmc.username),
             ("bmc01.example", 443, PINNED, "admin"),
         )
-        self.write({"source": {"kind": "import"}, "exportable": True, "bmc": {**BMC, "port": 8443}})
-        self.assertEqual(self.registry().certificates[DEVICE].bmc.port, 8443)
+        self.assertNotIn("bmc01.example", registry.receivers)
+        self.assertEqual(registry.certificate_of("bmc01.example"), DEVICE)
+        self.assertEqual(registry.legacy_bmcs, ())
+        self.write(
+            {"source": {"kind": "import"}, "exportable": True, "receivers": ["bmc01.example"]},
+            bmc01_example={**REDFISH, "port": 8443},
+        )
+        bmc = self.registry().certificates[DEVICE].bmc
+        self.assertEqual(bmc.port if bmc else None, 8443)
 
-    def test_a_bmc_belongs_to_an_exportable_entry_and_is_held_to_its_shape(self) -> None:
-        for entry, said in (
-            ({"source": {"kind": "import"}, "bmc": BMC}, "exportable certificate only"),
+    def test_a_bmc_carries_one_certificate_and_a_certificate_has_one_bmc(self) -> None:
+        self.write({"source": {"kind": "import"}, "exportable": True}, bmc01_example=REDFISH)
+        self.assertIsNone(self.registry().certificate_of("bmc01.example"))
+        for entry, others, said in (
             (
-                {"source": {"kind": "import"}, "exportable": True, "bmc": {**BMC, "port": 0}},
-                "port",
+                {"source": {"kind": "import"}, "receivers": ["bmc01.example"]},
+                {
+                    "keeper-alpha.example": {
+                        "source": {"kind": "acme"},
+                        "clusters": ["alpha"],
+                        "receivers": ["bmc01.example"],
+                    }
+                },
+                "already carries",
             ),
             (
-                {"source": {"kind": "import"}, "exportable": True, "bmc": {**BMC, "port": "443"}},
-                "port",
+                {"source": {"kind": "import"}, "receivers": ["bmc01.example", "bmc02.example"]},
+                {},
+                "more than one BMC",
             ),
             (
                 {
                     "source": {"kind": "import"},
-                    "exportable": True,
-                    "bmc": {**BMC, "fingerprint_sha256": PINNED.upper()},
+                    "receivers": [{"id": "bmc01.example", "format": "pkcs12"}],
                 },
-                "fingerprint_sha256",
+                {},
+                "takes no format",
             ),
             (
-                {
-                    "source": {"kind": "import"},
-                    "exportable": True,
-                    "bmc": {**BMC, "address": "bmc 01"},
-                },
-                "address",
-            ),
-            (
-                {"source": {"kind": "import"}, "exportable": True, "bmc": {**BMC, "user": "x"}},
-                "unknown",
-            ),
-            (
-                {"source": {"kind": "import"}, "exportable": True, "bmc": {"address": "x.example"}},
-                "fingerprint_sha256",
-            ),
-            (
-                {
-                    "source": {"kind": "import"},
-                    "exportable": True,
-                    "bmc": {k: v for k, v in BMC.items() if k != "username"},
-                },
-                "username",
-            ),
-            (
-                {
-                    "source": {"kind": "import"},
-                    "exportable": True,
-                    "bmc": {**BMC, "username": " admin"},
-                },
-                "username",
+                {"source": {"kind": "import"}, "interface": True, "receivers": ["bmc01.example"]},
+                {},
+                "",
             ),
         ):
             with self.subTest(entry=entry):
-                self.write(entry)
+                self.extra_receivers = {"bmc01.example": REDFISH, "bmc02.example": REDFISH}
+                self.write_config({**KEEPERS, **others, DEVICE: entry})
                 with self.assertRaisesRegex(ConfigError, said):
                     self.registry()
 
-    def test_a_renewal_keeps_the_bmc_and_the_key_is_still_exportable(self) -> None:
+    def test_any_certificate_may_name_a_bmc_and_an_exportable_one_no_fetching_receiver(
+        self,
+    ) -> None:
+        self.write(
+            {"source": {"kind": "import"}, "receivers": ["bmc01.example"]}, bmc01_example=REDFISH
+        )
+        self.assertIsNotNone(self.registry().certificates[DEVICE].bmc)
+        self.write({"source": {"kind": "import"}, "exportable": True, "receivers": ["lb-01"]})
+        with self.assertRaisesRegex(ConfigError, "exportable"):
+            self.registry()
+
+    def test_a_bmc_receiver_is_held_to_its_shape(self) -> None:
+        for fields, name, said in (
+            ({**REDFISH, "port": 0}, "bmc01.example", "port"),
+            ({**REDFISH, "port": "443"}, "bmc01.example", "port"),
+            (
+                {**REDFISH, "fingerprint_sha256": PINNED.upper()},
+                "bmc01.example",
+                "fingerprint_sha256",
+            ),
+            ({**REDFISH, "path": "/srv/x"}, "bmc01.example", "unknown"),
+            ({k: v for k, v in REDFISH.items() if k != "username"}, "bmc01.example", "username"),
+            ({**REDFISH, "username": " admin"}, "bmc01.example", "username"),
+            (REDFISH, "bmc_01", "name or address"),
+        ):
+            with self.subTest(fields=fields, name=name):
+                self.extra_receivers = {name: fields}
+                self.write_config(
+                    {**KEEPERS, DEVICE: {"source": {"kind": "import"}, "exportable": True}}
+                )
+                with self.assertRaisesRegex(ConfigError, said):
+                    self.registry()
+
+    def test_the_form_before_b538_is_read_and_the_next_write_puts_it_among_the_receivers(
+        self,
+    ) -> None:
         self.make_exportable()
-        document = self.registered()
-        self.write({**document[DEVICE], "bmc": BMC})
+        self.extra_receivers = {}
+        self.write_config({**KEEPERS, DEVICE: {**self.registered()[DEVICE], "bmc": BMC}})
+        registry = self.registry()
+        self.assertEqual(registry.legacy_bmcs, (DEVICE,))
+        self.assertEqual(registry.certificate_of("bmc01.example"), DEVICE)
         policy, runtime = self.runtime()
+        #
+        # A renewal is an import: the first write of any kind settles it.
+        #
         import_certificate(
             certificate_id=DEVICE,
             material=self.device_material(),
@@ -210,69 +249,98 @@ class ABmcTarget(ExportableFixture):
             lock_path=self.lock,
             require_secure=False,
         )
-        self.assertEqual(self.registered()[DEVICE]["bmc"], BMC)
-        exported = export(self.registry(), DEVICE, "pem-key", live=self.live, store=self.store)
+        document = cert_registry.read_document(self.root / "certificates.yaml")
+        self.assertNotIn("bmc", document["certificates"][DEVICE])
+        self.assertEqual(document["certificates"][DEVICE]["receivers"], ["bmc01.example"])
+        self.assertEqual(document["receivers"]["bmc01.example"], REDFISH)
+        registry = self.registry()
+        self.assertEqual(registry.legacy_bmcs, ())
+        self.assertEqual(registry.certificate_of("bmc01.example"), DEVICE)
+        exported = export(registry, DEVICE, "pem-key", live=self.live, store=self.store)
         self.assertEqual(exported.content, self.device.leaf_key.read_bytes())
 
-    def test_the_writer_sets_changes_and_takes_away_the_bmc_of_an_exportable_entry_only(
-        self,
-    ) -> None:
+    def test_the_writer_registers_moves_and_takes_away_a_bmc(self) -> None:
         self.make_exportable()
         policy, runtime = self.runtime()
         path = self.root / "certificates.yaml"
 
-        def set_bmc(certificate_id: str, target: BmcTarget | None) -> None:
-            cert_registry.set_bmc(
+        def set_bmc(receiver_id: str, target: BmcTarget | None, certificate: Any) -> None:
+            cert_registry.set_bmc_receiver(
                 path,
-                certificate_id=certificate_id,
+                receiver_id=receiver_id,
                 target=target,
+                certificate_id=certificate,
                 runtime=runtime,
                 require_secure=False,
                 lock_path=self.lock,
             )
 
+        target = BmcTarget(address="bmc01.example", fingerprint_sha256=PINNED, username="admin")
+        set_bmc("bmc01.example", target, DEVICE)
+        self.assertEqual(self.registered()[DEVICE]["receivers"], ["bmc01.example"])
         set_bmc(
-            DEVICE,
-            BmcTarget(address="bmc01.example", fingerprint_sha256=PINNED, username="admin"),
+            "bmc01.example",
+            BmcTarget(
+                address="bmc01.example", fingerprint_sha256=PINNED, username="admin", port=8443
+            ),
+            cert_registry.KEEP,
         )
-        self.assertEqual(self.registered()[DEVICE]["bmc"], BMC)
-        set_bmc(
-            DEVICE,
-            BmcTarget(address="192.0.2.7", fingerprint_sha256=PINNED, username="admin", port=8443),
-        )
-        self.assertEqual(
-            self.registered()[DEVICE]["bmc"],
-            {
-                "address": "192.0.2.7",
-                "port": 8443,
-                "fingerprint_sha256": PINNED,
-                "username": "admin",
-            },
-        )
-        set_bmc(DEVICE, None)
-        self.assertEqual(
-            self.registered()[DEVICE], {"source": {"kind": "import"}, "exportable": True}
-        )
-        other = next(name for name in self.registered() if name != DEVICE)
-        for certificate_id, code in (
-            (other, "not_exportable"),
-            ("missing.example", "not_registered"),
+        self.assertEqual(self.registry().certificates[DEVICE].bmc.port, 8443)  # type: ignore[union-attr]
+        set_bmc("bmc01.example", target, None)
+        self.assertNotIn("receivers", self.registered()[DEVICE])
+        self.assertIn("bmc01.example", self.registry().bmcs)
+        set_bmc("bmc01.example", None, cert_registry.KEEP)
+        self.assertNotIn("bmc01.example", self.registry().bmcs)
+        for receiver_id, certificate, code in (
+            ("lb-01", DEVICE, "already_exists"),
+            ("bmc01.example", "missing.example", "not_registered"),
         ):
             with (
-                self.subTest(certificate_id),
+                self.subTest(receiver_id=receiver_id),
                 self.assertRaises(cert_registry.RegistryError) as refused,
             ):
                 set_bmc(
-                    certificate_id,
-                    BmcTarget(address="bmc01.example", fingerprint_sha256=PINNED, username="admin"),
+                    receiver_id,
+                    BmcTarget(address=receiver_id, fingerprint_sha256=PINNED, username="admin"),
+                    certificate,
                 )
             self.assertEqual(refused.exception.code, code)
 
-    def test_the_listing_names_the_bmc_in_its_contract(self) -> None:
+    def test_a_target_change_keeps_the_certificates_bmc(self) -> None:
+        self.write(
+            {"source": {"kind": "import"}, "clusters": ["alpha"], "receivers": ["bmc01.example"]},
+            bmc01_example=REDFISH,
+        )
+        _policy, runtime = self.runtime()
+        change = cert_registry.set_targets(
+            self.root / "certificates.yaml",
+            certificate_id=DEVICE,
+            clusters=("alpha",),
+            receivers=("lb-01",),
+            runtime=runtime,
+            require_secure=False,
+        )
+        self.assertEqual((change.added, change.abandoned), (("lb-01",), ()))
+        self.assertEqual(self.registered()[DEVICE]["receivers"], ["lb-01", "bmc01.example"])
+        with self.assertRaises(cert_registry.RegistryError) as refused:
+            cert_registry.set_targets(
+                self.root / "certificates.yaml",
+                certificate_id=DEVICE,
+                clusters=("alpha",),
+                receivers=("bmc01.example",),
+                runtime=runtime,
+                require_secure=False,
+            )
+        self.assertEqual(refused.exception.code, "unknown_receiver")
+
+    def test_the_listing_names_the_bmc_and_its_receiver_in_its_contract(self) -> None:
         from datetime import UTC, datetime
 
         self.make_exportable()
-        self.write({**self.registered()[DEVICE], "bmc": BMC})
+        self.extra_receivers = {"bmc01.example": REDFISH, "bmc02.example": REDFISH}
+        self.write_config(
+            {**KEEPERS, DEVICE: {**self.registered()[DEVICE], "receivers": ["bmc01.example"]}}
+        )
         listed = registry_result(
             self.registry(),
             certificate_root=self.dist,
@@ -285,6 +353,26 @@ class ABmcTarget(ExportableFixture):
         other = next(entry for entry in listed["certificates"] if entry["id"] != DEVICE)
         self.assertEqual(row["bmc"], {**BMC, "port": 443})
         self.assertNotIn("bmc", other)
+        self.assertEqual(
+            listed["bmc_records"],
+            [
+                {
+                    "id": "bmc01.example",
+                    "port": 443,
+                    "username": "admin",
+                    "fingerprint_sha256": PINNED,
+                    "certificate": DEVICE,
+                },
+                {
+                    "id": "bmc02.example",
+                    "port": 443,
+                    "username": "admin",
+                    "fingerprint_sha256": PINNED,
+                    "certificate": None,
+                },
+            ],
+        )
+        self.assertNotIn("bmc01.example", [r["id"] for r in listed["receiver_records"]])
         assert_contract(
             "haprion-cert-list",
             json.dumps(

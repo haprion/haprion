@@ -129,14 +129,11 @@ class FakeBmc:
                     return
                 elif self.path == bmc_redfish.UPLOAD and b"filename=" not in body:
                     #
-                    # An upload with no file, as measured on X13 (26-11-26).
+                    # An upload with no file: X13 logs it as a failed
+                    # certificate validation (MEL-0460, 26-11-28), so the
+                    # client never sends one; kept to say so if it does.
                     #
-                    if bmc.may_upload is None:
-                        self._answer(500, {"error": {"code": "Base.1.10.InternalError"}})
-                    elif bmc.may_upload:
-                        self._answer(400, {"error": {"code": "SMC.1.0.OemSslcertMissingItem"}})
-                    else:
-                        self._answer(403, {"error": {"code": "Base.1.10.InsufficientPrivilege"}})
+                    self._answer(400, {"error": {"code": "SMC.1.0.OemSslcertMissingItem"}})
                 elif self.path == bmc_redfish.UPLOAD:
                     bmc.uploaded = parts(self.headers["Content-Type"], body)
                     if bmc.drop_upload:
@@ -165,6 +162,46 @@ class FakeBmc:
                     self._answer(200, {"Members": [{"@odata.id": "/redfish/v1/Managers/1"}]})
                 elif self.path == "/redfish/v1/Managers/1":
                     self._answer(200, {"Model": "X13SCL-IF", "FirmwareVersion": "01.09.06"})
+                #
+                # The account and its role, as X13 01.09.06 lists them (26-11-28);
+                # a BMC that does not say refuses the listing.
+                #
+                elif self.path == bmc_redfish.ACCOUNTS:
+                    if bmc.may_upload is None:
+                        self._answer(403, {"error": {"code": "Base.1.10.InsufficientPrivilege"}})
+                        return
+                    self._answer(
+                        200,
+                        {
+                            "Members": [
+                                {"@odata.id": f"{bmc_redfish.ACCOUNTS}/2"},
+                                {"@odata.id": f"{bmc_redfish.ACCOUNTS}/4"},
+                            ]
+                        },
+                    )
+                elif self.path == f"{bmc_redfish.ACCOUNTS}/2":
+                    self._answer(200, {"Id": "2", "UserName": "ADMIN", "RoleId": "Administrator"})
+                elif self.path == f"{bmc_redfish.ACCOUNTS}/4":
+                    role = "Administrator" if bmc.may_upload else "Operator"
+                    self._answer(200, {"Id": "4", "UserName": USER, "RoleId": role})
+                elif self.path == f"{bmc_redfish.ROLES}/Administrator":
+                    self._answer(
+                        200,
+                        {
+                            "AssignedPrivileges": [
+                                "Login",
+                                "ConfigureManager",
+                                "ConfigureUsers",
+                                "ConfigureSelf",
+                                "ConfigureComponents",
+                            ]
+                        },
+                    )
+                elif self.path == f"{bmc_redfish.ROLES}/Operator":
+                    self._answer(
+                        200,
+                        {"AssignedPrivileges": ["Login", "ConfigureSelf", "ConfigureComponents"]},
+                    )
                 else:
                     self._answer(404, {"error": {"message": "no such resource"}})
 
@@ -392,10 +429,12 @@ class Reading(BmcCase):
             bmc_redfish.check("127.0.0.1", self.bmc.port, username=USER, password=WRONG)
         self.assertEqual(failed.exception.code, "login_refused")
 
-    def test_check_says_an_account_that_may_not_upload_before_anything_is_saved(self) -> None:
-        """26-11-26: an Operator signs in, and is refused the upload with 403."""
+    def test_check_reads_whether_the_account_may_upload_from_its_role_and_sends_nothing(
+        self,
+    ) -> None:
+        """26-11-28: the role's privileges say it; an upload with no file was logged as a failure."""
 
-        for allowed, said in ((False, False), (None, None)):
+        for allowed, said in ((True, True), (False, False), (None, None)):
             with self.subTest(allowed=allowed):
                 self.bmc.may_upload = allowed
                 checked = bmc_redfish.check(
@@ -403,6 +442,20 @@ class Reading(BmcCase):
                 )
                 self.assertIs(checked.may_upload, said)
         self.assertEqual(self.bmc.uploaded, {})
+        self.assertFalse(
+            [
+                path
+                for method, path, *_ in self.bmc.requests
+                if method == "POST" and path == bmc_redfish.UPLOAD
+            ]
+        )
+
+    def test_a_check_that_does_not_ask_reads_no_account(self) -> None:
+        checked = bmc_redfish.check(
+            "127.0.0.1", self.bmc.port, username=USER, password=PASSWORD, ask_upload=False
+        )
+        self.assertIsNone(checked.may_upload)
+        self.assertFalse([path for _m, path, *_ in self.bmc.requests if "AccountService" in path])
 
     def test_a_path_the_bmc_names_is_held_to_its_own_tree(self) -> None:
         for value, held in (

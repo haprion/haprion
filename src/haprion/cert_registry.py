@@ -47,6 +47,7 @@ import yaml
 from haprion import atomic_file, exit_codes, labels, safe_yaml
 from haprion.cert_lock import DEFAULT_LOCK_PATH, LOCK_WAIT_SECONDS, hold
 from haprion.config import (
+    BMC_TRANSPORT,
     DEFAULT_RECEIVER_FORMAT,
     BmcTarget,
     ConfigError,
@@ -132,17 +133,60 @@ def render(
 ) -> str:
     """The registry file as `write` puts it on disk, for a caller changing it with other files."""
 
+    settled_receivers, settled_certificates = settled_bmcs(
+        (document.get("receivers") or {}) if receivers is None else receivers, certificates
+    )
     return HEADER + yaml.safe_dump(
         {
             "schema_version": 1,
-            "receivers": (document.get("receivers") or {})
-            if receivers is None
-            else dict(receivers),
-            "certificates": dict(certificates),
+            "receivers": settled_receivers,
+            "certificates": settled_certificates,
         },
         sort_keys=False,
         allow_unicode=True,
     )
+
+
+def bmc_entry(target: BmcTarget) -> dict[str, Any]:
+    """A BMC receiver as the registry's receiver block holds it (B538); its ID is the address."""
+
+    return {
+        "transport": BMC_TRANSPORT,
+        **({"port": target.port} if target.port != 443 else {}),
+        "fingerprint_sha256": target.fingerprint_sha256,
+        "username": target.username,
+    }
+
+
+def settled_bmcs(
+    receivers: Mapping[str, Any], certificates: Mapping[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Both halves with every BMC in the form B538 gave it, whatever form it was read in.
+
+    Before B538 a certificate held its BMC under `bmc`. Every writer of the
+    registry passes through here, so the first write after the update moves it
+    to the receiver block, named by its address, and into the certificate's
+    receivers - with nothing else changed.
+    """
+
+    settled_receivers = dict(receivers)
+    settled_certificates: dict[str, Any] = {}
+    for certificate_id, raw in certificates.items():
+        old = raw.get("bmc") if isinstance(raw, Mapping) else None
+        if not isinstance(old, Mapping):
+            settled_certificates[certificate_id] = raw
+            continue
+        entry = {key: value for key, value in raw.items() if key != "bmc"}
+        address = str(old.get("address"))
+        settled_receivers[address] = {
+            "transport": BMC_TRANSPORT,
+            **{key: old[key] for key in ("port", "fingerprint_sha256", "username") if key in old},
+        }
+        named, _formats = named_receivers(entry)
+        if address not in named:
+            entry["receivers"] = [*(entry.get("receivers") or ()), address]
+        settled_certificates[certificate_id] = entry
+    return settled_receivers, settled_certificates
 
 
 def write(
@@ -320,48 +364,96 @@ class KEEP:
     """`written_entry`'s word for a key the writer leaves as it is on file."""
 
 
-def set_bmc(
+def set_bmc_receiver(
     path: Path,
     *,
-    certificate_id: str,
+    receiver_id: str,
     target: BmcTarget | None,
+    certificate_id: str | None | type[KEEP] = KEEP,
     runtime: RuntimeConfig,
     require_secure: bool = True,
     lock_path: Path = DEFAULT_LOCK_PATH,
     lock_held: bool = False,
 ) -> None:
-    """Give an exportable certificate its BMC, change it, or (None) take it away (B526, B536).
+    """Register a BMC receiver, change it, or (None) take it away, and say which certificate it carries (B538).
 
     Root work, from the BMC helper only: the address is where the manager will
-    send a certificate's key, so a job payload never names it. The entry has to
-    exist and be exportable - the reader refuses a BMC on any other, and the
-    write loads the candidate back through it before it replaces the file.
+    send a certificate's key, so a job payload never names it. `certificate_id`
+    moves the BMC to that certificate's receivers (None: to none), and KEEP
+    leaves it where it is. A BMC carries one certificate and a certificate has
+    one BMC; the write loads the candidate back through the reader before it
+    replaces the file.
     """
 
     with nullcontext() if lock_held else locked(lock_path):
         document = read_document(path)
-        certificates = dict(document.get("certificates") or {})
-        existing = certificates.get(certificate_id)
-        if not isinstance(existing, Mapping):
+        receivers, certificates = settled_bmcs(
+            document.get("receivers") or {}, document.get("certificates") or {}
+        )
+        if target is not None and target.address != receiver_id:
             raise RegistryError(
-                "not_registered",
-                f"{certificate_id} is not in the registry",
+                "bad_input",
+                f"a BMC's receiver ID is its address: {receiver_id} is not {target.address}",
+            )
+        existing = receivers.get(receiver_id)
+        if existing is not None and (
+            not isinstance(existing, Mapping) or existing.get("transport") != BMC_TRANSPORT
+        ):
+            raise RegistryError(
+                "already_exists",
+                f"{receiver_id} is already a receiver that fetches; a BMC needs a name of its own",
                 exit_code=exit_codes.REFUSED,
             )
-        if existing.get("exportable") is not True:
-            raise RegistryError(
-                "not_exportable",
-                f"{certificate_id} is not exportable; only an exportable certificate has a BMC",
-                exit_code=exit_codes.REFUSED,
+        carrying = [
+            cid
+            for cid, entry in certificates.items()
+            if isinstance(entry, Mapping) and receiver_id in named_receivers(entry)[0]
+        ]
+        if target is None or certificate_id is not KEEP:
+            chosen = (
+                certificate_id if target is not None and isinstance(certificate_id, str) else None
             )
-        certificates[certificate_id] = written_entry(existing, bmc=target)
+            if chosen is not None:
+                entry = certificates.get(chosen)
+                if not isinstance(entry, Mapping):
+                    raise RegistryError(
+                        "not_registered",
+                        f"{chosen} is not in the registry",
+                        exit_code=exit_codes.REFUSED,
+                    )
+            for cid in carrying:
+                if cid != chosen:
+                    certificates[cid] = _without_receiver(certificates[cid], receiver_id)
+            if chosen is not None and chosen not in carrying:
+                entry = dict(certificates[chosen])
+                entry["receivers"] = [*(entry.get("receivers") or ()), receiver_id]
+                certificates[chosen] = entry
+        if target is None:
+            receivers.pop(receiver_id, None)
+        else:
+            receivers[receiver_id] = bmc_entry(target)
         write(
             path,
             document=document,
             certificates=certificates,
+            receivers=receivers,
             runtime=runtime,
             require_secure=require_secure,
         )
+
+
+def _without_receiver(entry: Mapping[str, Any], receiver_id: str) -> dict[str, Any]:
+    """The entry with one receiver taken out of its list; the key goes when the list is empty."""
+
+    kept = [
+        item
+        for item in entry.get("receivers") or ()
+        if (item.get("id") if isinstance(item, Mapping) else item) != receiver_id
+    ]
+    changed = {key: value for key, value in entry.items() if key != "receivers"}
+    if kept:
+        changed["receivers"] = kept
+    return changed
 
 
 def drop_receiver(
@@ -483,7 +575,6 @@ def written_entry(
     receivers: Sequence[Any] | None = None,
     interface: bool = False,
     exportable: bool = False,
-    bmc: BmcTarget | None | type[KEEP] = KEEP,
 ) -> dict[str, Any]:
     """The registry entry a writer stores: the one on file with only what it names changed.
 
@@ -493,8 +584,8 @@ def written_entry(
     there afterwards. `source` holds only the source keys the caller sets;
     `clusters` and `receivers` replace the target lists (the receivers as the
     registry's elements, an empty list leaves the key out) and None keeps what
-    is on file; `interface` and `exportable` only ever set their mark. `bmc` is
-    kept unless named: a target sets it, None takes it away (B526).
+    is on file; `interface` and `exportable` only ever set their mark. A BMC
+    is a receiver like the others (B538) and travels in `receivers`.
     """
 
     entry: dict[str, Any] = copy.deepcopy(dict(existing)) if existing else {}
@@ -510,15 +601,6 @@ def written_entry(
         entry["interface"] = True
     if exportable:
         entry["exportable"] = True
-    if bmc is None:
-        entry.pop("bmc", None)
-    elif isinstance(bmc, BmcTarget):
-        entry["bmc"] = {
-            "address": bmc.address,
-            **({"port": bmc.port} if bmc.port != 443 else {}),
-            "fingerprint_sha256": bmc.fingerprint_sha256,
-            "username": bmc.username,
-        }
     return {"source": entry.pop("source"), **entry}
 
 
@@ -602,6 +684,12 @@ def set_targets(
 
     before_clusters = tuple(entry.get("clusters") or ())
     before_receivers, before_formats = named_receivers(entry)
+    #
+    # The certificate's BMC is not one of the targets this replaces (B538):
+    # it is chosen on the BMC's side, and stays.
+    #
+    kept_bmcs = tuple(r for r in before_receivers if r in registry.bmcs)
+    before_receivers = tuple(r for r in before_receivers if r not in registry.bmcs)
     after_clusters = tuple(sorted(set(clusters)))
     after_receivers = tuple(sorted(set(receivers)))
     #
@@ -619,10 +707,13 @@ def set_targets(
     certificates[certificate_id] = written_entry(
         entry,
         clusters=list(after_clusters),
-        receivers=receiver_elements(
-            after_receivers,
-            {k: v for k, v in after_formats.items() if v is not None},
-        ),
+        receivers=[
+            *receiver_elements(
+                after_receivers,
+                {k: v for k, v in after_formats.items() if v is not None},
+            ),
+            *kept_bmcs,
+        ],
     )
 
     before = set(before_clusters) | set(before_receivers)

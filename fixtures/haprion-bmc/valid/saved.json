@@ -9,9 +9,10 @@
   "request_id": "99999999-9999-4999-8999-999999999991",
   "result": {
     "id": "bmc-01.example.net",
-    "address": "192.0.2.7",
+    "address": "bmc-01.example.net",
     "port": 443,
     "fingerprint_sha256": "abababababababababababababababababababababababababababababababab",
-    "username": "admin"
+    "username": "admin",
+    "certificate": "device-01.example.net"
   }
 }

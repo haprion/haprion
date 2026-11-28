@@ -1,13 +1,16 @@
-"""The BMCs exportable certificates are installed on, as root keeps them (B526, B536).
+"""The BMC receivers certificates are installed on, as root keeps them (B526, B536, B538).
 
-Three things live here, and nothing else touches them:
+Everything here is keyed by the BMC receiver's ID, its name or address. Three
+things live here, and nothing else touches them:
 
 - **The account** a BMC is signed in to with, sealed by the web against the
-  installation's public key (B165) and kept as a root-only file per
-  certificate. The box is bound to the certificate and the BMC's address, so
-  it cannot be moved to another target; only root opens it, when it signs in.
-- **The install**: the certificate read the one way an exportable key is read
-  (`cert_export.material`), handed to the BMC (`bmc_redfish.install`), and the
+  installation's public key (B165) and kept as a root-only file per BMC. The
+  box is bound to the BMC's ID, so it cannot be moved to another BMC; only
+  root opens it, when it signs in. A box sealed before B538 is bound to the
+  certificate and the address instead, and opens for the BMC at that address.
+- **The install**: the certificate the BMC carries, read the one way a key
+  leaves the manager for a host (`cert_export.material`), handed to the BMC
+  (`bmc_redfish.install`), and the
   pinned fingerprint moved to the certificate the BMC now serves. One install
   at a time, under one lock.
 - **The sweep** the timer runs: each BMC asked what it serves, and the
@@ -37,7 +40,7 @@ from pathlib import Path
 
 from haprion import atomic_file, bmc_redfish, cert_registry, exit_codes
 from haprion.bmc_redfish import BmcError
-from haprion.cert_export import ExportError, material
+from haprion.cert_export import ExportError, bmc_material
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haprion.cert_lock import DEFAULT_LOCK_PATH
 from haprion.config import (
@@ -47,6 +50,7 @@ from haprion.config import (
     Registry,
     RuntimeConfig,
     load_registry,
+    receiver_id_names_a_host,
 )
 from haprion.dns_profile_keys import (
     DnsProfilePrivateKey,
@@ -67,6 +71,11 @@ STATE_LOCK_FILE = "state.lock"
 #
 READING_FAULT = "reading_"
 SCHEMA_VERSION = 1
+#
+# The account box and its file: 2 is bound to the BMC receiver (B538), 1 to the
+# certificate and the address it had before.
+#
+ACCOUNT_SCHEMA = 2
 #
 # The registry keeps the user in the clear for the page; one rule for both.
 #
@@ -110,18 +119,16 @@ def check_account(username: object, password: object) -> tuple[str, str]:
 def seal_account(
     key: DnsProfilePublicKey,
     *,
-    certificate_id: str,
-    address: str,
+    receiver_id: str,
     username: str,
     password: str,
 ) -> bytes:
-    """The box the web hands root: the account, bound to the certificate and the address."""
+    """The box the web hands root: the account, bound to the BMC receiver."""
 
     check_account(username, password)
     record = {
-        "schema_version": SCHEMA_VERSION,
-        "certificate_id": certificate_id,
-        "address": address,
+        "schema_version": ACCOUNT_SCHEMA,
+        "receiver_id": _receiver_id(receiver_id),
         "key_id": key.key_id,
         "username": username,
         "password": password,
@@ -134,10 +141,9 @@ def open_account(
     key_id: str,
     ciphertext: bytes,
     *,
-    certificate_id: str,
-    address: str,
+    receiver_id: str,
 ) -> tuple[str, str]:
-    """The user and password, when the box is this target's and one of `keys` opens it."""
+    """The user and password, when the box is this BMC's and one of `keys` opens it."""
 
     if not 48 <= len(ciphertext) <= MAX_CIPHERTEXT:
         raise TargetError("account_unreadable", "the sealed account has an invalid size")
@@ -152,25 +158,39 @@ def open_account(
         record = json.loads(open_sealed(key, ciphertext))
     except (KeyFileError, ValueError, UnicodeError):
         raise TargetError("account_unreadable", "the sealed account could not be opened") from None
-    expected = {"schema_version", "certificate_id", "address", "key_id", "username", "password"}
-    if not isinstance(record, dict) or set(record) != expected:
+    if not isinstance(record, dict):
         raise TargetError("account_unreadable", "the opened account has an invalid shape")
-    if (
-        record["schema_version"] != SCHEMA_VERSION
-        or record["certificate_id"] != certificate_id
-        or record["address"] != address
-        or record["key_id"] != key_id
-    ):
-        raise TargetError(
-            "account_unreadable", "the sealed account belongs to another certificate or BMC"
+    if record.get("schema_version") == ACCOUNT_SCHEMA:
+        expected = {"schema_version", "receiver_id", "key_id", "username", "password"}
+        bound = record.get("receiver_id") == receiver_id
+    else:
+        #
+        # Sealed before B538, for a certificate and the BMC's address: it is
+        # this BMC's when the address is the BMC's ID.
+        #
+        expected = {"schema_version", "certificate_id", "address", "key_id", "username", "password"}
+        bound = (
+            record.get("schema_version") == SCHEMA_VERSION and record.get("address") == receiver_id
         )
+    if set(record) != expected:
+        raise TargetError("account_unreadable", "the opened account has an invalid shape")
+    if not bound or record["key_id"] != key_id:
+        raise TargetError("account_unreadable", "the sealed account belongs to another BMC")
     return check_account(record["username"], record["password"])
 
 
-def _certificate_id(certificate_id: str) -> str:
-    if not CERTIFICATE_ID.fullmatch(certificate_id):
-        raise TargetError("bad_input", "not a certificate ID")
-    return certificate_id
+def _receiver_id(receiver_id: str) -> str:
+    if not receiver_id_names_a_host(receiver_id):
+        raise TargetError("bad_input", "not a BMC's name or address")
+    return receiver_id
+
+
+def _state_key(key: str) -> str:
+    """A key of the state file: a BMC's ID, or a certificate's from before B538."""
+
+    if not (receiver_id_names_a_host(key) or CERTIFICATE_ID.fullmatch(key)):
+        raise TargetError("bad_input", "not a BMC's name or address")
+    return key
 
 
 def _read_root_file(path: Path, *, require_secure: bool) -> bytes:
@@ -194,45 +214,55 @@ def _read_root_file(path: Path, *, require_secure: bool) -> bytes:
 
 
 def write_account(
-    certificate_id: str, key_id: str, ciphertext: bytes, *, directory: Path = ACCOUNTS
+    receiver_id: str, key_id: str, ciphertext: bytes, *, directory: Path = ACCOUNTS
 ) -> None:
-    _certificate_id(certificate_id)
+    _receiver_id(receiver_id)
     if not 48 <= len(ciphertext) <= MAX_CIPHERTEXT:
         raise TargetError("bad_input", "the sealed account has an invalid size")
     directory.mkdir(mode=0o700, exist_ok=True)
     document = {
-        "schema_version": SCHEMA_VERSION,
-        "certificate_id": certificate_id,
+        "schema_version": ACCOUNT_SCHEMA,
+        "receiver_id": receiver_id,
         "key_id": key_id,
         "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
     }
     atomic_file.write(
-        directory / f"{certificate_id}.json",
+        directory / f"{receiver_id}.json",
         (json.dumps(document, indent=2) + "\n").encode(),
         mode=0o600,
     )
 
 
 def read_account(
-    certificate_id: str, *, directory: Path = ACCOUNTS, require_secure: bool = True
+    receiver_id: str, *, directory: Path = ACCOUNTS, require_secure: bool = True
 ) -> tuple[str, bytes]:
-    """The key ID and the box kept for a certificate's BMC."""
+    """The key ID and the box kept for a BMC."""
 
-    path = directory / f"{_certificate_id(certificate_id)}.json"
+    path = directory / f"{_receiver_id(receiver_id)}.json"
     try:
-        content = _read_root_file(path, require_secure=require_secure)
+        return _account_file(path, require_secure=require_secure)
     except FileNotFoundError:
         raise TargetError(
-            "account_missing", f"no account is kept for {certificate_id}'s BMC", exit_codes.CONFIG
+            "account_missing", f"no account is kept for the BMC {receiver_id}", exit_codes.CONFIG
         ) from None
+
+
+def _account_file(path: Path, *, require_secure: bool) -> tuple[str, bytes]:
+    """An account file named for what it is kept for: a BMC, or before B538 a certificate."""
+
+    content = _read_root_file(path, require_secure=require_secure)
     try:
         document = json.loads(content)
-        if (
-            not isinstance(document, dict)
-            or document.get("schema_version") != SCHEMA_VERSION
-            or document.get("certificate_id") != certificate_id
-            or not isinstance(document.get("key_id"), str)
-        ):
+        if not isinstance(document, dict) or not isinstance(document.get("key_id"), str):
+            raise ValueError("shape")
+        named = (
+            document.get("receiver_id")
+            if document.get("schema_version") == ACCOUNT_SCHEMA
+            else document.get("certificate_id")
+            if document.get("schema_version") == SCHEMA_VERSION
+            else None
+        )
+        if named != path.stem:
             raise ValueError("shape")
         return document["key_id"], base64.b64decode(document["ciphertext"], validate=True)
     except (ValueError, KeyError, TypeError, binascii.Error):
@@ -241,9 +271,9 @@ def read_account(
         ) from None
 
 
-def remove_account(certificate_id: str, *, directory: Path = ACCOUNTS) -> None:
+def remove_account(receiver_id: str, *, directory: Path = ACCOUNTS) -> None:
     with contextlib.suppress(FileNotFoundError):
-        (directory / f"{_certificate_id(certificate_id)}.json").unlink()
+        (directory / f"{_receiver_id(receiver_id)}.json").unlink()
 
 
 # --- what happened -------------------------------------------------------------------------
@@ -292,9 +322,9 @@ def read_state(directory: Path = STATE_DIRECTORY) -> dict[str, TargetState]:
         if not isinstance(document, dict) or document.get("schema_version") != SCHEMA_VERSION:
             raise ValueError("shape")
         found: dict[str, TargetState] = {}
-        for certificate_id, raw in document["targets"].items():
+        for key, raw in document["targets"].items():
             attempt = raw.get("attempt")
-            found[_certificate_id(certificate_id)] = TargetState(
+            found[_state_key(key)] = TargetState(
                 **{**raw, "attempt": Attempt(**attempt) if attempt else None}
             )
         return found
@@ -393,18 +423,27 @@ def _registry(root: Root) -> Registry:
     return load_registry(root.registry_path, require_secure=root.require_secure)
 
 
-def _target(registry: Registry | None, certificate_id: str) -> BmcTarget:
-    entry = registry.certificates.get(certificate_id) if registry is not None else None
-    if entry is None:
-        raise TargetError("not_registered", f"{certificate_id} is not in the registry")
-    if entry.bmc is None:
-        raise TargetError("no_bmc", f"{certificate_id} names no BMC")
-    return entry.bmc
+def _target(registry: Registry | None, receiver_id: str) -> BmcTarget:
+    target = registry.bmcs.get(receiver_id) if registry is not None else None
+    if target is None:
+        raise TargetError("not_registered", f"{receiver_id} is not a BMC in the registry")
+    return target
+
+
+def _carried(registry: Registry, receiver_id: str) -> str:
+    """The certificate the BMC carries; a BMC that carries none has nothing to install."""
+
+    certificate_id = registry.certificate_of(receiver_id)
+    if certificate_id is None:
+        raise TargetError(
+            "no_certificate", f"the BMC {receiver_id} carries no certificate; choose one"
+        )
+    return certificate_id
 
 
 def install(
     root: Root,
-    certificate_id: str,
+    receiver_id: str,
     *,
     by: str,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -416,20 +455,17 @@ def install(
         raise TargetError("bad_input", f"by is one of: {', '.join(BY)}")
     with install_lock(root.state, wait=by == "timer"):
         registry = _registry(root)
-        target = _target(registry, certificate_id)
+        target = _target(registry, receiver_id)
+        certificate_id = _carried(registry, receiver_id)
         try:
-            read = material(registry, certificate_id, live=root.live, store=root.store)
+            read = bmc_material(registry, certificate_id, live=root.live, store=root.store)
         except ExportError as exc:
             raise TargetError(exc.code, str(exc), exc.exit_code) from exc
         key_id, ciphertext = read_account(
-            certificate_id, directory=root.accounts, require_secure=root.require_secure
+            receiver_id, directory=root.accounts, require_secure=root.require_secure
         )
         username, password = open_account(
-            root.private_keys,
-            key_id,
-            ciphertext,
-            certificate_id=certificate_id,
-            address=target.address,
+            root.private_keys, key_id, ciphertext, receiver_id=receiver_id
         )
         started = now()
         try:
@@ -455,7 +491,7 @@ def install(
                 code=exc.code,
                 message=str(exc),
             )
-            _record(root, certificate_id, target, attempt, None, now())
+            _record(root, receiver_id, target, attempt, None, now())
             return attempt
         attempt = Attempt(
             fingerprint_sha256=read.fingerprint,
@@ -473,15 +509,15 @@ def install(
         # The certificate the BMC serves is now the one to trust (B526): the
         # one confirmed when the target was added is not served any more.
         #
-        cert_registry.set_bmc(
+        cert_registry.set_bmc_receiver(
             root.registry_path,
-            certificate_id=certificate_id,
+            receiver_id=receiver_id,
             target=replace(target, fingerprint_sha256=read.fingerprint),
             runtime=root.runtime,
             require_secure=root.require_secure,
             lock_path=root.lock_path,
         )
-        _record(root, certificate_id, target, attempt, read.fingerprint, now())
+        _record(root, receiver_id, target, attempt, read.fingerprint, now())
         return attempt
 
 
@@ -505,30 +541,30 @@ def _state_lock(directory: Path) -> Iterator[None]:
 
 def _record(
     root: Root,
-    certificate_id: str,
+    receiver_id: str,
     target: BmcTarget,
     attempt: Attempt | None,
     served: str | None,
     moment: datetime,
 ) -> None:
     with _state_lock(root.state):
-        _record_unlocked(root, certificate_id, target, attempt, served, moment)
+        _record_unlocked(root, receiver_id, target, attempt, served, moment)
 
 
 def _record_unlocked(
     root: Root,
-    certificate_id: str,
+    receiver_id: str,
     target: BmcTarget,
     attempt: Attempt | None,
     served: str | None,
     moment: datetime,
 ) -> None:
     states = read_state(root.state)
-    before = states.get(certificate_id) or TargetState(target.address, target.port)
+    before = states.get(receiver_id) or TargetState(target.address, target.port)
     answered = served is not None or (
         attempt is not None and attempt.code not in (None, "unreachable")
     )
-    states[certificate_id] = TargetState(
+    states[receiver_id] = TargetState(
         address=target.address,
         port=target.port,
         checked_at=_iso(moment),
@@ -546,17 +582,21 @@ def sweep(
     reader: Reader = lambda address, port: bmc_redfish.served(address, port),
     installer: Installer = bmc_redfish.install,
 ) -> dict[str, str]:
-    """Ask every BMC what it serves and install where it needs it; the status of each."""
+    """Ask every BMC what it serves and install where it needs it; the status of each, by BMC."""
 
+    migrate(root)
     registry = _registry(root)
     said: dict[str, str] = {}
     states = read_state(root.state)
-    for certificate_id, entry in sorted((registry.certificates if registry else {}).items()):
-        target = entry.bmc
-        if target is None:
+    for receiver_id, target in sorted(registry.bmcs.items()):
+        certificate_id = registry.certificate_of(receiver_id)
+        if certificate_id is None:
+            #
+            # A BMC that carries no certificate has nothing to be told.
+            #
             continue
         try:
-            current: str | None = material(
+            current: str | None = bmc_material(
                 registry, certificate_id, live=root.live, store=root.store
             ).fingerprint
         except ExportError:
@@ -569,7 +609,7 @@ def sweep(
                 # Switched off, or a firewall in the way: asked, and nothing
                 # more (B536). What it served when it last answered stays.
                 #
-                _record(root, certificate_id, target, None, None, now())
+                _record(root, receiver_id, target, None, None, now())
             else:
                 #
                 # It answered and could not be read - no certificate, no TLS it
@@ -579,7 +619,7 @@ def sweep(
                 moment = now()
                 _record(
                     root,
-                    certificate_id,
+                    receiver_id,
                     target,
                     Attempt(
                         fingerprint_sha256=current or target.fingerprint_sha256,
@@ -593,16 +633,16 @@ def sweep(
                     moment,
                 )
             states = read_state(root.state)
-            said[certificate_id] = status(
-                states.get(certificate_id), current=current, pinned=target.fingerprint_sha256
+            said[receiver_id] = status(
+                states.get(receiver_id), current=current, pinned=target.fingerprint_sha256
             )
             continue
-        _record(root, certificate_id, target, None, served, now())
-        _clear_reading_fault(root, certificate_id)
+        _record(root, receiver_id, target, None, served, now())
+        _clear_reading_fault(root, receiver_id)
         if current is not None and served == current and target.fingerprint_sha256 != current:
-            _trust_served(root, certificate_id, target, current)
+            _trust_served(root, receiver_id, target, current)
         states = read_state(root.state)
-        state = states[certificate_id]
+        state = states[receiver_id]
         word = status(state, current=current, pinned=target.fingerprint_sha256)
         #
         # `waiting` is never a failed install of this certificate: `status` says
@@ -610,13 +650,13 @@ def sweep(
         #
         if word == "waiting" and current is not None and served != current:
             try:
-                install(root, certificate_id, by="timer", now=now, installer=installer)
+                install(root, receiver_id, by="timer", now=now, installer=installer)
             except TargetError as exc:
                 #
-                # Removed since the registry was read: nothing to install, and
-                # no reason to stop the sweep of the others.
+                # Removed, or given no certificate, since the registry was
+                # read: nothing to install, and no reason to stop the sweep.
                 #
-                if exc.code == "no_bmc":
+                if exc.code in ("not_registered", "no_certificate"):
                     continue
                 #
                 # Nothing sent: the account cannot be opened (a key replaced
@@ -627,7 +667,7 @@ def sweep(
                 moment = now()
                 _record(
                     root,
-                    certificate_id,
+                    receiver_id,
                     target,
                     Attempt(
                         fingerprint_sha256=current,
@@ -642,15 +682,56 @@ def sweep(
                 )
             states = read_state(root.state)
             word = status(
-                states.get(certificate_id),
+                states.get(receiver_id),
                 current=current,
-                pinned=_target(_registry(root), certificate_id).fingerprint_sha256,
+                pinned=_target(_registry(root), receiver_id).fingerprint_sha256,
             )
-        said[certificate_id] = word
+        said[receiver_id] = word
     return said
 
 
-def _clear_reading_fault(root: Root, certificate_id: str) -> None:
+def migrate(root: Root) -> None:
+    """What was kept per certificate before B538, moved to its BMC receiver; once, and safe to repeat.
+
+    The registry's own half moves with the first write of it (`settled_bmcs`);
+    this writes it if nothing else has. The account file and the state's entry
+    are renamed from the certificate's ID to the BMC's, when the two differ.
+    The box itself stays as it was sealed: it opens for the BMC at its address.
+    """
+
+    registry = _registry(root)
+    for receiver_id in registry.bmcs:
+        certificate_id = registry.certificate_of(receiver_id)
+        if certificate_id is None or certificate_id == receiver_id:
+            continue
+        old = root.accounts / f"{certificate_id}.json"
+        if old.exists() and not (root.accounts / f"{receiver_id}.json").exists():
+            key_id, box = _account_file(old, require_secure=root.require_secure)
+            write_account(receiver_id, key_id, box, directory=root.accounts)
+            old.unlink()
+        with _state_lock(root.state):
+            states = read_state(root.state)
+            if certificate_id in states and receiver_id not in states:
+                states[receiver_id] = states.pop(certificate_id)
+                write_state(states, root.state)
+    if registry.legacy_bmcs:
+        receiver_id = next(
+            entry.bmc.address
+            for entry in registry.certificates.values()
+            if entry.certificate_id in registry.legacy_bmcs and entry.bmc is not None
+        )
+        with install_lock(root.state):
+            cert_registry.set_bmc_receiver(
+                root.registry_path,
+                receiver_id=receiver_id,
+                target=registry.bmcs[receiver_id],
+                runtime=root.runtime,
+                require_secure=root.require_secure,
+                lock_path=root.lock_path,
+            )
+
+
+def _clear_reading_fault(root: Root, receiver_id: str) -> None:
     """A BMC read again after a reading fault: the fault is over, and installs go on.
 
     A reading fault is no install - nothing was sent - so it must not hold the
@@ -660,18 +741,18 @@ def _clear_reading_fault(root: Root, certificate_id: str) -> None:
 
     with _state_lock(root.state):
         states = read_state(root.state)
-        known = states.get(certificate_id)
+        known = states.get(receiver_id)
         if (
             known is None
             or known.attempt is None
             or not (known.attempt.code or "").startswith(READING_FAULT)
         ):
             return
-        states[certificate_id] = replace(known, attempt=None)
+        states[receiver_id] = replace(known, attempt=None)
         write_state(states, root.state)
 
 
-def _trust_served(root: Root, certificate_id: str, seen: BmcTarget, current: str) -> None:
+def _trust_served(root: Root, receiver_id: str, seen: BmcTarget, current: str) -> None:
     """Pin the certificate the BMC serves when it is the one the manager holds.
 
     An install pins what it installed only when its wait succeeds. A BMC slower
@@ -684,17 +765,16 @@ def _trust_served(root: Root, certificate_id: str, seen: BmcTarget, current: str
 
     with install_lock(root.state):
         registry = _registry(root)
-        entry = registry.certificates.get(certificate_id) if registry is not None else None
-        target = entry.bmc if entry is not None else None
+        target = registry.bmcs.get(receiver_id) if registry is not None else None
         if (
             target is None
             or (target.address, target.port) != (seen.address, seen.port)
             or target.fingerprint_sha256 == current
         ):
             return
-        cert_registry.set_bmc(
+        cert_registry.set_bmc_receiver(
             root.registry_path,
-            certificate_id=certificate_id,
+            receiver_id=receiver_id,
             target=replace(target, fingerprint_sha256=current),
             runtime=root.runtime,
             require_secure=root.require_secure,
@@ -702,26 +782,26 @@ def _trust_served(root: Root, certificate_id: str, seen: BmcTarget, current: str
         )
 
 
-def forget(certificate_id: str, *, directory: Path = STATE_DIRECTORY) -> None:
-    """Take a target that is gone out of the state file."""
+def forget(receiver_id: str, *, directory: Path = STATE_DIRECTORY) -> None:
+    """Take a BMC that is gone out of the state file."""
 
     with _state_lock(directory):
         states = read_state(directory)
-        if states.pop(certificate_id, None) is not None:
+        if states.pop(receiver_id, None) is not None:
             write_state(states, directory)
 
 
 def row_state(
     states: Mapping[str, TargetState] | None,
 ) -> Callable[[str, str | None, str], dict[str, object]]:
-    """What a certificate's row carries of its BMC: the word and what it rests on (B536).
+    """What a BMC's row carries: the word and what it rests on (B536), by the BMC's ID.
 
     `states` None is a state file that could not be read: every BMC is then
     `unknown`, and the listing is otherwise as it was.
     """
 
-    def state(certificate_id: str, current: str | None, pinned: str) -> dict[str, object]:
-        known = (states or {}).get(certificate_id)
+    def state(receiver_id: str, current: str | None, pinned: str) -> dict[str, object]:
+        known = (states or {}).get(receiver_id)
         return {
             "status": status(known, current=current, pinned=pinned),
             "checked_at": known.checked_at if known else None,

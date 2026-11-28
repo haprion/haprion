@@ -1180,12 +1180,17 @@ class HelperTests(unittest.TestCase):
                 mock.patch.object(cert_list_helper, "manager_name", lambda: "mgr.example.com"),
                 mock.patch.object(ui_interface, "served_description", lambda: None),
             ):
+                #
+                # The timer's state in a directory of the test's own: the
+                # machine's is root's, and exists once a BMC is set up (26-11-28).
+                #
                 code = cert_list_helper.main(
                     [],
                     input_stream=io.BytesIO(json.dumps(request).encode("utf-8")),
                     output_stream=out,
                     error_stream=err,
                     require_root=False,
+                    bmc_state=Path(tempfile.mkdtemp()) / "bmc",
                 )
         return code, out.getvalue(), err.getvalue()
 

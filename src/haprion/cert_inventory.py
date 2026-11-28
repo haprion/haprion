@@ -747,7 +747,7 @@ def registry_result(
         #
         if entry.bmc is not None and bmc_state is not None:
             row["bmc"].update(
-                bmc_state(entry.certificate_id, fingerprint, entry.bmc.fingerprint_sha256)
+                bmc_state(entry.bmc.address, fingerprint, entry.bmc.fingerprint_sha256)
             )
         entries.append(row)
 
@@ -862,6 +862,22 @@ def registry_result(
                 "certificates": list(receiver_in_use(registry, receiver_id)),
             }
             for receiver_id, receiver in sorted(registry.receivers.items())
+        ],
+        #
+        # The BMC receivers (B538): the manager installs on them instead of
+        # them fetching, so they have no account, directory or transport
+        # fields of a fetching one. What the timer saw of each is on the row
+        # of the certificate it carries, under `bmc`.
+        #
+        "bmc_records": [
+            {
+                "id": receiver_id,
+                "port": target.port,
+                "username": target.username,
+                "fingerprint_sha256": target.fingerprint_sha256,
+                "certificate": registry.certificate_of(receiver_id),
+            }
+            for receiver_id, target in sorted(registry.bmcs.items())
         ],
     }
 

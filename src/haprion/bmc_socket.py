@@ -1,8 +1,8 @@
-"""How the web asks about a certificate's BMC (B526, B536).
+"""How the web asks about a BMC receiver (B526, B536, B538).
 
 Over `/run/haprion/bmc.sock` to `haprion-bmc-helper`, which runs as root: it
 opens the account the web sealed, asks the BMC what it serves, and writes the
-target into the registry once the administrator has confirmed it. The web has
+BMC into the registry once the administrator has confirmed it. The web has
 no network of its own, so every question to a BMC goes this way. A service that
 cannot be asked is said as such, not as an answer about the BMC.
 """
@@ -40,20 +40,23 @@ class BmcAskError(Exception):
 
 def ask(
     action: str,
-    certificate_id: str,
+    receiver_id: str,
     *,
     path: str = SOCKET_PATH,
-    address: str | None = None,
     port: int | None = None,
+    certificate: str | None = None,
     fingerprint_sha256: str | None = None,
     key_id: str | None = None,
     ciphertext: bytes | None = None,
 ) -> dict[str, Any]:
-    """The helper's result for one action on one certificate's BMC, or BmcAskError."""
+    """The helper's result for one action on one BMC, or BmcAskError.
 
-    parameters: dict[str, Any] = {"action": action, "id": certificate_id}
-    if address is not None:
-        parameters["address"] = address
+    `certificate` is the one a save or an assign chooses; "" chooses none.
+    """
+
+    parameters: dict[str, Any] = {"action": action, "id": receiver_id}
+    if certificate is not None:
+        parameters["certificate"] = certificate
     if port is not None:
         parameters["port"] = port
     if fingerprint_sha256 is not None:
@@ -93,6 +96,6 @@ def ask(
         message = refusal.get("message") if isinstance(refusal, dict) else None
         raise BmcAskError(str(code or "unavailable"), str(message or "the BMC helper did not say"))
     result = document.get("result")
-    if not isinstance(result, dict) or result.get("id") != certificate_id:
+    if not isinstance(result, dict) or result.get("id") != receiver_id:
         raise BmcAskError("unavailable", "the BMC helper's answer was incomplete")
     return result

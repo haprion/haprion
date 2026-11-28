@@ -1,17 +1,20 @@
-"""`haprion-cert-bmc` - the BMC an external certificate is installed on.
+"""`haprion-cert-bmc` - a BMC receiver: a BMC the manager installs a certificate on.
 
-    sudo haprion-cert-bmc check <id> --address <bmc> --user <user> [--port N] [--json]
-    sudo haprion-cert-bmc save <id> --address <bmc> --user <user> --sha256 <x> [--port N] [--json]
-    sudo haprion-cert-bmc install <id> [--json]
-    sudo haprion-cert-bmc remove <id> [--json]
+    sudo haprion-cert-bmc check <bmc> --user <user> [--port N] [--json]
+    sudo haprion-cert-bmc save <bmc> --user <user> --sha256 <x> --certificate <id> [--port N] [--json]
+    sudo haprion-cert-bmc assign <bmc> (--certificate <id> | --none) [--json]
+    sudo haprion-cert-bmc install <bmc> [--json]
+    sudo haprion-cert-bmc remove <bmc> [--json]
 
-What the certificate's BMC page does, through the same code as its helpers.
-The password is read from standard input, never from the command line: typed
-at a prompt, or piped. `check` signs in and says what the BMC serves; compare
-its SHA-256 with the BMC's own web page, then `save` with it. `save` writes
-the target, keeps the account and installs the certificate at once, as the
-page's *Save and install* does: the BMC restarts and is away for about two
-minutes. `install` installs it again now. `remove` takes the target and its
+What the BMC's page under Receivers does, through the same code as its
+helpers. <bmc> is the BMC's name or address, which is the receiver's ID. The
+password is read from standard input, never from the command line: typed at a
+prompt, or piped. `check` signs in and says what the BMC serves; compare its
+SHA-256 with the BMC's own web page, then `save` with it. `save` registers the
+BMC (or changes it), keeps the account and installs the certificate it carries
+at once, as the page's *Save and install* does: the BMC restarts and is away
+for about two minutes. `assign` chooses another certificate, or none, without
+the password. `install` installs it again now. `remove` takes the BMC and its
 account away; the BMC keeps the certificate it serves. `--json` answers with
 the helper's document; `save`'s carries the install under `install`.
 """
@@ -33,7 +36,14 @@ from haprion.bmc_targets import Root, TargetError, seal_account
 from haprion.cert_registry import RegistryError
 from haprion.cli import bmc_helper
 from haprion.cli.arguments import ArgumentParser
-from haprion.config import CERTIFICATE_ID, DEFAULT_POLICY_PATH, ConfigError, bmc_target
+from haprion.config import (
+    CERTIFICATE_ID,
+    DEFAULT_POLICY_PATH,
+    RECEIVER_ID,
+    ConfigError,
+    bmc_target,
+    receiver_id_names_a_host,
+)
 from haprion.dns_profile_keys import DnsProfilePublicKey, key_id_of
 from haprion.envelope import envelope, failure
 from haprion.helper_protocol import HelperProtocolError, config_error_code, write_document
@@ -47,19 +57,25 @@ def _parser() -> argparse.ArgumentParser:
     )
     actions = parser.add_subparsers(dest="action", required=True)
     check = actions.add_parser("check", help="sign in and say what the BMC serves; nothing changes")
-    save = actions.add_parser("save", help="write the BMC you checked, with the SHA-256 it serves")
-    install = actions.add_parser("install", help="install the certificate on its BMC now")
+    save = actions.add_parser(
+        "save", help="register the BMC you checked, with the SHA-256 it serves, and install"
+    )
+    assign = actions.add_parser("assign", help="choose the certificate the BMC carries, or none")
+    install = actions.add_parser("install", help="install the certificate on the BMC now")
     remove = actions.add_parser("remove", help="take the BMC and its account away")
-    for each in (check, save, install, remove):
-        each.add_argument("id", help="the certificate's ID")
+    for each in (check, save, assign, install, remove):
+        each.add_argument("id", help="the BMC's name or address: the receiver's ID")
         each.add_argument("--json", action="store_true", help="answer with the JSON document")
     for each in (check, save):
-        each.add_argument("--address", required=True, help="the BMC's name or address")
         each.add_argument("--port", type=int, default=443, help="its HTTPS port (443)")
         each.add_argument("--user", required=True, help="the Redfish account's user")
     save.add_argument(
         "--sha256", required=True, help="the SHA-256 check showed, as its web page shows it"
     )
+    save.add_argument("--certificate", required=True, help="the certificate the BMC carries")
+    chosen = assign.add_mutually_exclusive_group(required=True)
+    chosen.add_argument("--certificate", help="the certificate the BMC carries")
+    chosen.add_argument("--none", action="store_true", help="the BMC carries no certificate")
     return parser
 
 
@@ -97,26 +113,35 @@ def _text(action: str, result: dict[str, Any], out: TextIO, user: str) -> None:
             None: "signed in; whether it may upload certificates was not said",
         }[result["may_upload"]]
         out.write(
-            f"{result['address']} answers with\n"
+            f"{result['id']} answers with\n"
             f"  Firmware  {result['model']} {result['firmware']}\n"
             f"  Serves    {result['subject'] or 'no name'} · {result['issuer'] or 'unknown issuer'}"
             f" · expires {result['not_after'] or 'unknown'}\n"
             f"  SHA-256   {served}\n"
             f"  Account   {account}\n"
             "Nothing was changed. Compare the SHA-256 with the BMC's own web page, then:\n"
-            f"  sudo haprion-cert-bmc save {result['id']} --address {result['address']}"
+            f"  sudo haprion-cert-bmc save {result['id']}"
             f"{'' if result['port'] == 443 else ' --port ' + str(result['port'])}"
-            f" --user {user} --sha256 {result['served_sha256']}\n"
+            f" --user {user} --sha256 {result['served_sha256']} --certificate <id>\n"
         )
     elif action == "save":
         out.write(
-            f"Saved {result['address']} for {result['id']} and installed the certificate: "
+            f"Saved the BMC {result['id']}, carrying {result['certificate']}, and installed it: "
             f"{result['install'].get('message') or 'done'}\n"
         )
+    elif action == "assign":
+        carried = result.get("certificate")
+        out.write(
+            f"The BMC {result['id']} carries {carried}; the timer installs it.\n"
+            if carried
+            else f"The BMC {result['id']} carries no certificate.\n"
+        )
     elif action == "install":
-        out.write(f"Installed {result['id']} on its BMC: {result.get('message') or 'done'}\n")
+        out.write(
+            f"Installed the certificate on {result['id']}: {result.get('message') or 'done'}\n"
+        )
     else:
-        out.write(f"Removed the BMC of {result['id']}; the BMC keeps what it serves.\n")
+        out.write(f"Removed the BMC {result['id']}; it keeps what it serves.\n")
 
 
 def main(
@@ -159,15 +184,22 @@ def main(
     # The call is judged before anything is read: an ID, an address, a port
     # and a fingerprint each have the registry's own form.
     #
-    if not CERTIFICATE_ID.fullmatch(arguments.id):
-        return refuse("bad_input", f"{arguments.id} is not a certificate ID", exit_codes.USAGE)
+    if not RECEIVER_ID.fullmatch(arguments.id) or not receiver_id_names_a_host(arguments.id):
+        return refuse(
+            "bad_input", f"{arguments.id} is not a BMC's name or address", exit_codes.USAGE
+        )
     parameters: dict[str, Any] = {"id": arguments.id}
+    certificate = getattr(arguments, "certificate", None)
+    if certificate is not None and not CERTIFICATE_ID.fullmatch(certificate):
+        return refuse("bad_input", f"{certificate} is not a certificate ID", exit_codes.USAGE)
+    if action in ("save", "assign"):
+        parameters["certificate"] = certificate or ""
     if action in ("check", "save"):
         confirmed = _fingerprint(arguments.sha256) if action == "save" else "0" * 64
         try:
             bmc_target(
                 {
-                    "address": arguments.address,
+                    "address": arguments.id,
                     "port": arguments.port,
                     "fingerprint_sha256": confirmed,
                     "username": "-",
@@ -176,7 +208,7 @@ def main(
             )
         except ConfigError as exc:
             return refuse("bad_input", str(exc), exit_codes.USAGE)
-        parameters.update(address=arguments.address, port=arguments.port)
+        parameters["port"] = arguments.port
         if action == "save":
             parameters["fingerprint_sha256"] = confirmed
     if os.geteuid() != 0:
@@ -193,14 +225,10 @@ def main(
         else:
             parameters["action"] = action
             if action in ("check", "save"):
-                password = _password(arguments.user, arguments.address, stream_in or sys.stdin, err)
+                password = _password(arguments.user, arguments.id, stream_in or sys.stdin, err)
                 key = _sealing_key(side)
                 box = seal_account(
-                    key,
-                    certificate_id=arguments.id,
-                    address=arguments.address,
-                    username=arguments.user,
-                    password=password,
+                    key, receiver_id=arguments.id, username=arguments.user, password=password
                 )
                 parameters.update(key_id=key.key_id, ciphertext=box)
             result = _perform(parameters, side)
@@ -226,7 +254,7 @@ def main(
             exit_code = exc.exit_code if isinstance(exc, TargetError) else exit_codes.REFUSED
             return refuse(
                 code,
-                f"saved {arguments.address} for {arguments.id}, but the install failed: {exc}",
+                f"saved the BMC {arguments.id}, but the install failed: {exc}",
                 exit_code,
                 {"saved": result},
             )

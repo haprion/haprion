@@ -45,8 +45,8 @@ def main(
     except (TargetError, ConfigError, RegistryError) as exc:
         errors.write(f"ERROR: {exc}\n")
         return getattr(exc, "exit_code", exit_codes.CONFIG)
-    for certificate_id, status in said.items():
-        out.write(f"{certificate_id}: {status}\n")
+    for receiver_id, status in said.items():
+        out.write(f"{receiver_id}: {status}\n")
     return 0
 
 

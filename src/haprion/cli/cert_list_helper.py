@@ -47,6 +47,7 @@ def main(
     error_stream: TextIO | None = None,
     require_secure: bool = True,
     require_root: bool = True,
+    bmc_state: Path = bmc_targets.STATE_DIRECTORY,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = output_stream or sys.stdout
@@ -108,7 +109,9 @@ def main(
     try:
         if cluster is None:
             try:
-                bmc_states: dict[str, bmc_targets.TargetState] | None = bmc_targets.read_state()
+                bmc_states: dict[str, bmc_targets.TargetState] | None = bmc_targets.read_state(
+                    bmc_state
+                )
             except bmc_targets.TargetError as exc:
                 errors.write(f"WARNING: {exc}\n")
                 bmc_states = None

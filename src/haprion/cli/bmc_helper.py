@@ -1,4 +1,4 @@
-"""The BMC helpers: the web's and the worker's way to a certificate's BMC (B526, B536).
+"""The BMC helpers: the web's and the worker's way to a BMC receiver (B526, B536, B538).
 
 Two entrances, one per socket, so what each caller may ask is decided by which
 socket it can connect to and not by a field in its request:
@@ -7,13 +7,16 @@ socket it can connect to and not by a field in its request:
 
     check    sign in with the account the web sealed and say what the BMC serves,
              for the administrator to confirm
-    save     write the target into the registry and keep the account, when the
-             BMC still serves the certificate that was confirmed
-    remove   take the target and its account away; the certificate stays exportable
+    save     register the BMC (or change it), keep the account and choose the
+             certificate it carries, when it still serves the one that was confirmed
+    assign   choose the certificate a registered BMC carries, or none
+    remove   take the BMC and its account away; the BMC keeps what it serves
+
+`id` is the BMC receiver's ID: the BMC's name or address.
 
 `haprion-bmc-install-helper`, for the worker over `/run/haprion/bmc-install.sock`
-(operation `bmc_install`): install the certificate on its BMC now - *Install
-now*, and the install a save starts.
+(operation `bmc_install`): install the certificate a BMC carries on it now -
+*Install now*, and the install a save starts.
 
 Root, because the account is opened with the installation's private key and
 the key is root's, and the registry is written in `/etc/haprion`; with the
@@ -40,11 +43,14 @@ from haprion.cli import cert_job
 from haprion.config import (
     CERTIFICATE_ID,
     DEFAULT_POLICY_PATH,
+    RECEIVER_ID,
     BmcTarget,
     ConfigError,
     bmc_target,
     load_policy,
+    load_registry,
     load_runtime_config,
+    receiver_id_names_a_host,
 )
 from haprion.dns_profile_keys import KeyFileError, read_private_key
 from haprion.envelope import envelope
@@ -53,14 +59,14 @@ from haprion.helper_protocol import HelperProtocolError, config_error_code, writ
 OPERATION = "bmc"
 INSTALL_OPERATION = "bmc_install"
 PARAMETERS = frozenset(
-    {"action", "id", "address", "port", "fingerprint_sha256", "key_id", "ciphertext_base64"}
+    {"action", "id", "port", "certificate", "fingerprint_sha256", "key_id", "ciphertext_base64"}
 )
 INSTALL_PARAMETERS = frozenset({"id", "by"})
-ACTIONS = ("check", "save", "remove")
+ACTIONS = ("check", "save", "assign", "remove")
 INSTALLED_BY = ("install_now", "save")
 
 
-def build_install_request(request_id: str, *, certificate_id: str, by: str) -> str:
+def build_install_request(request_id: str, *, receiver_id: str, by: str) -> str:
     """The exact bounded request the worker sends for an install. Null cluster, by contract."""
 
     return json.dumps(
@@ -69,7 +75,7 @@ def build_install_request(request_id: str, *, certificate_id: str, by: str) -> s
             "operation": INSTALL_OPERATION,
             "cluster": None,
             "request_id": request_id,
-            "parameters": {"id": certificate_id, "by": by},
+            "parameters": {"id": receiver_id, "by": by},
         },
         separators=(",", ":"),
     )
@@ -116,17 +122,33 @@ def _string(parameters: dict[str, Any], name: str) -> str:
     return value
 
 
-def _certificate(parameters: dict[str, Any]) -> str:
-    certificate_id = _string(parameters, "id")
-    if not CERTIFICATE_ID.fullmatch(certificate_id):
+def _receiver(parameters: dict[str, Any]) -> str:
+    receiver_id = _string(parameters, "id")
+    if not RECEIVER_ID.fullmatch(receiver_id) or not receiver_id_names_a_host(receiver_id):
         raise HelperProtocolError(
-            "parameters.id is not a certificate ID", exit_code=exit_codes.REFUSED
+            "parameters.id is not a BMC's name or address", exit_code=exit_codes.REFUSED
         )
-    return certificate_id
+    return receiver_id
 
 
-def _target(parameters: dict[str, Any], fingerprint: str, username: str) -> BmcTarget:
-    """The address and port as the registry holds them, checked by the registry's own reader.
+def _carries(parameters: dict[str, Any]) -> str | None:
+    """The certificate a save or an assign chooses: an ID, or empty for none."""
+
+    value = parameters.get("certificate")
+    if value == "":
+        return None
+    if not isinstance(value, str) or not CERTIFICATE_ID.fullmatch(value):
+        raise HelperProtocolError(
+            "parameters.certificate is a certificate ID, or empty for none",
+            exit_code=exit_codes.REFUSED,
+        )
+    return value
+
+
+def _target(
+    receiver_id: str, parameters: dict[str, Any], fingerprint: str, username: str
+) -> BmcTarget:
+    """The BMC as the registry holds it, checked by the registry's own reader.
 
     The user is the one root opened from the sealed account, never a field the
     web sends beside it: what the page says is the account that signs in.
@@ -135,7 +157,7 @@ def _target(parameters: dict[str, Any], fingerprint: str, username: str) -> BmcT
     try:
         target = bmc_target(
             {
-                "address": parameters.get("address"),
+                "address": receiver_id,
                 "port": parameters.get("port", 443),
                 "fingerprint_sha256": fingerprint,
                 "username": username,
@@ -177,43 +199,47 @@ def perform(parameters: dict[str, Any], root: Root) -> dict[str, Any]:
         raise HelperProtocolError(
             "parameters.action must be one of: " + ", ".join(ACTIONS), exit_code=exit_codes.REFUSED
         )
-    certificate_id = _certificate(parameters)
-    registry = root.runtime.registry
-    entry = registry.certificates.get(certificate_id) if registry is not None else None
-    if entry is None:
-        raise TargetError("not_registered", f"{certificate_id} is not in the registry")
-    if not entry.exportable:
-        raise TargetError(
-            "not_exportable",
-            f"{certificate_id} is not exportable; only an exportable certificate has a BMC",
-        )
-    if action == "remove":
+    receiver_id = _receiver(parameters)
+    registry = load_registry(root.registry_path, require_secure=root.require_secure)
+    if action in ("assign", "remove"):
+        if receiver_id not in registry.bmcs:
+            raise TargetError("not_registered", f"{receiver_id} is not a BMC in the registry")
+        chosen = _carries(parameters) if action == "assign" else None
         #
-        # Not under an install: its last step writes the target it installed
-        # on back into the registry, and would bring a removed one back.
+        # Not under an install: its last step writes the BMC it installed on
+        # back into the registry, and would bring a removed one back.
         #
         with bmc_targets.install_lock(root.state, wait=False):
-            cert_registry.set_bmc(
+            cert_registry.set_bmc_receiver(
                 root.registry_path,
-                certificate_id=certificate_id,
-                target=None,
+                receiver_id=receiver_id,
+                target=registry.bmcs[receiver_id] if action == "assign" else None,
+                certificate_id=chosen,
                 runtime=root.runtime,
                 require_secure=root.require_secure,
                 lock_path=root.lock_path,
             )
-            bmc_targets.remove_account(certificate_id, directory=root.accounts)
-            bmc_targets.forget(certificate_id, directory=root.state)
-        return {"id": certificate_id, "removed": True}
+            if action == "remove":
+                bmc_targets.remove_account(receiver_id, directory=root.accounts)
+            bmc_targets.forget(receiver_id, directory=root.state)
+        if action == "remove":
+            return {"id": receiver_id, "removed": True}
+        return {"id": receiver_id, "certificate": chosen}
 
+    if receiver_id in registry.receivers:
+        raise TargetError(
+            "already_exists",
+            f"{receiver_id} is already a receiver that fetches; a BMC needs a name of its own",
+        )
     key_id, ciphertext = _account(parameters)
-    probe = _target(parameters, "0" * 64, "-")
+    probe = _target(receiver_id, parameters, "0" * 64, "-")
     username, password = bmc_targets.open_account(
-        root.private_keys, key_id, ciphertext, certificate_id=certificate_id, address=probe.address
+        root.private_keys, key_id, ciphertext, receiver_id=receiver_id
     )
     if action == "check":
         checked = bmc_redfish.check(probe.address, probe.port, username=username, password=password)
         return {
-            "id": certificate_id,
+            "id": receiver_id,
             "address": probe.address,
             "port": probe.port,
             "served_sha256": checked.served.fingerprint_sha256,
@@ -228,14 +254,19 @@ def perform(parameters: dict[str, Any], root: Root) -> dict[str, Any]:
     # CA is, review 2026-10-28, U02), and the account has to be let in.
     #
     confirmed = _string(parameters, "fingerprint_sha256")
-    target = _target(parameters, confirmed, username)
+    target = _target(receiver_id, parameters, confirmed, username)
+    chosen = _carries(parameters)
     #
     # Not under an install either, for the same reason as `remove`: an install
     # ending after the save would write its own target over the new one.
     #
     with bmc_targets.install_lock(root.state, wait=False):
+        #
+        # Signed in and read, and nothing asked of its privileges: the BMC logs
+        # that question as a failed certificate validation (26-11-28).
+        #
         checked = bmc_redfish.check(
-            target.address, target.port, username=username, password=password
+            target.address, target.port, username=username, password=password, ask_upload=False
         )
         if checked.served.fingerprint_sha256 != confirmed:
             raise TargetError(
@@ -243,33 +274,35 @@ def perform(parameters: dict[str, Any], root: Root) -> dict[str, Any]:
                 f"{target.address} now serves {checked.served.fingerprint_sha256}, not the "
                 "certificate that was confirmed; check it again",
             )
-        bmc_targets.write_account(certificate_id, key_id, ciphertext, directory=root.accounts)
-        cert_registry.set_bmc(
+        bmc_targets.write_account(receiver_id, key_id, ciphertext, directory=root.accounts)
+        cert_registry.set_bmc_receiver(
             root.registry_path,
-            certificate_id=certificate_id,
+            receiver_id=receiver_id,
             target=target,
+            certificate_id=chosen,
             runtime=root.runtime,
             require_secure=root.require_secure,
             lock_path=root.lock_path,
         )
-        bmc_targets.forget(certificate_id, directory=root.state)
+        bmc_targets.forget(receiver_id, directory=root.state)
     return {
-        "id": certificate_id,
+        "id": receiver_id,
         "address": target.address,
         "port": target.port,
         "fingerprint_sha256": target.fingerprint_sha256,
         "username": target.username,
+        "certificate": chosen,
     }
 
 
 def perform_install(parameters: dict[str, Any], root: Root) -> dict[str, Any]:
-    certificate_id = _certificate(parameters)
+    receiver_id = _receiver(parameters)
     by = _string(parameters, "by")
     if by not in INSTALLED_BY:
         raise HelperProtocolError(
             "parameters.by must be one of: " + ", ".join(INSTALLED_BY), exit_code=exit_codes.REFUSED
         )
-    attempt = bmc_targets.install(root, certificate_id, by=by)
+    attempt = bmc_targets.install(root, receiver_id, by=by)
     if attempt.outcome != "done":
         #
         # Failed for the job, in the BMC's own words; the attempt is in the
@@ -278,7 +311,7 @@ def perform_install(parameters: dict[str, Any], root: Root) -> dict[str, Any]:
         raise TargetError(
             f"bmc_{attempt.code or 'failed'}", attempt.message or "the install failed"
         )
-    return {"id": certificate_id, **asdict(attempt)}
+    return {"id": receiver_id, **asdict(attempt)}
 
 
 def _run(
@@ -348,12 +381,17 @@ def _run(
 
 def _journal(result: dict[str, Any]) -> str:
     if result.get("removed"):
-        return "target and account removed"
+        return "BMC and account removed"
+    if "address" not in result and "outcome" not in result:
+        return f"carries {result.get('certificate') or 'no certificate'}"
     if "outcome" in result:
         return (
             f"{result['outcome']} {result.get('code') or ''} {result['fingerprint_sha256']}".strip()
         )
-    return f"{result['address']}:{result['port']} pinned {result['fingerprint_sha256']}"
+    return (
+        f"{result['address']}:{result['port']} pinned {result['fingerprint_sha256']}, "
+        f"carries {result.get('certificate') or 'no certificate'}"
+    )
 
 
 def main(

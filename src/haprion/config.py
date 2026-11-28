@@ -519,6 +519,12 @@ HOSTNAME = re.compile(
 # shape of one line of YAML.
 #
 RECEIVER_TRANSPORTS = ("rsync", "sftp", "https")
+#
+# A BMC is a receiver too (B538), but the manager installs on it over Redfish
+# instead of it fetching: it has no path, no account and no fetch log, and
+# arrives as a `BmcTarget` in `Registry.bmcs`, never among the fetching ones.
+#
+BMC_TRANSPORT = "redfish"
 RECEIVER_LAYOUTS = ("per-certificate",)
 RECEIVER_FORMATS = ("pem", "pkcs12")
 DEFAULT_RECEIVER_TRANSPORT = "rsync"
@@ -550,13 +556,14 @@ def receiver_id_names_a_host(receiver_id: str) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class BmcTarget:
-    """A BMC the manager installs an exportable certificate on (B526, B536).
+    """A BMC receiver: the manager installs a certificate on it over Redfish (B526, B538).
 
-    `fingerprint_sha256` is the certificate the BMC served when the target was
-    confirmed: the manager trusts the BMC when it serves that one or the
-    certificate the manager installed, and no other. `username` is the Redfish
-    account's user, kept in the clear for the page to say which account the
-    manager signs in with; the account itself is sealed, in root's file.
+    `address` is the receiver's ID, the BMC's name or address. `fingerprint_sha256`
+    is the certificate the BMC served when it was confirmed: the manager trusts
+    the BMC when it serves that one or the certificate the manager installed,
+    and no other. `username` is the Redfish account's user, kept in the clear
+    for the page to say which account the manager signs in with; the account
+    itself is sealed, in root's file.
     """
 
     address: str
@@ -640,9 +647,9 @@ class RegisteredCertificate:
     #
     exportable: bool = False
     #
-    # Where the manager installs an exportable certificate itself (B526, B536):
-    # one BMC at most. It is not a target the certificate is published to - the
-    # key is still exportable, and the install reads it the way the export does.
+    # The BMC receiver this certificate is installed on (B526, B538): one at
+    # most, named in `receivers` on file like any receiver and kept apart here,
+    # since nothing that publishes to a fetching receiver applies to it.
     #
     bmc: BmcTarget | None = None
 
@@ -656,6 +663,25 @@ class RegisteredCertificate:
 class Registry:
     receivers: Mapping[str, Receiver]
     certificates: Mapping[str, RegisteredCertificate]
+    #
+    # The BMC receivers (`transport: redfish`, B538), by ID, whether a
+    # certificate names one or not.
+    #
+    bmcs: Mapping[str, BmcTarget] = types.MappingProxyType({})
+    #
+    # Certificates whose BMC is still in the form before B538
+    # (`certificates.<id>.bmc`): read as a BMC receiver, and written in the new
+    # form by the next writer of the registry.
+    #
+    legacy_bmcs: tuple[str, ...] = ()
+
+    def certificate_of(self, bmc_id: str) -> str | None:
+        """The certificate a BMC receiver carries, or None."""
+
+        for entry in self.certificates.values():
+            if entry.bmc is not None and entry.bmc.address == bmc_id:
+                return entry.certificate_id
+        return None
 
     def for_cluster(self, cluster_id: str) -> tuple[str, ...]:
         """The certificate IDs that name this cluster, in registry order.
@@ -1543,11 +1569,16 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
         raise ConfigError("certificate registry schema_version must be 1")
 
     receivers: dict[str, Receiver] = {}
+    bmcs: dict[str, BmcTarget] = {}
+    legacy: list[str] = []
     for receiver_id, raw_value in _mapping(data.get("receivers", {}), "receivers").items():
         if not RECEIVER_ID.fullmatch(receiver_id):
             raise ConfigError(f"invalid receiver ID in certificate registry: {receiver_id!r}")
         location = f"receivers.{receiver_id}"
         raw = _mapping(raw_value, location)
+        if raw.get("transport") == BMC_TRANSPORT:
+            bmcs[receiver_id] = _bmc_receiver(receiver_id, raw, location)
+            continue
         _only_keys(raw, {"path", "owner", "transport", "layout", "allow"}, location)
         owner = _required_string(raw, "owner", location)
         if not USERNAME.fullmatch(owner):
@@ -1612,6 +1643,19 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
 
         clusters = _id_list(raw, "clusters", location, CLUSTER_ID)
         named, formats = _receiver_list(raw, location)
+        #
+        # A BMC on file among the receivers is kept apart from them (B538).
+        #
+        bmc_named = [receiver_id for receiver_id in named if receiver_id in bmcs]
+        named = tuple(receiver_id for receiver_id in named if receiver_id not in bmcs)
+        if len(bmc_named) > 1:
+            raise ConfigError(
+                f"{location}.receivers names more than one BMC: {', '.join(bmc_named)}"
+            )
+        taken_format = sorted(r for r in bmc_named if formats[r] != DEFAULT_RECEIVER_FORMAT)
+        formats = {r: form for r, form in formats.items() if r not in bmcs}
+        if taken_format:
+            raise ConfigError(f"{location}.receivers: a BMC takes no format ({taken_format[0]})")
         unknown = sorted(set(named) - set(receivers))
         if unknown:
             raise ConfigError(
@@ -1628,16 +1672,47 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
         exportable = raw.get("exportable", False)
         if type(exportable) is not bool:
             raise ConfigError(f"{location}.exportable must be true or false")
+        #
+        # An exportable certificate names no cluster and no fetching receiver
+        # (B255); a BMC it may name, since the BMC is the host it is for (B538).
+        #
         if exportable and (clusters or named or interface):
             raise ConfigError(
                 f"{location} is exportable and cannot name clusters or receivers or serve "
                 "the interface"
             )
-        bmc = bmc_target(raw.get("bmc"), f"{location}.bmc")
-        if bmc is not None and not exportable:
+        bmc = bmcs[bmc_named[0]] if bmc_named else None
+        old = bmc_target(raw.get("bmc"), f"{location}.bmc")
+        if old is not None:
+            #
+            # The form before B538: read as the BMC receiver it now is, by
+            # its address, until a writer puts it there.
+            #
+            if bmc is not None:
+                raise ConfigError(f"{location} names a BMC twice: in receivers and in bmc")
+            if old.address in receivers or bmcs.get(old.address, old) != old:
+                raise ConfigError(
+                    f"{location}.bmc: receivers already registers {old.address} otherwise"
+                )
+            bmcs[old.address] = old
+            legacy.append(certificate_id)
+            bmc = old
+        if bmc is not None and (interface or kind == AUTHORITY):
             raise ConfigError(
-                f"{location}.bmc belongs to an exportable certificate only: one host, no targets"
+                f"{location} cannot name a BMC: the interface's and an authority's "
+                "certificates go nowhere else"
             )
+        if bmc is not None:
+            carried = [
+                entry.certificate_id
+                for entry in certificates.values()
+                if entry.bmc is not None and entry.bmc.address == bmc.address
+            ]
+            if carried:
+                raise ConfigError(
+                    f"{location}: the BMC {bmc.address} already carries {carried[0]}; "
+                    "a BMC serves one certificate"
+                )
         if kind == AUTHORITY and (named or interface or exportable):
             raise ConfigError(
                 f"{location} is an authority and goes to clusters only: no receivers, "
@@ -1661,7 +1736,25 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
             exportable=exportable,
             bmc=bmc,
         )
-    return Registry(receivers=receivers, certificates=certificates)
+    return Registry(
+        receivers=receivers,
+        certificates=certificates,
+        bmcs=types.MappingProxyType(bmcs),
+        legacy_bmcs=tuple(legacy),
+    )
+
+
+def _bmc_receiver(receiver_id: str, raw: Mapping[str, Any], location: str) -> BmcTarget:
+    """A `transport: redfish` receiver: its ID is the BMC's name or address (B141, B538)."""
+
+    _only_keys(raw, {"transport", "port", "fingerprint_sha256", "username"}, location)
+    if not receiver_id_names_a_host(receiver_id):
+        raise ConfigError(f"{location}: a BMC's receiver ID is its name or address")
+    fields = {key: value for key, value in raw.items() if key != "transport"}
+    target = bmc_target({**fields, "address": receiver_id}, location)
+    if target is None:  # a mapping is never None; for the type
+        raise ConfigError(f"{location} is not a BMC")
+    return target
 
 
 def bmc_target(value: Any, location: str) -> BmcTarget | None:

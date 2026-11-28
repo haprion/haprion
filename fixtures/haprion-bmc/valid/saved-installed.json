@@ -9,7 +9,7 @@
   "request_id": "99999999-9999-4999-8999-999999999996",
   "result": {
     "id": "bmc-01.example.net",
-    "address": "192.0.2.7",
+    "address": "bmc-01.example.net",
     "port": 443,
     "fingerprint_sha256": "abababababababababababababababababababababababababababababababab",
     "username": "admin",
@@ -23,6 +23,7 @@
       "message": "SSL certificate and private key were successfully uploaded",
       "seconds": 130.0,
       "firmware": "X13SCL-IF 01.09.06"
-    }
+    },
+    "certificate": "device-01.example.net"
   }
 }

@@ -2,12 +2,12 @@
   "schema_version": 1,
   "requires": {
     "database_baseline": "0115",
-    "database_head": "0123",
+    "database_head": "0126",
     "rollback_safe_from": "0115",
     "database_revisions": [
-      "0123"
+      "0126"
     ],
-    "engine_api": 47,
+    "engine_api": 48,
     "node_api": 1,
     "poller_helpers": [
       "haprion-status-helper",
@@ -26,6 +26,7 @@
       "haprion-dns-profile-apply-helper",
       "haprion-cert-delete-helper",
       "haprion-blocklist-apply-helper",
+      "haprion-path-list-apply-helper",
       "haprion-ndes-profile-apply-helper",
       "haprion-cert-scep-helper",
       "haprion-cert-import-helper",
@@ -43,7 +44,9 @@
       "haprion-block-api-helper": "/run/haprion/block.sock",
       "haprion-ndes-server-helper": "/run/haprion/ndes-server.sock",
       "haprion-http01-check-helper": "/run/haprion/http01-check.sock",
-      "haprion-blocklist-check-helper": "/run/haprion/blocklist-check.sock"
+      "haprion-blocklist-check-helper": "/run/haprion/blocklist-check.sock",
+      "haprion-bmc-helper": "/run/haprion/bmc.sock",
+      "haprion-bmc-install-helper": "/run/haprion/bmc-install.sock"
     }
   }
 }

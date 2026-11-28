@@ -140,6 +140,25 @@ class TheWebsHelper(HelperCase):
         )
         self.assertFalse((self.root / "accounts" / f"{LOCAL}.json").exists())
 
+    def test_a_certificate_that_is_not_exportable_goes_to_no_bmc(self) -> None:
+        """Review 26-11-28, Y01: the web chooses the BMC, so a cluster's key never goes to one."""
+
+        other = next(name for name in self.registered() if name != DEVICE)
+        for parameters in (
+            {"action": "assign", "id": LOCAL, "certificate": other},
+            {
+                "action": "save",
+                "fingerprint_sha256": self.old,
+                "certificate": other,
+                **self.target(),
+            },
+        ):
+            with self.subTest(action=parameters["action"]):
+                code, answer, _journal = self.ask("bmc", parameters)
+                self.assertNotEqual(code, 0)
+                self.assertIn("not exportable", answer["error"]["message"])
+        self.assertEqual(self.registry().certificate_of(LOCAL), DEVICE)
+
     def test_assign_chooses_the_certificate_without_the_account(self) -> None:
         code, answer, _journal = self.ask(
             "bmc", {"action": "assign", "id": LOCAL, "certificate": ""}

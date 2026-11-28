@@ -46,7 +46,7 @@
   "additionalProperties": true,
   "$defs": {
     "checked": {
-      "description": "check (B526, B538): what the BMC receiver serves, read with the account the web sealed, for the administrator to confirm. Nothing is written. `id` is the BMC's name or address.",
+      "description": "check (B526, B538): what the BMC receiver serves, read with the account the web sealed, for the administrator to confirm; or, without an account, a registered BMC read with the account kept for it (26-11-28), only when it serves a certificate the manager trusts, with `username` and `carried`. Nothing is written. `id` is the BMC's name or address.",
       "type": "object",
       "required": [
         "id",
@@ -110,6 +110,19 @@
         },
         "may_upload": {
           "description": "Whether the account may upload a certificate, read from its role's privileges (`ConfigureManager`); nothing is sent. Null when the BMC does not say.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "username": {
+          "description": "A registered BMC checked with its kept account only: the account that signed in.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "carried": {
+          "description": "A registered BMC checked with its kept account only: whether it serves the certificate it carries now; null when it carries none or that certificate cannot be read.",
           "type": [
             "boolean",
             "null"

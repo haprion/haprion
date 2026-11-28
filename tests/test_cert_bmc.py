@@ -47,6 +47,29 @@ class TheCommand(HelperCase):
         self.assertIn(f"--user {USER} --sha256 {self.old} --certificate <id>", out)
         self.assertNotIn(LOCAL, self.registry().bmcs)
 
+    def test_check_without_a_user_asks_the_saved_bmc_with_its_kept_account(self) -> None:
+        stdin = io.StringIO("")
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch("os.geteuid", return_value=0):
+            code = cert_bmc.main(
+                ["check", LOCAL],
+                stream_out=out,
+                stream_err=err,
+                stream_in=stdin,
+                root=self.root_side(),
+            )
+
+        self.assertEqual(code, 0, err.getvalue())
+        self.assertIn(
+            "a certificate the manager trusts, not yet the one it carries", out.getvalue()
+        )
+        self.assertIn(f"Account   {USER}, may upload certificates", out.getvalue())
+        self.assertEqual(stdin.tell(), 0)
+
+        code, json_out, _err = self.cert_bmc("check", LOCAL, "--json")
+        result = assert_contract("haprion-bmc", json_out)["result"]
+        self.assertEqual((result["carried"], result["username"]), (False, USER))
+
     def test_save_takes_the_fingerprint_as_shown_and_installs_as_the_page_does(self) -> None:
         self.cert_bmc("remove", LOCAL)
         colons = ":".join(self.old[index : index + 2] for index in range(0, 64, 2)).upper()
@@ -137,6 +160,7 @@ class TheCommand(HelperCase):
                 "bad_input",
                 exit_codes.USAGE,
             ),
+            (["check", LOCAL, "--port", "8443"], "bad_input", exit_codes.USAGE),
             (["remove", LOCAL], "not_root", exit_codes.NOT_ROOT),
         ]
         for argv, said, exit_code in cases:

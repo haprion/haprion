@@ -290,6 +290,8 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
     #
     "/certificates/receivers/bmc/check": Command("haprion-cert-bmc check", "haprion-bmc"),
     "/certificates/receivers/bmc/save": Command("haprion-cert-bmc save", "haprion-bmc"),
+    # *Check* on a saved BMC, with its kept account: `check <bmc>` without --user.
+    "/certificates/receivers/bmc/{bmc_id}/check": Command("haprion-cert-bmc check", "haprion-bmc"),
     "/certificates/receivers/bmc/{bmc_id}/assign": Command(
         "haprion-cert-bmc assign", "haprion-bmc"
     ),

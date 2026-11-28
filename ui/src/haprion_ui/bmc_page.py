@@ -84,6 +84,13 @@ class Checked:
     model: str
     firmware: str
     may_upload: bool | None
+    #
+    # A saved BMC checked with its kept account (26-11-28): who signed in, and
+    # whether it serves the certificate it carries now. Empty and None for the
+    # Check of an account typed into the form.
+    #
+    username: str = ""
+    carried: bool | None = None
 
     @property
     def served(self) -> str:
@@ -106,6 +113,16 @@ class Checked:
             return "Signed in, but may not upload certificates: the account needs the Administrator role"
         return "Signed in; whether it may upload certificates was not said"
 
+    @property
+    def saved_account_line(self) -> str:
+        """The kept account on one line: its user, and whether it may upload."""
+
+        if self.may_upload is True:
+            return f"{self.username}, may upload certificates"
+        if self.may_upload is False:
+            return f"{self.username}, may not upload certificates: it needs the Administrator role"
+        return f"{self.username}; whether it may upload certificates was not said"
+
 
 def checked(result: Mapping[str, Any]) -> Checked:
     """The helper's answer as the page reads it; a broken one is said, not drawn."""
@@ -121,6 +138,8 @@ def checked(result: Mapping[str, Any]) -> Checked:
     ):
         raise BmcProblem("The BMC service's answer was incomplete.")
     may_upload = result.get("may_upload")
+    username = result.get("username")
+    carried = result.get("carried")
     return Checked(
         address=address,
         port=port,
@@ -131,6 +150,8 @@ def checked(result: Mapping[str, Any]) -> Checked:
         model=_text(result.get("model")),
         firmware=_text(result.get("firmware")),
         may_upload=may_upload if isinstance(may_upload, bool) else None,
+        username=_text(username) if isinstance(username, str) else "",
+        carried=carried if isinstance(carried, bool) else None,
     )
 
 
@@ -175,6 +196,11 @@ def refusal(code: str, message: str, *, address: str, port: int, asked: str) -> 
         return (
             f"{address} refused the account. Check the user and the password, and that the "
             "account's type is Redfish."
+        )
+    if code == "bmc_untrusted":
+        return (
+            f"{address} serves a certificate the manager does not trust, so it was sent nothing. "
+            "If it was replaced on purpose, confirm it again with Change…."
         )
     if code == "expected_target_changed":
         return "The BMC now serves another certificate than the one shown. Check it again."

@@ -522,16 +522,30 @@ class Checked:
 
 
 def check(
-    address: str, port: int, *, username: str, password: str, ask_upload: bool = True
+    address: str,
+    port: int,
+    *,
+    username: str,
+    password: str,
+    ask_upload: bool = True,
+    trusted: Collection[str] | None = None,
 ) -> Checked:
     """What the BMC serves, that the account is let in, and (`ask_upload`) whether it may upload.
 
     For the administrator to confirm.
     The session is pinned to what the BMC served a moment before, so the
     account goes to the certificate that is then shown, and to no other.
+    `trusted`: a saved BMC's kept account goes only to a BMC serving one of
+    these; any other is `untrusted` and is sent nothing (26-11-28).
     """
 
     now = served(address, port)
+    if trusted is not None and now.fingerprint_sha256 not in trusted:
+        raise BmcError(
+            "untrusted",
+            f"{address} serves a certificate that was not confirmed ({now.fingerprint_sha256}); "
+            "it was sent nothing",
+        )
     with Session(
         address,
         port,

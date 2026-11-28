@@ -6,7 +6,8 @@ socket it can connect to and not by a field in its request:
 `haprion-bmc-helper`, for the web over `/run/haprion/bmc.sock` (operation `bmc`):
 
     check    sign in with the account the web sealed and say what the BMC serves,
-             for the administrator to confirm
+             for the administrator to confirm; without an account, a registered
+             BMC the manager trusts is asked with the account kept for it
     save     register the BMC (or change it), keep the account and choose the
              certificate it carries, when it still serves the one that was confirmed
     assign   choose the certificate a registered BMC carries, or none
@@ -46,6 +47,7 @@ from haprion.config import (
     RECEIVER_ID,
     BmcTarget,
     ConfigError,
+    Registry,
     bmc_target,
     load_policy,
     load_registry,
@@ -226,6 +228,8 @@ def perform(parameters: dict[str, Any], root: Root) -> dict[str, Any]:
             return {"id": receiver_id, "removed": True}
         return {"id": receiver_id, "certificate": chosen}
 
+    if action == "check" and "key_id" not in parameters and "ciphertext_base64" not in parameters:
+        return _check_saved(receiver_id, registry, root)
     if receiver_id in registry.receivers:
         raise TargetError(
             "already_exists",
@@ -292,6 +296,50 @@ def perform(parameters: dict[str, Any], root: Root) -> dict[str, Any]:
         "fingerprint_sha256": target.fingerprint_sha256,
         "username": target.username,
         "certificate": chosen,
+    }
+
+
+def _check_saved(receiver_id: str, registry: Registry, root: Root) -> dict[str, Any]:
+    """*Check* on a registered BMC (26-11-28): asked with the account kept for it.
+
+    The account goes only to a BMC the manager trusts, as an install's does:
+    one serving the pinned certificate or the one it carries; any other is
+    `bmc_untrusted` and is sent nothing. Nothing is written. `username` is the
+    account that signed in; `carried` whether the BMC serves the certificate it
+    carries now (null when it carries none, or it cannot be read).
+    """
+
+    target = registry.bmcs.get(receiver_id)
+    if target is None:
+        raise TargetError(
+            "not_registered",
+            f"{receiver_id} is not a BMC in the registry; check it with its account first",
+        )
+    key_id, ciphertext = bmc_targets.read_account(
+        receiver_id, directory=root.accounts, require_secure=root.require_secure
+    )
+    username, password = bmc_targets.open_account(
+        root.private_keys, key_id, ciphertext, receiver_id=receiver_id
+    )
+    current = bmc_targets.carried_fingerprint(root, registry, receiver_id)
+    checked = bmc_redfish.check(
+        target.address,
+        target.port,
+        username=username,
+        password=password,
+        trusted={target.fingerprint_sha256, *([current] if current else [])},
+    )
+    return {
+        "id": receiver_id,
+        "address": target.address,
+        "port": target.port,
+        "served_sha256": checked.served.fingerprint_sha256,
+        **_served_facts(checked.served),
+        "model": checked.firmware.model,
+        "firmware": checked.firmware.version,
+        "may_upload": checked.may_upload,
+        "username": username,
+        "carried": None if current is None else checked.served.fingerprint_sha256 == current,
     }
 
 

@@ -8,8 +8,10 @@
   administrator compares the fingerprint with the BMC's own web page and
   saves. From then on the manager trusts the BMC only while it serves that
   certificate or the one the manager installed. The account is never shown
-  again; Change… types it anew. The certificate it carries can be changed
-  without the account.
+  again; Change… types it anew. Check on a saved BMC asks it with the kept
+  account, only while it serves a certificate the manager trusts, and says
+  whether that is the one it carries. The certificate it carries can be
+  changed without the account.
 #}
 <section class="page-heading">
   <div class="heading-title">{{ back_button('/certificates/receivers', 'Receivers') }}<h1>{{ row.identifier if row else 'Add a BMC' }}</h1><p class="page-lede">A BMC Haprion installs a certificate on after every renewal, checking what the BMC then serves.</p></div>
@@ -68,6 +70,17 @@
     <div><strong>Last install</strong><span>{{ last_install or 'None yet' }}</span></div>
     <div class="registry-detail-wide"><strong>Trusted SHA-256</strong><span class="certificate-fingerprint bmc-fingerprint">{{ pinned }}</span></div>
   </div>
+  {% if checked and mode == 'show' %}
+  <div class="bmc-answer">
+    <strong>Checked {{ checked_at }} with the saved account</strong>
+    <div class="registry-detail-grid">
+      <div><strong>Firmware</strong><span>{{ checked.firmware_line }}</span></div>
+      <div><strong>Serves</strong><span>{{ checked.served }}</span></div>
+      <div><strong>Account</strong><span{% if checked.may_upload is false %} class="warning-text"{% endif %}>{{ checked.saved_account_line }}</span></div>
+      {% if checked.carried is not none %}<div><strong>Certificate</strong><span>{{ 'The one it carries' if checked.carried else 'Trusted, not yet the one it carries' }}</span></div>{% endif %}
+    </div>
+  </div>
+  {% endif %}
   {% if mode == 'remove' %}
   <ul class="removal-consequences">
     <li>The manager stops installing {% if row.certificate %}{{ row.certificate }} {% endif %}on {{ row.identifier }}. The BMC keeps the certificate it serves now.</li>
@@ -90,7 +103,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
     <p class="table-note"></p>
-    <div class="form-buttons"><a class="danger-button" href="{{ back }}?do=remove">Remove…</a><a class="secondary-button" href="{{ back }}?do=change">Change…</a>{% if row.certificate and not (view and view.status == 'untrusted') %}<button class="secondary-button" type="submit">Install now</button>{% endif %}</div>
+    <div class="form-buttons"><a class="secondary-button" href="/certificates/receivers">Back to receivers</a><a class="danger-button" href="{{ back }}?do=remove">Remove…</a><a class="secondary-button" href="{{ back }}?do=change">Change…</a><button class="secondary-button" type="submit" formaction="/certificates/receivers/bmc/{{ row.identifier }}/check">Check</button>{% if row.certificate and not (view and view.status == 'untrusted') %}<button class="secondary-button" type="submit">Install now</button>{% endif %}</div>
   </form>
   {% endif %}
 {% endif %}

@@ -312,6 +312,72 @@ class ABmcCarryingACertificate(BmcPageTestCase):
             self.assertIn(control, page)
         self.assertNotIn('name="password"', page)
 
+    def test_check_asks_the_saved_bmc_with_its_kept_account_and_says_what_it_serves(
+        self,
+    ) -> None:
+        self.answers["check"] = {
+            **CHECKED,
+            "id": DEVICE,
+            "address": DEVICE,
+            "username": "admin",
+            "carried": True,
+        }
+
+        answer = self.send(self.writing_client(), f"{PAGE}/check")
+
+        self.assertEqual(answer.status_code, 200)
+        self.assertEqual(self.asked, [("check", DEVICE, {})])
+        page = answer.text
+        self.assertIn("with the saved account</strong>", page)
+        self.assertIn("<span>admin, may upload certificates</span>", page)
+        self.assertIn("<strong>Certificate</strong><span>The one it carries</span>", page)
+        self.assertNotIn('name="password"', page)
+        self.assertNotIn(SECRET, page)
+
+    def test_check_says_when_the_certificate_it_carries_is_not_on_it_yet(self) -> None:
+        self.answers["check"] = {
+            **CHECKED,
+            "id": DEVICE,
+            "address": DEVICE,
+            "username": "admin",
+            "carried": False,
+        }
+
+        page = self.send(self.writing_client(), f"{PAGE}/check").text
+
+        self.assertIn("<span>Trusted, not yet the one it carries</span>", page)
+
+    def test_a_bmc_it_does_not_trust_is_said_and_points_to_change(self) -> None:
+        self.answers["check"] = BmcAskError("bmc_untrusted", "serves a certificate not confirmed")
+
+        page = self.send(self.writing_client(), f"{PAGE}/check").text
+
+        self.assertIn("does not trust, so it was sent nothing", page)
+        self.assertIn("confirm it again with Change…", page)
+
+    def test_a_saved_check_that_was_refused_is_said_on_the_page(self) -> None:
+        self.answers["check"] = BmcAskError("unanswered", "the BMC helper did not answer")
+
+        answer = self.send(self.writing_client(), f"{PAGE}/check")
+
+        self.assertEqual(answer.status_code, 200)
+        self.assertIn("Nothing was changed; check again.", answer.text)
+        self.assertIn("Back to receivers", answer.text)
+
+    def test_the_row_and_the_page_offer_check_and_the_way_back(self) -> None:
+        receivers = self.writing_client().get("/certificates/receivers").text
+        page = self.writing_client().get(PAGE).text
+
+        self.assertIn(f'<a class="link-button" href="{PAGE}">Settings</a>', receivers)
+        self.assertIn(f'action="{PAGE}/check"', receivers)
+        self.assertIn(f'href="{PAGE}?do=remove">Remove</a>', receivers)
+        self.assertEqual(receivers.count(">Back to certificates</a>"), 1)
+        self.assertLess(
+            receivers.index("<h3>BMCs</h3>"), receivers.index(">Back to certificates</a>")
+        )
+        self.assertIn(f'formaction="{PAGE}/check">Check</button>', page)
+        self.assertIn('href="/certificates/receivers">Back to receivers</a>', page)
+
     def test_install_now_is_a_job_for_the_bmc(self) -> None:
         answer = self.send(self.writing_client(), f"{PAGE}/install", idempotency_key=KEY)
 

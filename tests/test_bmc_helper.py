@@ -69,6 +69,43 @@ class TheWebsHelper(HelperCase):
         self.assertNotIn(LOCAL, self.bmcs())
         self.assertNotIn(PASSWORD, json.dumps(answer) + journal)
 
+    def test_check_without_an_account_asks_a_saved_bmc_with_its_own(self) -> None:
+        registry_before = (self.root / "certificates.yaml").read_bytes()
+
+        code, answer, journal = self.ask("bmc", {"action": "check", "id": LOCAL})
+
+        self.assertEqual(code, 0)
+        result = answer["result"]
+        self.assertEqual(result["served_sha256"], self.old)
+        #
+        # It serves the pinned certificate; the one it carries is not on it yet.
+        #
+        self.assertIs(result["carried"], False)
+        self.assertEqual(result["username"], USER)
+        self.assertIs(result["may_upload"], True)
+        self.assertEqual((self.root / "certificates.yaml").read_bytes(), registry_before)
+        self.assertFalse((self.root / "state" / bmc_targets.STATE_FILE).exists())
+        self.assertFalse([path for _m, path, *_ in self.bmc.requests if path == bmc_redfish.UPLOAD])
+        self.assertNotIn(PASSWORD, json.dumps(answer) + journal)
+
+    def test_check_without_an_account_sends_nothing_to_a_bmc_it_does_not_trust(self) -> None:
+        self.set_target(self.current)
+        self.bmc.requests.clear()
+
+        code, answer, _journal = self.ask("bmc", {"action": "check", "id": LOCAL})
+
+        self.assertNotEqual(code, 0)
+        self.assertEqual(answer["error"]["code"], "bmc_untrusted")
+        self.assertEqual(self.bmc.requests, [])
+
+    def test_check_without_an_account_needs_a_saved_bmc(self) -> None:
+        self.ask("bmc", {"action": "remove", "id": LOCAL})
+
+        code, answer, _journal = self.ask("bmc", {"action": "check", "id": LOCAL})
+
+        self.assertNotEqual(code, 0)
+        self.assertEqual(answer["error"]["code"], "not_registered")
+
     def test_save_writes_what_was_confirmed_and_keeps_the_account(self) -> None:
         self.ask("bmc", {"action": "remove", "id": LOCAL})
 

@@ -3230,7 +3230,12 @@ or one the manager installed itself. After each install it trusts the new certif
 that serves anything else is *Untrusted BMC*: somebody replaced its certificate, or the address now
 leads to another device. Check what happened, then confirm it again with *Change…*.
 
-**Changing or removing it.** Click the BMC's row under *Receivers*. *Save certificate* chooses another
+**Checking it again.** Press *Check* on the BMC's row under *Receivers*, or on its page. The manager signs
+in with the saved account and shows the firmware, the certificate the BMC serves, whether the account may
+upload, and whether it serves the certificate it carries. Nothing is changed. A BMC that serves a
+certificate the manager does not trust is sent nothing, as for an install.
+
+**Changing or removing it.** Press *Settings* on the BMC's row under *Receivers*. *Save certificate* chooses another
 certificate for it, without the account; the timer installs it within 15 minutes, or press *Install
 now*. *Change…* takes a new account or port. You type the password again, and the BMC is checked and
 confirmed as when it was added. To move it to a new address, remove it and add it again. *Remove…*
@@ -3250,13 +3255,15 @@ prompt, or piped. It is never an argument.
 
 ```bash
 sudo haprion-cert-bmc check <bmc> --user <user>
+sudo haprion-cert-bmc check <bmc>
 sudo haprion-cert-bmc save <bmc> --user <user> --sha256 <fingerprint> --certificate <certificate>
 sudo haprion-cert-bmc assign <bmc> --certificate <certificate>
 sudo haprion-cert-bmc install <bmc>
 sudo haprion-cert-bmc remove <bmc>
 ```
 
-`<bmc>` is the BMC's name or address. `save` takes the fingerprint `check` printed, with or without
+`<bmc>` is the BMC's name or address. `check` without `--user` checks a saved BMC with its saved
+account, as *Check* on its page does. `save` takes the fingerprint `check` printed, with or without
 colons, and installs at once as the page does. `assign` chooses another certificate, or none with
 `--none`, and asks for no password. Add `--port` for a BMC that is not on 443, and `--json` for a
 script.

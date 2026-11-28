@@ -1,6 +1,6 @@
 """`haprion-cert-bmc` - a BMC receiver: a BMC the manager installs a certificate on.
 
-    sudo haprion-cert-bmc check <bmc> --user <user> [--port N] [--json]
+    sudo haprion-cert-bmc check <bmc> [--user <user> [--port N]] [--json]
     sudo haprion-cert-bmc save <bmc> --user <user> --sha256 <x> --certificate <id> [--port N] [--json]
     sudo haprion-cert-bmc assign <bmc> (--certificate <id> | --none) [--json]
     sudo haprion-cert-bmc install <bmc> [--json]
@@ -10,7 +10,9 @@ What the BMC's page under Receivers does, through the same code as its
 helpers. <bmc> is the BMC's name or address, which is the receiver's ID. The
 password is read from standard input, never from the command line: typed at a
 prompt, or piped. `check` signs in and says what the BMC serves; compare its
-SHA-256 with the BMC's own web page, then `save` with it. `save` registers the
+SHA-256 with the BMC's own web page, then `save` with it. Without `--user`,
+`check` asks a saved BMC with the account kept for it, as the page's *Check*
+does, and only while it serves a certificate the manager trusts. `save` registers the
 BMC (or changes it), keeps the account and installs the certificate it carries
 - an exportable one - at once, as the page's *Save and install* does: the BMC restarts and is away
 for about two minutes. `assign` chooses another certificate, or none, without
@@ -66,9 +68,12 @@ def _parser() -> argparse.ArgumentParser:
     for each in (check, save, assign, install, remove):
         each.add_argument("id", help="the BMC's name or address: the receiver's ID")
         each.add_argument("--json", action="store_true", help="answer with the JSON document")
-    for each in (check, save):
-        each.add_argument("--port", type=int, default=443, help="its HTTPS port (443)")
-        each.add_argument("--user", required=True, help="the Redfish account's user")
+    check.add_argument("--port", type=int, help="its HTTPS port (443); with --user")
+    check.add_argument(
+        "--user", help="the Redfish account's user; without it, the account kept for a saved BMC"
+    )
+    save.add_argument("--port", type=int, default=443, help="its HTTPS port (443)")
+    save.add_argument("--user", required=True, help="the Redfish account's user")
     save.add_argument(
         "--sha256", required=True, help="the SHA-256 check showed, as its web page shows it"
     )
@@ -103,7 +108,9 @@ def _sealing_key(root: Root) -> DnsProfilePublicKey:
 
 
 def _text(action: str, result: dict[str, Any], out: TextIO, user: str) -> None:
-    if action == "check":
+    if action == "check" and "carried" in result:
+        _text_saved(result, out)
+    elif action == "check":
         served = ":".join(
             result["served_sha256"][index : index + 2] for index in range(0, 64, 2)
         ).upper()
@@ -142,6 +149,30 @@ def _text(action: str, result: dict[str, Any], out: TextIO, user: str) -> None:
         )
     else:
         out.write(f"Removed the BMC {result['id']}; it keeps what it serves.\n")
+
+
+def _text_saved(result: dict[str, Any], out: TextIO) -> None:
+    """A saved BMC checked with its kept account: what it serves, and whether it is the one it carries."""
+
+    account = {
+        True: "may upload certificates",
+        False: "may not upload certificates: it needs the Administrator role",
+        None: "whether it may upload certificates was not said",
+    }[result["may_upload"]]
+    serves = {
+        True: "the certificate it carries",
+        False: "a certificate the manager trusts, not yet the one it carries",
+        None: "a certificate the manager trusts",
+    }[result["carried"]]
+    out.write(
+        f"{result['id']} answers with\n"
+        f"  Firmware  {result['model']} {result['firmware']}\n"
+        f"  Serves    {result['subject'] or 'no name'} · {result['issuer'] or 'unknown issuer'}"
+        f" · expires {result['not_after'] or 'unknown'}\n"
+        f"            {serves}\n"
+        f"  Account   {result['username']}, {account}\n"
+        "Nothing was changed.\n"
+    )
 
 
 def main(
@@ -194,7 +225,16 @@ def main(
         return refuse("bad_input", f"{certificate} is not a certificate ID", exit_codes.USAGE)
     if action in ("save", "assign"):
         parameters["certificate"] = certificate or ""
-    if action in ("check", "save"):
+    saved_account = action == "check" and arguments.user is None
+    if saved_account and arguments.port is not None:
+        return refuse(
+            "bad_input",
+            "--port goes with --user; a saved BMC is asked on the port it was saved with",
+            exit_codes.USAGE,
+        )
+    if action in ("check", "save") and not saved_account:
+        if arguments.port is None:
+            arguments.port = 443
         confirmed = _fingerprint(arguments.sha256) if action == "save" else "0" * 64
         try:
             bmc_target(
@@ -224,7 +264,7 @@ def main(
             result = bmc_helper.perform_install({"id": arguments.id, "by": "install_now"}, side)
         else:
             parameters["action"] = action
-            if action in ("check", "save"):
+            if action in ("check", "save") and not saved_account:
                 password = _password(arguments.user, arguments.id, stream_in or sys.stdin, err)
                 key = _sealing_key(side)
                 box = seal_account(

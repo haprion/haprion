@@ -595,12 +595,7 @@ def sweep(
             # A BMC that carries no certificate has nothing to be told.
             #
             continue
-        try:
-            current: str | None = bmc_material(
-                registry, certificate_id, live=root.live, store=root.store
-            ).fingerprint
-        except ExportError:
-            current = None
+        current = carried_fingerprint(root, registry, receiver_id)
         try:
             served = reader(target.address, target.port).fingerprint_sha256
         except BmcError as exc:
@@ -780,6 +775,18 @@ def _trust_served(root: Root, receiver_id: str, seen: BmcTarget, current: str) -
             require_secure=root.require_secure,
             lock_path=root.lock_path,
         )
+
+
+def carried_fingerprint(root: Root, registry: Registry, receiver_id: str) -> str | None:
+    """The fingerprint of the certificate a BMC carries now; None when it carries none or it is unreadable."""
+
+    certificate_id = registry.certificate_of(receiver_id)
+    if certificate_id is None:
+        return None
+    try:
+        return bmc_material(registry, certificate_id, live=root.live, store=root.store).fingerprint
+    except ExportError:
+        return None
 
 
 def forget(receiver_id: str, *, directory: Path = STATE_DIRECTORY) -> None:

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -23,7 +24,7 @@ from haprion.bmc_socket import BmcAskError
 from haprion.bmc_targets import TargetError, seal_account
 from haprion.config import CERTIFICATE_ID, RECEIVER_ID, receiver_id_names_a_host
 
-from haprion_ui import auth, bmc_page, certificates, db, features, operations, refusals
+from haprion_ui import auth, bmc_page, certificates, db, features, moments, operations, refusals
 from haprion_ui.access import admin_write_gate, forbidden_page
 from haprion_ui.bmc_page import BmcProblem, Checked
 from haprion_ui.config import Config
@@ -93,6 +94,7 @@ def build_router(config: Config) -> APIRouter:
         port: int = bmc_page.DEFAULT_PORT,
         certificate: str = "",
         checked: Checked | None = None,
+        checked_at: str = "",
         sealed: tuple[str, str] | None = None,
         problem: str = "",
         status_code: int = 200,
@@ -125,6 +127,7 @@ def build_router(config: Config) -> APIRouter:
                     "certificate": certificate,
                 },
                 "checked": checked,
+                "checked_at": checked_at,
                 "served": bmc_page.fingerprint(checked.served_sha256) if checked else "",
                 "sealed": sealed,
                 "public_key": read_dns_public_key(config),
@@ -451,6 +454,47 @@ def build_router(config: Config) -> APIRouter:
                 status_code=409,
             )
         return RedirectResponse(page_of(bmc_id), status_code=303)
+
+    # - Check, with the kept account -------------------------------------------------
+
+    @router.post("/certificates/receivers/bmc/{bmc_id}/check", response_class=HTMLResponse)
+    def bmc_check_saved(
+        request: Request,
+        bmc_id: str,
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Ask a saved BMC with the account kept for it (26-11-28); nothing is saved."""
+
+        session = _gate(request, csrf_token)
+        if not isinstance(session, AuthenticatedSession):
+            return session
+        registry = _registry(request)
+        row = _row(registry, bmc_id)
+        if row is None:
+            return refusal_page(request, config, f"{bmc_id} is not a BMC here.", back=BACK)
+        try:
+            try:
+                answer = bmc_socket.ask("check", bmc_id)
+            except BmcAskError as refused:
+                raise BmcProblem(
+                    bmc_page.refusal(
+                        refused.code, str(refused), address=bmc_id, port=row.port, asked="check"
+                    )
+                ) from None
+            checked = bmc_page.checked(answer)
+        except BmcProblem as problem:
+            return _page(
+                request, session, row, mode="show", registry=registry, problem=str(problem)
+            )
+        return _page(
+            request,
+            session,
+            row,
+            mode="show",
+            registry=registry,
+            checked=checked,
+            checked_at=moments.moment(datetime.now(UTC)),
+        )
 
     # - Remove… ---------------------------------------------------------------------
 

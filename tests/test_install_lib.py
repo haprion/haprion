@@ -362,7 +362,7 @@ ENSURE_HAPROXY = (
     # apt-get -s answers as apt does for a version in $UNINSTALLABLE: its
     # solver's lines and exit 100; apt-cache madison lists $OFFERED.
     #
-    'apt-get() { echo "$*" >> "$APT_CALLS"; [[ "$1" == -s ]] || return 0; '
+    'apt-get() { echo "$*" >> "$APT_CALLS"; [[ " $* " == *" -s "* ]] || return 0; '
     'local asked="${!#}" version; version="${asked#haproxy=}"; '
     '[[ "$asked" == haproxy ]] && version="$CANDIDATE"; '
     '[[ " $UNINSTALLABLE " == *" $version "* ]] || return 0; '

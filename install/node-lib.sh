@@ -471,7 +471,7 @@ ensure_system_bus() {
 #
 haproxy_installable() {
     local candidate="$1" version best=""
-    if LC_ALL=C apt-get -s -q install haproxy >/dev/null 2>&1; then
+    if LC_ALL=C apt-get "${APT_WAIT[@]}" -s -q install haproxy >/dev/null 2>&1; then
         echo "$candidate"
         return 0
     fi
@@ -480,7 +480,7 @@ haproxy_installable() {
         dpkg --compare-versions "$version" ge "${HAPROXY_BRANCH}~" || continue
         dpkg --compare-versions "$version" lt "$candidate" || continue
         [[ -z "$best" ]] || dpkg --compare-versions "$version" gt "$best" || continue
-        if LC_ALL=C apt-get -s -q install "haproxy=${version}" >/dev/null 2>&1; then
+        if LC_ALL=C apt-get "${APT_WAIT[@]}" -s -q install "haproxy=${version}" >/dev/null 2>&1; then
             best="$version"
         fi
     done < <(LC_ALL=C apt-cache madison haproxy | awk -F'|' '{ gsub(/[[:space:]]/, "", $2); print $2 }')
@@ -492,7 +492,7 @@ haproxy_installable() {
 # warning or error.
 #
 haproxy_refusal() {
-    LC_ALL=C apt-get -s -q install haproxy 2>&1 | sed -n 's/^E: //p; s/^ *[0-9][0-9]*\. //p' | head -n 6
+    LC_ALL=C apt-get "${APT_WAIT[@]}" -s -q install haproxy 2>&1 | sed -n 's/^E: //p; s/^ *[0-9][0-9]*\. //p' | awk 'NR <= 6'
 }
 
 ensure_haproxy() {

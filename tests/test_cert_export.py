@@ -285,7 +285,7 @@ class ABmcReceiver(ExportableFixture):
             ),
             cert_registry.KEEP,
         )
-        self.assertEqual(self.registry().certificates[DEVICE].bmc.port, 8443)  # type: ignore[union-attr]
+        self.assertEqual(self.registry().certificates[DEVICE].bmc.port, 8443)
         set_bmc("bmc01.example", target, None)
         self.assertNotIn("receivers", self.registered()[DEVICE])
         self.assertIn("bmc01.example", self.registry().bmcs)

@@ -91,7 +91,7 @@ class BmcPageTestCase(CertificateFormRouteTestCase):
             return dict(answer)
 
         listing = with_registry(certificate_reading(), registered(fingerprint="a" * 64), self.entry)
-        listing.result["registry"]["bmc_records"] = list(self.bmcs)  # type: ignore[index]
+        listing.result["registry"]["bmc_records"] = list(self.bmcs)
         for patch in (
             mock.patch("haprion.bmc_socket.ask", side_effect=ask),
             mock.patch("haprion_ui.db.wake_poller"),

@@ -296,7 +296,9 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
     "/certificates/receivers/bmc/{bmc_id}/install": Command(
         "haprion-cert-bmc install", "haprion-bmc-install"
     ),
-    "/certificates/receivers/bmc/{bmc_id}/remove": Command("haprion-cert-bmc remove", "haprion-bmc"),
+    "/certificates/receivers/bmc/{bmc_id}/remove": Command(
+        "haprion-cert-bmc remove", "haprion-bmc"
+    ),
     "/settings/blocklists/new": Command("haprion-blocklists apply", "haprion-blocklists-apply"),
     "/settings/blocklists/{name}/edit": Command(
         "haprion-blocklists apply", "haprion-blocklists-apply"

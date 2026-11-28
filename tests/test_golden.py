@@ -351,7 +351,13 @@ def _haproxy_check(
             str(root / "conf.d"),
         ]
         binary = shutil.which("haproxy")
-        assert binary is not None
+        if binary is None:
+            #
+            # Skipped, not failed, wherever HAProxy is absent - CI's second
+            # Python has none - for every caller, not only those that remember
+            # the decorator (CI 26-11-28: test_path_lists did not).
+            #
+            raise unittest.SkipTest("HAProxy is not installed here")
         return subprocess.run(
             [binary, "-c", *arguments],
             capture_output=True,

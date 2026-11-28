@@ -362,6 +362,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 22px; }
 .heading-badges { display: inline-flex; align-items: center; gap: 8px; }
+.heading-badges .secondary-button { white-space: nowrap; }
 .page-heading h1 { margin: 0; color: var(--text-strong); font-size: clamp(18px, 1.7vw, 20px); font-weight: 700; letter-spacing: -0.02em; }
 .mode-badge { display: inline-flex; align-items: center; gap: 8px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted-strong); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .demo-badge { color: var(--info-text); background: var(--info-soft); }
@@ -1214,6 +1215,7 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
  * web page shows it, to be compared there. */
 .bmc-card .bmc-fields { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); align-items: start; }
 .bmc-card .bmc-fields .field > button { align-self: stretch; }
+.bmc-card .bmc-carries .bmc-fields { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
 .bmc-card .bmc-answer { display: grid; gap: 12px; margin: 14px 20px 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
 .bmc-card .bmc-details { padding: 18px 20px 4px; }
 @media (min-width: 900px) {

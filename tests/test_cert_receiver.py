@@ -646,6 +646,23 @@ class WhatRegistrationRefuses(ReceiverFixture):
         error = self.refusal(receiver_id="lb-03.example.net")
         self.assertEqual(error.code, "already_exists")
 
+    def test_the_name_of_a_bmc(self) -> None:
+        """B538: a BMC is a receiver; one that fetches under its name would write over it."""
+
+        path = self.root / "certificates.yaml"
+        document = yaml.safe_load(path.read_text())
+        document.setdefault("receivers", {})["lb-02.example.net"] = {
+            "transport": "redfish",
+            "fingerprint_sha256": "ab" * 32,
+            "username": "admin",
+        }
+        path.write_text(yaml.safe_dump(document))
+        error = self.refusal()
+        self.assertEqual(error.code, "already_exists")
+        self.assertIn("already a BMC", str(error))
+        self.assertFalse(self.runner.ran("useradd"))
+        self.assertEqual(self.registered()["lb-02.example.net"]["transport"], "redfish")
+
 
 class WhenALayerRefuses(ReceiverFixture):
     """The property that makes `add` safe to run again: it leaves nothing behind."""

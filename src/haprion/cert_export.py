@@ -135,9 +135,10 @@ def bmc_material(
     live: Path = LETSENCRYPT_LIVE,
     store: Path = IMPORT_STORE,
 ) -> Material:
-    """The chain and key of a certificate for the BMC it names (B538): its receiver, like any.
+    """The chain and key of an exportable certificate, for the BMC it names (B536, B538).
 
-    No `exportable` here: a BMC receives the key as a fetching receiver does.
+    Held to the export's own rule: the web chooses where a BMC is, so only a key
+    the web may take out itself goes to one.
     """
 
     entry = registry.certificates.get(certificate_id) if registry is not None else None
@@ -145,6 +146,10 @@ def bmc_material(
         raise ExportError("not_registered", f"{certificate_id} is not in the registry")
     if entry.bmc is None:
         raise ExportError("no_bmc", f"{certificate_id} names no BMC")
+    if not entry.exportable or entry.clusters or entry.receivers or entry.interface:
+        raise ExportError(
+            "not_exportable", f"{certificate_id} is not exportable; a BMC carries an exportable one"
+        )
     return _read_material(entry, live=live, store=store)
 
 

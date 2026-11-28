@@ -163,6 +163,10 @@ class AddingABmc(BmcPageTestCase):
         ):
             self.assertIn(field, page)
         self.assertIn(f'<option value="{DEVICE}">{DEVICE}</option>', page)
+        #
+        # A cluster's certificate is not offered: its key goes to no BMC (review 26-11-28).
+        #
+        self.assertNotIn('<option value="example.com">', page)
         self.assertIn(">Check</button>", page)
         self.assertRegex(page, r'type="submit" disabled>Save and install</button>')
         self.assertEqual(self.asked, [])

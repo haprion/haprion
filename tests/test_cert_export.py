@@ -153,50 +153,41 @@ class ABmcReceiver(ExportableFixture):
     def test_a_bmc_carries_one_certificate_and_a_certificate_has_one_bmc(self) -> None:
         self.write({"source": {"kind": "import"}, "exportable": True}, bmc01_example=REDFISH)
         self.assertIsNone(self.registry().certificate_of("bmc01.example"))
+        external = {"source": {"kind": "import"}, "exportable": True}
         for entry, others, said in (
             (
-                {"source": {"kind": "import"}, "receivers": ["bmc01.example"]},
-                {
-                    "keeper-alpha.example": {
-                        "source": {"kind": "acme"},
-                        "clusters": ["alpha"],
-                        "receivers": ["bmc01.example"],
-                    }
-                },
+                {**external, "receivers": ["bmc01.example"]},
+                {"other.example": {**external, "receivers": ["bmc01.example"]}},
                 "already carries",
             ),
             (
-                {"source": {"kind": "import"}, "receivers": ["bmc01.example", "bmc02.example"]},
+                {**external, "receivers": ["bmc01.example", "bmc02.example"]},
                 {},
                 "more than one BMC",
             ),
             (
-                {
-                    "source": {"kind": "import"},
-                    "receivers": [{"id": "bmc01.example", "format": "pkcs12"}],
-                },
+                {**external, "receivers": [{"id": "bmc01.example", "format": "pkcs12"}]},
                 {},
                 "takes no format",
             ),
-            (
-                {"source": {"kind": "import"}, "interface": True, "receivers": ["bmc01.example"]},
-                {},
-                "",
-            ),
         ):
-            with self.subTest(entry=entry):
+            with self.subTest(said=said):
                 self.extra_receivers = {"bmc01.example": REDFISH, "bmc02.example": REDFISH}
                 self.write_config({**KEEPERS, **others, DEVICE: entry})
                 with self.assertRaisesRegex(ConfigError, said):
                     self.registry()
 
-    def test_any_certificate_may_name_a_bmc_and_an_exportable_one_no_fetching_receiver(
-        self,
-    ) -> None:
-        self.write(
-            {"source": {"kind": "import"}, "receivers": ["bmc01.example"]}, bmc01_example=REDFISH
-        )
-        self.assertIsNotNone(self.registry().certificates[DEVICE].bmc)
+    def test_only_an_exportable_certificate_goes_to_a_bmc(self) -> None:
+        """Review 26-11-28: the web registers a BMC; a key it may not take out must not go there."""
+
+        for entry in (
+            {"source": {"kind": "import"}, "receivers": ["bmc01.example"]},
+            {"source": {"kind": "acme"}, "clusters": ["alpha"], "receivers": ["bmc01.example"]},
+        ):
+            with self.subTest(entry=entry):
+                self.write(entry, bmc01_example=REDFISH)
+                with self.assertRaisesRegex(ConfigError, "not exportable"):
+                    self.registry()
         self.write({"source": {"kind": "import"}, "exportable": True, "receivers": ["lb-01"]})
         with self.assertRaisesRegex(ConfigError, "exportable"):
             self.registry()
@@ -259,6 +250,44 @@ class ABmcReceiver(ExportableFixture):
         exported = export(registry, DEVICE, "pem-key", live=self.live, store=self.store)
         self.assertEqual(exported.content, self.device.leaf_key.read_bytes())
 
+    def test_an_old_form_bmc_never_writes_over_a_receiver_that_fetches(self) -> None:
+        receivers = {"lb-01": {"path": "/srv/x", "owner": "svc-app"}}
+        certificates = {
+            DEVICE: {
+                "source": {"kind": "import"},
+                "exportable": True,
+                "bmc": {**BMC, "address": "lb-01"},
+            }
+        }
+        settled_receivers, settled_certificates = cert_registry.settled_bmcs(
+            receivers, certificates
+        )
+        self.assertEqual(settled_receivers, receivers)
+        self.assertEqual(settled_certificates, certificates)
+
+    def test_a_renewal_keeps_the_bmc_in_its_receivers(self) -> None:
+        self.make_exportable()
+        self.extra_receivers = {"bmc01.example": REDFISH}
+        self.write_config(
+            {**KEEPERS, DEVICE: {**self.registered()[DEVICE], "receivers": ["bmc01.example"]}}
+        )
+        policy, runtime = self.runtime()
+        import_certificate(
+            certificate_id=DEVICE,
+            material=self.device_material(),
+            clusters=(),
+            receivers=(),
+            policy=policy,
+            runtime=runtime,
+            deployer=self.deploy,
+            live=self.live,
+            store=self.store,
+            lock_path=self.lock,
+            require_secure=False,
+        )
+        self.assertEqual(self.registered()[DEVICE]["receivers"], ["bmc01.example"])
+        self.assertEqual(self.registry().certificate_of("bmc01.example"), DEVICE)
+
     def test_the_writer_registers_moves_and_takes_away_a_bmc(self) -> None:
         self.make_exportable()
         policy, runtime = self.runtime()
@@ -306,22 +335,9 @@ class ABmcReceiver(ExportableFixture):
                 )
             self.assertEqual(refused.exception.code, code)
 
-    def test_a_target_change_keeps_the_certificates_bmc(self) -> None:
-        self.write(
-            {"source": {"kind": "import"}, "clusters": ["alpha"], "receivers": ["bmc01.example"]},
-            bmc01_example=REDFISH,
-        )
+    def test_a_bmc_is_no_target_a_target_change_takes(self) -> None:
+        self.write({"source": {"kind": "import"}, "clusters": ["alpha"]}, bmc01_example=REDFISH)
         _policy, runtime = self.runtime()
-        change = cert_registry.set_targets(
-            self.root / "certificates.yaml",
-            certificate_id=DEVICE,
-            clusters=("alpha",),
-            receivers=("lb-01",),
-            runtime=runtime,
-            require_secure=False,
-        )
-        self.assertEqual((change.added, change.abandoned), (("lb-01",), ()))
-        self.assertEqual(self.registered()[DEVICE]["receivers"], ["lb-01", "bmc01.example"])
         with self.assertRaises(cert_registry.RegistryError) as refused:
             cert_registry.set_targets(
                 self.root / "certificates.yaml",

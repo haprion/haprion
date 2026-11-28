@@ -12,7 +12,7 @@ password is read from standard input, never from the command line: typed at a
 prompt, or piped. `check` signs in and says what the BMC serves; compare its
 SHA-256 with the BMC's own web page, then `save` with it. `save` registers the
 BMC (or changes it), keeps the account and installs the certificate it carries
-at once, as the page's *Save and install* does: the BMC restarts and is away
+- an exportable one - at once, as the page's *Save and install* does: the BMC restarts and is away
 for about two minutes. `assign` chooses another certificate, or none, without
 the password. `install` installs it again now. `remove` takes the BMC and its
 account away; the BMC keeps the certificate it serves. `--json` answers with

@@ -1675,6 +1675,7 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
         #
         # An exportable certificate names no cluster and no fetching receiver
         # (B255); a BMC it may name, since the BMC is the host it is for (B538).
+        # It is the only kind that may (below).
         #
         if exportable and (clusters or named or interface):
             raise ConfigError(
@@ -1697,10 +1698,15 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
             bmcs[old.address] = old
             legacy.append(certificate_id)
             bmc = old
-        if bmc is not None and (interface or kind == AUTHORITY):
+        #
+        # Only an exportable certificate goes to a BMC (B255, B536): the web
+        # registers a BMC, so a BMC is a place it chooses where a key goes, and
+        # a key the web may not take out itself must not go where the web says.
+        #
+        if bmc is not None and not exportable:
             raise ConfigError(
-                f"{location} cannot name a BMC: the interface's and an authority's "
-                "certificates go nowhere else"
+                f"{location} names a BMC but is not exportable: a BMC carries an exportable "
+                "certificate only"
             )
         if bmc is not None:
             carried = [

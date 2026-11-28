@@ -176,8 +176,18 @@ def settled_bmcs(
         if not isinstance(old, Mapping):
             settled_certificates[certificate_id] = raw
             continue
-        entry = {key: value for key, value in raw.items() if key != "bmc"}
         address = str(old.get("address"))
+        taken = settled_receivers.get(address)
+        if taken is not None and (
+            not isinstance(taken, Mapping) or taken.get("transport") != BMC_TRANSPORT
+        ):
+            #
+            # A receiver that fetches has the name already: left as it was read,
+            # which the reader refuses, rather than written over.
+            #
+            settled_certificates[certificate_id] = raw
+            continue
+        entry = {key: value for key, value in raw.items() if key != "bmc"}
         settled_receivers[address] = {
             "transport": BMC_TRANSPORT,
             **{key: old[key] for key in ("port", "fingerprint_sha256", "username") if key in old},
@@ -684,12 +694,6 @@ def set_targets(
 
     before_clusters = tuple(entry.get("clusters") or ())
     before_receivers, before_formats = named_receivers(entry)
-    #
-    # The certificate's BMC is not one of the targets this replaces (B538):
-    # it is chosen on the BMC's side, and stays.
-    #
-    kept_bmcs = tuple(r for r in before_receivers if r in registry.bmcs)
-    before_receivers = tuple(r for r in before_receivers if r not in registry.bmcs)
     after_clusters = tuple(sorted(set(clusters)))
     after_receivers = tuple(sorted(set(receivers)))
     #
@@ -707,13 +711,10 @@ def set_targets(
     certificates[certificate_id] = written_entry(
         entry,
         clusters=list(after_clusters),
-        receivers=[
-            *receiver_elements(
-                after_receivers,
-                {k: v for k, v in after_formats.items() if v is not None},
-            ),
-            *kept_bmcs,
-        ],
+        receivers=receiver_elements(
+            after_receivers,
+            {k: v for k, v in after_formats.items() if v is not None},
+        ),
     )
 
     before = set(before_clusters) | set(before_receivers)

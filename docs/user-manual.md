@@ -3187,9 +3187,10 @@ certificate.
   a certificate or restart the BMC.
 - **Its HTTPS port open from the manager**, 443 unless the BMC uses another. A firewall in between is the
   usual reason a BMC cannot be reached. *Check* shows it at once.
-- **A certificate for it.** An external certificate is the usual one, made as under
-  [Certificates installed by hand](#certificates-installed-by-hand). Any certificate in the registry can be
-  chosen, except the interface's own and a CA's. A certificate has at most one BMC.
+- **An external certificate for it**, made as under
+  [Certificates installed by hand](#certificates-installed-by-hand). Only an external certificate goes to a
+  BMC: its key may be taken out anyway, and a cluster's key never leaves the manager for a place the web
+  chose. A BMC carries one certificate, and a certificate has at most one BMC.
 
 **Adding the BMC.** On *Certificates*, open *Receivers* and press *Add a BMC*. Enter the BMC's name or
 IPv4 address, the Redfish user and its password, choose the certificate, and press *Check*. The

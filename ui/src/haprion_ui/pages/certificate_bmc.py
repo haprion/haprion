@@ -71,16 +71,14 @@ def build_router(config: Config) -> APIRouter:
         return next((row for row in registry.bmc_rows if row.identifier == bmc_id), None)
 
     def _choices(registry: certificates.RegistryView | None, bmc_id: str | None) -> tuple[str, ...]:
-        """The certificates a BMC may carry: not the interface's, not an authority, no other BMC's."""
+        """The certificates a BMC may carry: an external one, and no other BMC's (B536, B538)."""
 
         if registry is None:
             return ()
         return tuple(
             entry.identifier
             for entry in registry.certificates
-            if not entry.interface
-            and entry.source_kind != "authority"
-            and (entry.bmc is None or entry.bmc.address == bmc_id)
+            if entry.exportable and (entry.bmc is None or entry.bmc.address == bmc_id)
         )
 
     def _page(

@@ -988,6 +988,16 @@ def _add(
             f"receiver {receiver_id} is already registered. A transport or a directory is "
             "not edited under a receiver; remove it and register it again.",
         )
+    if receiver_id in registry.bmcs:
+        #
+        # A BMC is a receiver too (B538): registering one that fetches under its
+        # name would put a directory and an account where the manager installs.
+        #
+        raise ReceiverError(
+            "already_exists",
+            f"{receiver_id} is already a BMC under Receivers; a receiver that fetches needs a "
+            "name of its own",
+        )
 
     if transport == "https":
         account = HTTPS_OWNER

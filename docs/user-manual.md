@@ -6000,7 +6000,10 @@ Ubuntu 26.04 ships 3.2.
 Where a host has an older HAProxy, the installation steps (step 1 on the management host, step 4 on a
 node) add the HAProxy maintainer's repository and install 3.4 from it: Vincent Bernat's PPA on Ubuntu, or
 `haproxy.debian.net` on Debian, with a pin. These are the same key, source and pin a restored node gets.
-The steps leave alone a host already on 3.4 or newer, whatever source it came from, and never upgrade a
+They install the newest 3.4 the repository offers. If apt cannot install that one, because the repository
+has published a build whose dependencies the distribution does not have, they install the newest older 3.4
+that apt can install, and say so in a warning. Nothing is held: `apt upgrade` takes the newer one as soon as
+the repository mends it. The steps leave alone a host already on 3.4 or newer, whatever source it came from, and never upgrade a
 node that already serves a release. A publish on a management host older than 3.4 is refused with a
 sentence saying so, rather than with HAProxy's own error.
 

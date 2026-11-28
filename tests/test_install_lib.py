@@ -358,8 +358,19 @@ ENSURE_HAPROXY = (
     'source "$0"; cd "$(dirname "$0")"; '
     'install_file() { mkdir -p "$ROOT$(dirname "$1")"; printf "%s\\n" "$4" > "$ROOT$1"; }; '
     "install() { :; }; apt_update() { :; }; "
-    'apt-get() { echo "$*" >> "$APT_CALLS"; }; '
-    'apt-cache() { echo "  Candidate: ${CANDIDATE}"; }; '
+    #
+    # apt-get -s answers as apt does for a version in $UNINSTALLABLE: its
+    # solver's lines and exit 100; apt-cache madison lists $OFFERED.
+    #
+    'apt-get() { echo "$*" >> "$APT_CALLS"; [[ "$1" == -s ]] || return 0; '
+    'local asked="${!#}" version; version="${asked#haproxy=}"; '
+    '[[ "$asked" == haproxy ]] && version="$CANDIDATE"; '
+    '[[ " $UNINSTALLABLE " == *" $version "* ]] || return 0; '
+    'echo "E: Unable to correct problems, you have held broken packages."; '
+    'echo "   2. haproxy:amd64=$version Depends libpcre2-8-0 (>= 10.47)"; return 100; }; '
+    'apt-cache() { if [[ "$1" == madison ]]; then local v; for v in $OFFERED; do '
+    'echo "   haproxy | $v | https://haproxy.example/ trixie-backports-3.4/main amd64 Packages"; done; '
+    'else echo "  Candidate: ${CANDIDATE}"; fi; }; '
     'systemctl() { echo "$*" >> "$CALLS"; }; '
     'dpkg-query() { local first; first="$(head -n 1 "$ANSWERS")"; sed -i 1d "$ANSWERS"; '
     'echo "$first"; }; '
@@ -378,6 +389,9 @@ class HaproxyFromItsMaintainer(unittest.TestCase):
         role: str = "",
         serving: bool = False,
         candidate: str = "3.4.7-1",
+        offered: str = "",
+        uninstallable: str = "",
+        after: str = "3.4.7-1",
     ) -> tuple[int, str, dict[str, bytes]]:
         work = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, work)
@@ -388,7 +402,7 @@ class HaproxyFromItsMaintainer(unittest.TestCase):
         self.apt_calls = work / "apt-get"
         self.apt_calls.touch()
         answers = work / "dpkg"
-        answers.write_text(f"{before}\n3.4.7-1\n")
+        answers.write_text(f"{before}\n{after}\n")
         os_release = work / "os-release"
         os_release.write_text(f"ID={os_id}\nVERSION_CODENAME={codename}\n")
         current = work / "current"
@@ -409,6 +423,8 @@ class HaproxyFromItsMaintainer(unittest.TestCase):
                 "CALLS": str(self.calls),
                 "APT_CALLS": str(self.apt_calls),
                 "CANDIDATE": candidate,
+                "OFFERED": offered or candidate,
+                "UNINSTALLABLE": uninstallable,
             },
         )
         files = {
@@ -477,6 +493,55 @@ class HaproxyFromItsMaintainer(unittest.TestCase):
         self.assertIn("ppa.launchpadcontent.net/vbernat/haproxy-3.4/ubuntu offers no 3.4", output)
         self.assertIn("apt would install '3.2.9-1ubuntu2.2'", output)
         self.assertEqual(self.apt_calls.read_text(), "")
+        self.assertEqual(self.calls.read_text(), "")
+
+    def test_the_candidate_is_installed_when_apt_can(self) -> None:
+        code, output, _ = self.run_step("debian", "trixie", "3.0.11-1+deb13u3")
+        self.assertEqual(code, 0, output)
+        installs = [line for line in self.apt_calls.read_text().splitlines() if "-y" in line]
+        self.assertEqual(len(installs), 1)
+        self.assertTrue(installs[0].endswith("install -y -q haproxy=3.4.7-1"), installs[0])
+        self.assertNotIn("WARNING", output)
+
+    def test_a_build_the_distribution_cannot_take_falls_back_to_the_newest_that_it_can(
+        self,
+    ) -> None:
+        # haproxy.debian.net's 3.4.9-1~bpo13+1 asked for libpcre2-8-0 10.47 on
+        # Debian 13, which had 10.46 (26-11-28): every new installation stopped.
+        code, output, _ = self.run_step(
+            "debian",
+            "trixie",
+            "3.0.11-1+deb13u3",
+            candidate="3.4.9-1~bpo13+1",
+            offered="3.4.9-1~bpo13+1 3.4.7-1~bpo13+1 3.4.8-1~bpo13+1 3.0.11-1+deb13u3",
+            uninstallable="3.4.9-1~bpo13+1",
+            after="3.4.8-1~bpo13+1",
+        )
+        self.assertEqual(code, 0, output)
+        installs = [line for line in self.apt_calls.read_text().splitlines() if "-y" in line]
+        self.assertEqual(len(installs), 1)
+        self.assertTrue(installs[0].endswith("install -y -q haproxy=3.4.8-1~bpo13+1"), installs[0])
+        self.assertIn("WARNING: HAProxy 3.4.9-1~bpo13+1 from https://haproxy.debian.net", output)
+        self.assertIn("so 3.4.8-1~bpo13+1 is", output)
+        self.assertIn("Depends libpcre2-8-0 (>= 10.47)", output)
+        self.assertIn("apt upgrade takes 3.4.9-1~bpo13+1 once the repository mends it", output)
+        self.assertIn("ok       haproxy 3.4.8-1~bpo13+1", output)
+
+    def test_no_version_of_the_branch_that_can_be_installed_stops_with_apts_reason(
+        self,
+    ) -> None:
+        code, output, _ = self.run_step(
+            "debian",
+            "trixie",
+            "3.0.11-1+deb13u3",
+            candidate="3.4.9-1~bpo13+1",
+            offered="3.4.9-1~bpo13+1 3.4.8-1~bpo13+1 3.0.11-1+deb13u3",
+            uninstallable="3.4.9-1~bpo13+1 3.4.8-1~bpo13+1",
+        )
+        self.assertNotEqual(code, 0)
+        self.assertIn("neither it nor an older 3.4 can be installed here", output)
+        self.assertIn("WHY: haproxy:amd64=3.4.9-1~bpo13+1 Depends libpcre2-8-0 (>= 10.47)", output)
+        self.assertNotIn("-y", self.apt_calls.read_text())
         self.assertEqual(self.calls.read_text(), "")
 
     def test_another_distribution_is_refused(self) -> None:

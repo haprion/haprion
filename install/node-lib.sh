@@ -459,8 +459,44 @@ ensure_system_bus() {
     log "  started  the system bus"
 }
 
+#
+# The newest HAProxy of the branch this machine can install. A repository can
+# publish a build its distribution cannot take: haproxy.debian.net's
+# 3.4.9-1~bpo13+1 for Debian 13 asked for libpcre2-8-0 10.47 while trixie had
+# 10.46 (26-11-28), and apt refused the install outright. So apt is asked
+# first, with `-s`, which changes nothing: the candidate when it can be
+# installed, otherwise the newest older version of the same branch that can.
+# Nothing is held or pinned to it - the next `apt upgrade` takes the candidate
+# as soon as the repository mends it. Empty when none can be installed.
+#
+haproxy_installable() {
+    local candidate="$1" version best=""
+    if LC_ALL=C apt-get -s -q install haproxy >/dev/null 2>&1; then
+        echo "$candidate"
+        return 0
+    fi
+    while read -r version; do
+        [[ -n "$version" ]] || continue
+        dpkg --compare-versions "$version" ge "${HAPROXY_BRANCH}~" || continue
+        dpkg --compare-versions "$version" lt "$candidate" || continue
+        [[ -z "$best" ]] || dpkg --compare-versions "$version" gt "$best" || continue
+        if LC_ALL=C apt-get -s -q install "haproxy=${version}" >/dev/null 2>&1; then
+            best="$version"
+        fi
+    done < <(LC_ALL=C apt-cache madison haproxy | awk -F'|' '{ gsub(/[[:space:]]/, "", $2); print $2 }')
+    echo "$best"
+}
+
+#
+# What apt says against installing the candidate: its own lines, for the step's
+# warning or error.
+#
+haproxy_refusal() {
+    LC_ALL=C apt-get -s -q install haproxy 2>&1 | sed -n 's/^E: //p; s/^ *[0-9][0-9]*\. //p' | head -n 6
+}
+
 ensure_haproxy() {
-    local role="${1:-}" installed id codename key keyring suite uri pin release candidate
+    local role="${1:-}" installed id codename key keyring suite uri pin release candidate version
     installed="$(dpkg-query -W -f='${Version}' haproxy 2>/dev/null || true)"
     if [[ -n "$installed" ]] && dpkg --compare-versions "$installed" ge "${HAPROXY_BRANCH}~"; then
         log "  ok       haproxy ${installed}"
@@ -513,13 +549,23 @@ ensure_haproxy() {
         die "HAProxy: ${uri} offers no ${HAPROXY_BRANCH} (apt would install '${candidate:-nothing}');" \
             "check that this machine reaches it, then run this step again"
     fi
+    version="$(haproxy_installable "$candidate")"
+    if [[ -z "$version" ]]; then
+        fail "HAProxy: ${uri} offers ${candidate}, and neither it nor an older ${HAPROXY_BRANCH} can be installed here" \
+             "$(haproxy_refusal)" \
+             "the repository has published a build this distribution cannot take; run this step again once it is mended"
+    fi
+    if [[ "$version" != "$candidate" ]]; then
+        warn "HAProxy ${candidate} from ${uri} cannot be installed here, so ${version} is: $(haproxy_refusal | tr '\n' ' ')" \
+             "- apt upgrade takes ${candidate} once the repository mends it"
+    fi
     #
     # `confold`: a node's haproxy.cfg is a link into the release by now, which
     # dpkg reads as a changed configuration file and would otherwise ask about.
     #
     DEBIAN_FRONTEND=noninteractive apt-get "${APT_WAIT[@]}" \
         -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
-        install -y -q haproxy >/dev/null \
+        install -y -q "haproxy=${version}" >/dev/null \
         || die "HAProxy: the package could not be installed from ${uri}"
     installed="$(dpkg-query -W -f='${Version}' haproxy 2>/dev/null || true)"
     dpkg --compare-versions "$installed" ge "${HAPROXY_BRANCH}~" \

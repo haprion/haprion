@@ -158,6 +158,16 @@ def bmc_entry(target: BmcTarget) -> dict[str, Any]:
     }
 
 
+def _redfish_fields(old: Mapping[str, Any]) -> dict[str, Any]:
+    """The receiver block's fields of a BMC read in the form before B538."""
+
+    fields = {"transport": BMC_TRANSPORT}
+    fields.update(
+        {key: old[key] for key in ("port", "fingerprint_sha256", "username") if key in old}
+    )
+    return fields
+
+
 def settled_bmcs(
     receivers: Mapping[str, Any], certificates: Mapping[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -187,15 +197,12 @@ def settled_bmcs(
             #
             settled_certificates[certificate_id] = raw
             continue
-        entry = {key: value for key, value in raw.items() if key != "bmc"}
-        settled_receivers[address] = {
-            "transport": BMC_TRANSPORT,
-            **{key: old[key] for key in ("port", "fingerprint_sha256", "username") if key in old},
-        }
-        named, _formats = named_receivers(entry)
-        if address not in named:
-            entry["receivers"] = [*(entry.get("receivers") or ()), address]
-        settled_certificates[certificate_id] = entry
+        settled_receivers[address] = _redfish_fields(old)
+        without = {key: value for key, value in raw.items() if key != "bmc"}
+        elements = list(without.get("receivers") or ())
+        if address not in named_receivers(without)[0]:
+            elements.append(address)
+        settled_certificates[certificate_id] = written_entry(without, receivers=elements)
     return settled_receivers, settled_certificates
 
 
@@ -433,11 +440,15 @@ def set_bmc_receiver(
                     )
             for cid in carrying:
                 if cid != chosen:
-                    certificates[cid] = _without_receiver(certificates[cid], receiver_id)
+                    certificates[cid] = written_entry(
+                        certificates[cid],
+                        receivers=_elements_without(certificates[cid], receiver_id),
+                    )
             if chosen is not None and chosen not in carrying:
-                entry = dict(certificates[chosen])
-                entry["receivers"] = [*(entry.get("receivers") or ()), receiver_id]
-                certificates[chosen] = entry
+                certificates[chosen] = written_entry(
+                    certificates[chosen],
+                    receivers=[*(certificates[chosen].get("receivers") or ()), receiver_id],
+                )
         if target is None:
             receivers.pop(receiver_id, None)
         else:
@@ -452,18 +463,14 @@ def set_bmc_receiver(
         )
 
 
-def _without_receiver(entry: Mapping[str, Any], receiver_id: str) -> dict[str, Any]:
-    """The entry with one receiver taken out of its list; the key goes when the list is empty."""
+def _elements_without(entry: Mapping[str, Any], receiver_id: str) -> list[Any]:
+    """An entry's receiver elements with one receiver taken out."""
 
-    kept = [
+    return [
         item
         for item in entry.get("receivers") or ()
         if (item.get("id") if isinstance(item, Mapping) else item) != receiver_id
     ]
-    changed = {key: value for key, value in entry.items() if key != "receivers"}
-    if kept:
-        changed["receivers"] = kept
-    return changed
 
 
 def drop_receiver(

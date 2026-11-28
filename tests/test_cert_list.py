@@ -1128,6 +1128,13 @@ class HelperTests(unittest.TestCase):
     other helpers answer off-contract for months.
     """
 
+    def _bmc_state(self) -> Path:
+        """A directory of the test's own for the timer's state, removed after it."""
+
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        return Path(directory.name) / "bmc"
+
     def _run(
         self, *, cluster: str | None = "alpha", with_root: bool = True, with_ndes: bool = False
     ) -> tuple[int, str, str]:
@@ -1190,7 +1197,7 @@ class HelperTests(unittest.TestCase):
                     output_stream=out,
                     error_stream=err,
                     require_root=False,
-                    bmc_state=Path(tempfile.mkdtemp()) / "bmc",
+                    bmc_state=self._bmc_state(),
                 )
         return code, out.getvalue(), err.getvalue()
 
